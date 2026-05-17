@@ -1,0 +1,25 @@
+# Rust
+target/
+*.pdb
+*.exe
+*.obj
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VX
+*.vxobj
+*.vx
+
+# Test files
+test_basic.vx
+test_basic.exe

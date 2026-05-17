@@ -1,0 +1,50 @@
+[package]
+authors = ["Your Name <your.email@example.com>"]
+description = "A compiler for the VX programming language"
+edition = "2021"
+license = "MIT"
+name = "vx_language_compiler"
+repository = "https://github.com/yourusername/vx-language-compiler"
+version = "1.0.0"
+
+[[bin]]
+name = "vxcompiler"
+path = "src/ipt.rs"
+
+[[bin]]
+name = "vxlinker"
+path = "src/vxlinker.rs"
+
+[lib]
+name = "vx_vm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vx_runtime"
+path = "src/main.rs"
+
+[dependencies]
+serde = {version = "1.0", features = ["derive"]}
+serde_json = "1.0"
+yaml-rust2 = "0.9"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.0"
+trycmd = "0.14"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+[features]
+debug_info = []
+default = []
+memory_checking = ["debug_info"]
