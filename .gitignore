@@ -3,7 +3,6 @@ target/
 *.pdb
 *.exe
 *.obj
-*.pdb
 
 # IDE
 .vscode/
@@ -11,6 +10,7 @@ target/
 *.swp
 *.swo
 *~
+.venv/
 
 # OS
 .DS_Store
@@ -19,7 +19,11 @@ Thumbs.db
 # VX
 *.vxobj
 *.vx
+*.out
+vxmodel
 
-# Test files
-test_basic.vx
-test_basic.exe
+# Logs
+logs/
+
+# Qodana
+qodana.yaml

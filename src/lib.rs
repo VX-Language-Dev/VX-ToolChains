@@ -1,5 +1,10 @@
 use std::collections::HashMap;
 
+// 引入子模块
+pub mod bytecode;
+mod memory_safety;
+use memory_safety::AllocRecord;
+
 // ==================== OpCode ====================
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -350,14 +355,7 @@ pub struct CallFrame {
     pub owned_allocs: Vec<u64>,
 }
 
-#[derive(Clone, Debug)]
-pub struct AllocRecord {
-    pub id: u64,
-    pub generation: u32,
-    pub alive: bool,
-    pub class_name: String,
-    pub instance: Value,
-}
+// AllocRecord 已移至 memory_safety.rs
 
 // ==================== VM ====================
 
@@ -448,93 +446,53 @@ impl VM {
             .insert(name.to_string(), Value::string(name.to_string()));
     }
 
-    pub fn load_module(&mut self, bytecode: &[u8]) -> Result<bool, String> {
-        if bytecode.len() < 9 || &bytecode[0..5] != b"VXOBJ" {
-            return Err("Invalid magic".to_string());
-        }
-        let mut pos = 5;
+    pub fn load_module(&mut self, bytecode_data: &[u8]) -> Result<bool, String> {
+        let parsed = bytecode::parse_vxobj(bytecode_data)
+            .map_err(|e| format!("Failed to parse VXOBJ bytecode: {}", e))?;
 
-        let version = read_u32(bytecode, &mut pos);
-        if version != 2 {
-            return Err(format!("Unsupported version: {}", version));
-        }
-
-        // Read constants
-        let num_globals = read_u32(bytecode, &mut pos);
-        self.module.constants.reserve(num_globals as usize);
-        for _ in 0..num_globals {
-            self.module
-                .constants
-                .push(read_constant(bytecode, &mut pos)?);
-        }
-
-        // Read functions
-        let num_functions = read_u32(bytecode, &mut pos);
-        self.module.functions.reserve(num_functions as usize);
-        for _ in 0..num_functions {
-            let name = read_string(bytecode, &mut pos);
-            let num_params = read_u32(bytecode, &mut pos);
-            let has_return = bytecode[pos] != 0;
-            pos += 1;
-
-            let num_params_names = read_u32(bytecode, &mut pos);
-            let mut param_names = Vec::with_capacity(num_params_names as usize);
-            for _ in 0..num_params_names {
-                param_names.push(read_string(bytecode, &mut pos));
-            }
-
-            let num_local_consts = read_u32(bytecode, &mut pos);
-            let mut constants = Vec::with_capacity(num_local_consts as usize);
-            for _ in 0..num_local_consts {
-                constants.push(read_constant(bytecode, &mut pos)?);
-            }
-
-            let num_insts = read_u32(bytecode, &mut pos);
-            let mut instructions = Vec::with_capacity(num_insts as usize);
-            for _ in 0..num_insts {
-                let op = OpCode::try_from(bytecode[pos]).map_err(|e| e)?;
-                pos += 1;
-                let arg_type = bytecode[pos];
-                pos += 1;
-
-                let inst = if arg_type == 0 {
-                    Instruction::new(op)
-                } else if arg_type == 1 {
-                    Instruction::with_iarg(op, read_i32(bytecode, &mut pos))
-                } else if arg_type == 2 {
-                    Instruction::with_sarg(op, read_string(bytecode, &mut pos))
-                } else {
-                    return Err("Unknown arg type".to_string());
-                };
-                instructions.push(inst);
-            }
-
-            let _fn_idx = self.module.functions.len();
-            self.module.functions.push(Function {
-                name,
-                instructions,
-                constants,
-                num_params,
-                has_return,
-                param_names,
+        // 加载常量池
+        self.module.constants.reserve(parsed.constants.len());
+        for c in &parsed.constants {
+            self.module.constants.push(match c {
+                bytecode::SerializedConstant::Nil => Value::Nil,
+                bytecode::SerializedConstant::Bool(b) => Value::Bool(*b),
+                bytecode::SerializedConstant::Int(i) => Value::Int(*i),
+                bytecode::SerializedConstant::Float(f) => Value::Float(*f),
+                bytecode::SerializedConstant::String(s) => Value::String(s.clone()),
             });
         }
 
-        // Struct definitions (optional)
-        if pos < bytecode.len() {
-            let num_structs = read_u32(bytecode, &mut pos);
-            for _ in 0..num_structs {
-                let name = read_string(bytecode, &mut pos);
-                let num_fields = read_u32(bytecode, &mut pos);
-                let mut fields = Vec::with_capacity(num_fields as usize);
-                for _ in 0..num_fields {
-                    fields.push(read_string(bytecode, &mut pos));
-                }
-                self.module.struct_defs.insert(name, fields);
+        // 加载函数
+        self.module.functions.reserve(parsed.functions.len());
+        for f in &parsed.functions {
+            let constants = Vec::new();
+            let mut instructions = Vec::with_capacity(f.instructions.len());
+            for inst in &f.instructions {
+                let op = OpCode::try_from(inst.op).map_err(|e| e)?;
+                let instruction = match inst.arg_type {
+                    0 => Instruction::new(op),
+                    1 => Instruction::with_iarg(op, inst.iarg.unwrap_or(0)),
+                    2 => Instruction::with_sarg(op, inst.sarg.clone().unwrap_or_default()),
+                    _ => return Err(format!("Unknown arg type: {}", inst.arg_type)),
+                };
+                instructions.push(instruction);
             }
+
+            self.module.functions.push(Function {
+                name: f.name.clone(),
+                instructions,
+                constants,
+                num_params: f.num_params,
+                has_return: f.has_return,
+                param_names: f.param_names.clone(),
+            });
         }
 
-        // Build function map
+        // 加载结构体定义
+        self.module.struct_defs = parsed.struct_defs.clone();
+
+        // 构建函数映射表
+        self.module.function_map.clear();
         for (i, func) in self.module.functions.iter().enumerate() {
             self.module.function_map.insert(func.name.clone(), i);
         }
@@ -572,114 +530,9 @@ impl VM {
     }
 
     // ==================== 内存安全运行时 ====================
-
-    fn alloc_heap(&mut self, class_name: String, instance: Value) -> u64 {
-        let id = self.next_alloc_id;
-        self.next_alloc_id += 1;
-        self.alloc_registry.insert(
-            id,
-            AllocRecord {
-                id,
-                generation: 0,
-                alive: true,
-                class_name,
-                instance,
-            },
-        );
-        if !self.frames.is_empty() {
-            self.current_frame_mut().owned_allocs.push(id);
-        }
-        id
-    }
-
-    fn validate_pointer(&self, ptr: &Value) -> bool {
-        let (alloc_id, generation) = match ptr {
-            Value::Pointer {
-                alloc_id,
-                generation,
-                ..
-            } => (*alloc_id, *generation),
-            _ => {
-                self.runtime_error("Expected a pointer for dereference/free operation");
-            }
-        };
-
-        if let Some(rec) = self.alloc_registry.get(&alloc_id) {
-            if !rec.alive {
-                self.runtime_error(&format!(
-                    "Dangling pointer: allocation {} has been freed (use-after-free)",
-                    alloc_id
-                ));
-            }
-            if rec.generation != generation {
-                self.runtime_error(&format!(
-                    "Stale pointer: generation mismatch for allocation {} (expected gen {}, got {})",
-                    alloc_id, rec.generation, generation
-                ));
-            }
-            true
-        } else {
-            self.runtime_error(&format!(
-                "Dangling pointer: allocation {} does not exist (use-after-free)",
-                alloc_id
-            ));
-        }
-    }
-
-    fn deref_pointer(&self, ptr: &Value) -> Value {
-        if !self.validate_pointer(ptr) {
-            return Value::nil();
-        }
-        if let Value::Pointer { alloc_id, .. } = ptr {
-            self.alloc_registry
-                .get(alloc_id)
-                .map(|r| r.instance.clone())
-                .unwrap_or(Value::nil())
-        } else {
-            Value::nil()
-        }
-    }
-
-    fn free_allocation(&mut self, alloc_id: u64, generation: u32) {
-        if let Some(rec) = self.alloc_registry.get(&alloc_id) {
-            if !rec.alive {
-                self.runtime_error(&format!(
-                    "Double-free: allocation {} has already been freed",
-                    alloc_id
-                ));
-            }
-            if rec.generation != generation {
-                self.runtime_error(&format!(
-                    "Double-free: generation mismatch for allocation {}",
-                    alloc_id
-                ));
-            }
-            // 执行释放：递增代际，标记为非存活
-            if let Some(rec) = self.alloc_registry.get_mut(&alloc_id) {
-                rec.generation += 1;
-                rec.alive = false;
-            }
-            // 从当前帧的所有权列表中移除
-            if !self.frames.is_empty() {
-                let owned = &mut self.current_frame_mut().owned_allocs;
-                owned.retain(|&id| id != alloc_id);
-            }
-        } else {
-            self.runtime_error(&format!(
-                "Double-free: allocation {} does not exist",
-                alloc_id
-            ));
-        }
-    }
-
-    fn cleanup_frame_allocs(&mut self, frame: &CallFrame) {
-        for alloc_id in &frame.owned_allocs {
-            if let Some(rec) = self.alloc_registry.get_mut(alloc_id) {
-                rec.generation += 1;
-                rec.alive = false;
-            }
-        }
-    }
+    // 具体实现已移至 memory_safety.rs，此处方法签名仍可用
+    // alloc_heap, validate_pointer, deref_pointer, free_allocation, cleanup_frame_allocs
+    // 均在 memory_safety.rs 的 impl VM 中定义
 
     fn call_user_function(&mut self, fn_idx: usize, args: &[Value]) -> Result<(), String> {
         let fun = &self.module.functions[fn_idx];
@@ -1235,6 +1088,45 @@ impl VM {
                     return Value::nil();
                 }
 
+                // ===== Import =====
+                OpCode::Import => {
+                    if let Some(ref sarg) = inst.sarg {
+                        // ImportTuple 序列化为 "{alias},{lib_path},{module_name}"
+                        let parts: Vec<&str> = sarg.split(',').collect();
+                        let module_name = parts.last().copied().unwrap_or("unknown");
+                        if !module_name.is_empty() {
+                            self.globals.insert(
+                                module_name.to_string(),
+                                Value::instance(module_name.to_string()),
+                            );
+                        }
+                    }
+                }
+
+                // ===== SysArgv / System / File I/O =====
+                OpCode::SysArgv => {
+                    // 系统参数（命令行参数列表），暂返回空数组
+                    self.push(Value::Array(Vec::new()));
+                }
+                OpCode::System => {
+                    // 系统调用，暂吞参数并返回 0
+                    self.pop(); // 命令字符串
+                    self.push(Value::Int(0));
+                }
+                OpCode::FileRead => {
+                    self.pop(); // 文件路径
+                    self.push(Value::nil()); // TODO: 实现文件读取
+                }
+                OpCode::FileWrite => {
+                    self.pop(); // 数据
+                    self.pop(); // 文件路径
+                    // TODO: 实现文件写入
+                }
+                OpCode::FileExists => {
+                    self.pop(); // 文件路径
+                    self.push(Value::Bool(false)); // TODO: 实现文件存在检查
+                }
+
                 // ===== Memory Safety / Ownership =====
                 OpCode::NewZ => {
                     let num_args = inst.iarg.unwrap_or(0) as usize;
@@ -1309,56 +1201,4 @@ impl VM {
     }
 }
 
-// ==================== 辅助函数 ====================
 
-fn read_u8(data: &[u8], pos: &mut usize) -> u8 {
-    let v = data[*pos];
-    *pos += 1;
-    v
-}
-
-fn read_u32(data: &[u8], pos: &mut usize) -> u32 {
-    let v = ((data[*pos] as u32) << 24)
-        | ((data[*pos + 1] as u32) << 16)
-        | ((data[*pos + 2] as u32) << 8)
-        | (data[*pos + 3] as u32);
-    *pos += 4;
-    v
-}
-
-fn read_i32(data: &[u8], pos: &mut usize) -> i32 {
-    read_u32(data, pos) as i32
-}
-
-fn read_u64(data: &[u8], pos: &mut usize) -> u64 {
-    let mut v: u64 = 0;
-    for _ in 0..8 {
-        v = (v << 8) | (data[*pos] as u64);
-        *pos += 1;
-    }
-    v
-}
-
-fn read_double(data: &[u8], pos: &mut usize) -> f64 {
-    let bits = read_u64(data, pos);
-    f64::from_bits(bits)
-}
-
-fn read_string(data: &[u8], pos: &mut usize) -> String {
-    let len = read_u32(data, pos) as usize;
-    let s = String::from_utf8_lossy(&data[*pos..*pos + len]).to_string();
-    *pos += len;
-    s
-}
-
-fn read_constant(data: &[u8], pos: &mut usize) -> Result<Value, String> {
-    let type_id = read_u8(data, pos);
-    match type_id {
-        0 => Ok(Value::nil()),
-        1 => Ok(Value::int(read_u64(data, pos) as i64)),
-        2 => Ok(Value::float(read_double(data, pos))),
-        3 => Ok(Value::string(read_string(data, pos))),
-        4 => Ok(Value::bool(read_u8(data, pos) != 0)),
-        _ => Err(format!("Unknown constant type: {}", type_id)),
-    }
-}

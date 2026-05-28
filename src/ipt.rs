@@ -1,1604 +1,26 @@
 // VX Language Compiler v3.0 (Rust Port)
-// 编译命令: rustc ipt.rs -O -o vxcompiler
+// Token 处理和 AST 解析模块已拆分到 token.rs 和 parser.rs
 
 use std::collections::HashMap;
 use std::env;
-use std::fmt;
 use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
 use std::process;
+use std::io;
 
-// ==================== 错误处理 ====================
-#[derive(Debug)]
-struct VXError {
-    msg: String,
-    line: usize,
-    col: usize,
-    source: Option<String>,
-}
+use vx_vm::bytecode;
 
-impl fmt::Display for VXError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut ctx = String::new();
-        if let Some(src) = &self.source {
-            if self.line > 0 {
-                let lines: Vec<&str> = src.lines().collect();
-                if self.line - 1 < lines.len() {
-                    ctx = format!(
-                        "\n {} | {}\n | {}",
-                        self.line,
-                        lines[self.line - 1],
-                        " ".repeat(self.col.saturating_sub(1))
-                    );
-                    ctx.push('^');
-                }
-            }
-        }
-        write!(
-            f,
-            "VX Error [line {}, col {}]: {}{}",
-            self.line, self.col, self.msg, ctx
-        )
-    }
-}
+// 引入拆分的模块
+mod token;
+mod parser;
 
-macro_rules! vx_error {
-    ($msg:expr, $line:expr, $col:expr, $source:expr) => {
-        return Err(VXError {
-            msg: $msg.to_string(),
-            line: $line,
-            col: $col,
-            source: Some($source.clone()),
-        }
-        .into())
-    };
-}
-
-// ==================== 词法分析 ====================
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TokenType {
-    If,
-    Elif,
-    Else,
-    For,
-    While,
-    Break,
-    Continue,
-    Func,
-    Return,
-    //Out,
-    Move,
-    //Borrow,
-    //Drop,
-    Int,
-    Float,
-    String,
-    Identifier,
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    Percent,
-    Power,
-    Eq,
-    Ne,
-    Lt,
-    Gt,
-    Le,
-    Ge,
-    Assign,
-    PlusAssign,
-    MinusAssign,
-    StarAssign,
-    SlashAssign,
-    PercentAssign,
-    PowerAssign,
-    Ampersand,
-    Arrow,
-    LParen,
-    RParen,
-    LBracket,
-    RBracket,
-    LBrace,
-    RBrace,
-    Colon,
-    Semicolon,
-    Comma,
-    Dot,
-    Newline,
-    Indent,
-    Dedent,
-    EOF,
-    True,
-    False,
-    Nil,
-    And,
-    Or,
-    Not,
-    In,
-    Import,
-    As,
-    Dirs,
-    IntT,
-    FloatT,
-    DoubleT,
-    StringT,
-    VarT,
-    BoolT,
-    VoidT,
-    Struct,
-    Class,
-    Enum,
-    Union,
-    Vector,
-    New,
-    Newz,
-    Free,
-    This,
-    Public,
-    Private,
-    Protected,
-    Extends,
-    Implements,
-}
-
-#[derive(Debug, Clone)]
-struct Token {
-    kind: TokenType,
-    value: String,
-    line: usize,
-    col: usize,
-}
-
-const KEYWORDS: &[(&str, TokenType)] = &[
-    ("if", TokenType::If),
-    ("else", TokenType::Else),
-    ("elif", TokenType::Elif),
-    ("for", TokenType::For),
-    ("while", TokenType::While),
-    ("break", TokenType::Break),
-    ("continue", TokenType::Continue),
-    ("func", TokenType::Func),
-    ("return", TokenType::Return),
-    ("true", TokenType::True),
-    ("false", TokenType::False),
-    ("nil", TokenType::Nil),
-    ("and", TokenType::And),
-    ("or", TokenType::Or),
-    ("not", TokenType::Not),
-    ("in", TokenType::In),
-    ("import", TokenType::Import),
-    ("as", TokenType::As),
-    ("dirs", TokenType::Dirs),
-    ("int", TokenType::IntT),
-    ("float", TokenType::FloatT),
-    ("double", TokenType::DoubleT),
-    ("string", TokenType::StringT),
-    ("var", TokenType::VarT),
-    ("bool", TokenType::BoolT),
-    ("void", TokenType::VoidT),
-    ("struct", TokenType::Struct),
-    ("class", TokenType::Class),
-    ("enum", TokenType::Enum),
-    ("union", TokenType::Union),
-    ("vector", TokenType::Vector),
-    ("new", TokenType::New),
-    ("newz", TokenType::Newz),
-    ("free", TokenType::Free),
-    ("this", TokenType::This),
-    ("public", TokenType::Public),
-    ("private", TokenType::Private),
-    ("protected", TokenType::Protected),
-    ("extends", TokenType::Extends),
-    ("implements", TokenType::Implements),
-];
-
-struct Lexer {
-    source: String,
-    pos: usize,
-    line: usize,
-    col: usize,
-    tokens: Vec<Token>,
-    indent_stack: Vec<usize>,
-}
-
-impl Lexer {
-    fn new(source: &str) -> Self {
-        Self {
-            source: source.to_string(),
-            pos: 0,
-            line: 1,
-            col: 1,
-            tokens: Vec::new(),
-            indent_stack: vec![0],
-        }
-    }
-
-    fn peek(&self, offset: usize) -> char {
-        self.source
-            .as_bytes()
-            .get(self.pos + offset)
-            .copied()
-            .map(|b| b as char)
-            .unwrap_or('\0')
-    }
-
-    fn advance(&mut self) -> char {
-        let c = self.peek(0);
-        self.pos += 1;
-        if c == '\n' {
-            self.line += 1;
-            self.col = 1;
-        } else {
-            self.col += 1;
-        }
-        c
-    }
-
-    fn skip_whitespace(&mut self) {
-        while matches!(self.peek(0), ' ' | '\t' | '\r' | '\u{3000}') {
-            self.advance();
-        }
-    }
-
-    fn read_string(&mut self, q: char) -> Result<String, VXError> {
-        self.advance();
-        let mut res = String::new();
-        while self.peek(0) != q && self.peek(0) != '\0' {
-            if self.peek(0) == '\\' {
-                self.advance();
-                let e = self.advance();
-                res.push(match e {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '"' => '"',
-                    '\'' => '\'',
-                    '\\' => '\\',
-                    _ => e,
-                });
-            } else {
-                res.push(self.advance());
-            }
-        }
-        if self.peek(0) != q {
-            return Err(VXError {
-                msg: "未闭合字符串".into(),
-                line: self.line,
-                col: self.col,
-                source: Some(self.source.clone()),
-            });
-        }
-        self.advance();
-        Ok(res)
-    }
-
-    fn read_number(&mut self) -> Token {
-        let sl = self.line;
-        let sc = self.col;
-        let mut s = String::new();
-        let mut f = false;
-        while self.peek(0).is_ascii_digit() {
-            s.push(self.advance());
-        }
-        if self.peek(0) == '.' && self.peek(1).is_ascii_digit() {
-            f = true;
-            s.push(self.advance());
-            while self.peek(0).is_ascii_digit() {
-                s.push(self.advance());
-            }
-        }
-        if matches!(self.peek(0), 'e' | 'E') {
-            f = true;
-            s.push(self.advance());
-            if matches!(self.peek(0), '+' | '-') {
-                s.push(self.advance());
-            }
-            while self.peek(0).is_ascii_digit() {
-                s.push(self.advance());
-            }
-        }
-        let val = if f {
-            format!("{}", s.parse::<f64>().unwrap())
-        } else {
-            format!("{}", s.parse::<i64>().unwrap())
-        };
-        Token {
-            kind: if f { TokenType::Float } else { TokenType::Int },
-            value: val,
-            line: sl,
-            col: sc,
-        }
-    }
-
-    fn read_identifier(&mut self) -> Token {
-        let sl = self.line;
-        let sc = self.col;
-        let mut val = String::new();
-        while self.peek(0).is_alphanumeric()
-            || self.peek(0) == '_'
-            || ('\u{4e00}'..='\u{9fff}').contains(&self.peek(0))
-        {
-            val.push(self.advance());
-        }
-        let kind = KEYWORDS
-            .iter()
-            .find(|(k, _)| *k == val)
-            .map(|(_, t)| t.clone())
-            .unwrap_or(TokenType::Identifier);
-        Token {
-            kind,
-            value: val,
-            line: sl,
-            col: sc,
-        }
-    }
-
-    fn handle_indent(&mut self) -> Result<(), VXError> {
-        loop {
-            if self.peek(0) != '\n' && self.tokens.is_empty() {
-                return Ok(());
-            }
-            while self.peek(0) == '\n' {
-                self.advance();
-            }
-            if self.peek(0) == '\0' {
-                return Ok(());
-            }
-            let mut indent = 0;
-            while self.peek(0) == ' ' || self.peek(0) == '\u{3000}' {
-                indent += 1;
-                self.advance();
-            }
-            while self.peek(0) == '\t' {
-                indent += 4;
-                self.advance();
-            }
-            if self.peek(0) == '#' {
-                while !matches!(self.peek(0), '\n' | '\0') {
-                    self.advance();
-                }
-                continue;
-            }
-            let last = *self.indent_stack.last().unwrap();
-            if indent > last {
-                self.indent_stack.push(indent);
-                self.tokens.push(Token {
-                    kind: TokenType::Indent,
-                    value: indent.to_string(),
-                    line: self.line,
-                    col: self.col,
-                });
-            } else if indent < last {
-                while indent < *self.indent_stack.last().unwrap() {
-                    self.indent_stack.pop();
-                    self.tokens.push(Token {
-                        kind: TokenType::Dedent,
-                        value: String::new(),
-                        line: self.line,
-                        col: self.col,
-                    });
-                }
-                if indent != *self.indent_stack.last().unwrap() {
-                    vx_error!("缩进不匹配", self.line, self.col, &self.source);
-                }
-            }
-            return Ok(());
-        }
-    }
-
-    fn tokenize(mut self) -> Result<Vec<Token>, VXError> {
-        while self.pos < self.source.len() {
-            self.skip_whitespace();
-            let sl = self.line;
-            let sc = self.col;
-            let c = self.peek(0);
-            if matches!(c, '\n' | '\r') {
-                if c == '\r' && self.peek(1) == '\n' {
-                    self.advance();
-                }
-                self.tokens.push(Token {
-                    kind: TokenType::Newline,
-                    value: String::new(),
-                    line: sl,
-                    col: sc,
-                });
-                self.advance();
-                self.handle_indent()?;
-                continue;
-            }
-            if c == '#' {
-                while !matches!(self.peek(0), '\n' | '\0') {
-                    self.advance();
-                }
-                continue;
-            }
-            if matches!(c, '"' | '\'') {
-                let val = self.read_string(c)?;
-                self.tokens.push(Token {
-                    kind: TokenType::String,
-                    value: val,
-                    line: sl,
-                    col: sc,
-                });
-                continue;
-            }
-            if c.is_ascii_digit() {
-                let t = self.read_number();
-                self.tokens.push(t);
-                continue;
-            }
-            if c.is_alphabetic() || c == '_' || ('\u{4e00}'..='\u{9fff}').contains(&c) {
-                let t = self.read_identifier();
-                self.tokens.push(t);
-                continue;
-            }
-            let n = self.peek(1);
-            let mut handled = true;
-            match (c, n) {
-                ('=', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::Eq,
-                        value: "==".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('!', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::Ne,
-                        value: "!=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('<', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::Le,
-                        value: "<=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('>', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::Ge,
-                        value: ">=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('+', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::PlusAssign,
-                        value: "+=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('-', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::MinusAssign,
-                        value: "-=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('*', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::StarAssign,
-                        value: "*=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('/', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::SlashAssign,
-                        value: "/=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('%', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::PercentAssign,
-                        value: "%=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('^', '=') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::PowerAssign,
-                        value: "^=".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('-', '>') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::Arrow,
-                        value: "->".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('&', '&') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::And,
-                        value: "&&".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                ('|', '|') => {
-                    self.advance();
-                    self.advance();
-                    self.tokens.push(Token {
-                        kind: TokenType::Or,
-                        value: "||".into(),
-                        line: sl,
-                        col: sc,
-                    });
-                }
-                _ => handled = false,
-            }
-            if handled {
-                continue;
-            }
-
-            let m: HashMap<char, TokenType> = [
-                ('+', TokenType::Plus),
-                ('-', TokenType::Minus),
-                ('*', TokenType::Star),
-                ('/', TokenType::Slash),
-                ('%', TokenType::Percent),
-                ('^', TokenType::Power),
-                ('<', TokenType::Lt),
-                ('>', TokenType::Gt),
-                ('=', TokenType::Assign),
-                ('!', TokenType::Not),
-                ('&', TokenType::Ampersand),
-                ('(', TokenType::LParen),
-                (')', TokenType::RParen),
-                ('[', TokenType::LBracket),
-                (']', TokenType::RBracket),
-                ('{', TokenType::LBrace),
-                ('}', TokenType::RBrace),
-                (':', TokenType::Colon),
-                (';', TokenType::Semicolon),
-                (',', TokenType::Comma),
-                ('.', TokenType::Dot),
-            ]
-            .iter()
-            .copied()
-            .collect();
-            if let Some(kind) = m.get(&c) {
-                self.advance();
-                self.tokens.push(Token {
-                    kind: kind.clone(),
-                    value: c.to_string(),
-                    line: sl,
-                    col: sc,
-                });
-                continue;
-            }
-            if c != '\0' {
-                vx_error!(
-                    format!("非法字符: {}", c),
-                    self.line,
-                    self.col,
-                    &self.source
-                );
-            }
-        }
-        while self.indent_stack.len() > 1 {
-            self.indent_stack.pop();
-            self.tokens.push(Token {
-                kind: TokenType::Dedent,
-                value: String::new(),
-                line: self.line,
-                col: self.col,
-            });
-        }
-        self.tokens.push(Token {
-            kind: TokenType::EOF,
-            value: String::new(),
-            line: self.line,
-            col: self.col,
-        });
-        Ok(self.tokens)
-    }
-}
-
-// ==================== AST ====================
-#[derive(Debug, Clone)]
-enum Expr {
-    IntLiteral(i64, usize, usize),
-    FloatLiteral(f64, usize, usize),
-    StringLiteral(String, usize, usize),
-    BoolLiteral(bool, usize, usize),
-    NilLiteral(usize, usize),
-    Identifier(String, usize, usize),
-    ArrayLiteral(Vec<Box<Expr>>, usize, usize),
-    MapLiteral(Vec<(Box<Expr>, Box<Expr>)>, usize, usize),
-    AddressOf(Box<Expr>, usize, usize),
-    Deref(Box<Expr>, usize, usize),
-    PointerMember(Box<Expr>, String, usize, usize),
-    TypeExpr(String, usize, usize),
-    BinaryOp(String, Box<Expr>, Box<Expr>, usize, usize),
-    UnaryOp(String, Box<Expr>, usize, usize),
-    VarDecl(String, Option<Box<Expr>>, Box<Expr>, bool, usize, usize), // name, _type_hint, value, _is_const
-    Assign(Box<Expr>, String, Box<Expr>, usize, usize),
-    IndexAccess(Box<Expr>, Box<Expr>, usize, usize),
-    PropertyAccess(Box<Expr>, String, usize, usize),
-    IfStmt(
-        Box<Expr>,
-        Vec<Box<Stmt>>,
-        Vec<(Box<Expr>, Vec<Box<Stmt>>)>,
-        Option<Vec<Box<Stmt>>>,
-        usize,
-        usize,
-    ),
-    WhileStmt(Box<Expr>, Vec<Box<Stmt>>, usize, usize),
-    ForStmt(String, Box<Expr>, Vec<Box<Stmt>>, usize, usize),
-    BreakStmt(usize, usize),
-    ContinueStmt(usize, usize),
-    FuncDecl(
-        String,
-        Vec<(String, String)>,
-        Option<String>,
-        Vec<Box<Stmt>>,
-        usize,
-        usize,
-    ),
-    ReturnStmt(Option<Box<Expr>>, usize, usize),
-    CallExpr(Box<Expr>, Vec<Box<Expr>>, usize, usize),
-    StructDecl(String, Vec<(String, String)>, Vec<Box<Stmt>>, usize, usize),
-    ClassDecl(
-        String,
-        Vec<(String, String, String)>,
-        Vec<Box<Stmt>>,
-        Option<String>,
-        Vec<String>,
-        usize,
-        usize,
-    ),
-    EnumDecl(String, Vec<(String, i64)>, usize, usize),
-    UnionDecl(String, Vec<(String, String)>, usize, usize),
-    VectorLiteral(Option<Box<Expr>>, Vec<Box<Expr>>, usize, usize),
-    NewExpr(String, Vec<Box<Expr>>, Vec<Box<Expr>>, usize, usize),
-    NewzExpr(String, Vec<Box<Expr>>, Vec<Box<Expr>>, usize, usize),
-    FreeStmt(Box<Expr>, usize, usize),
-    MoveExpr(Box<Expr>, usize, usize),
-    Block(Vec<Box<Stmt>>, usize, usize),
-    ExprStmt(Box<Expr>, usize, usize),
-    ImportStmt(String, Option<String>, Option<String>, usize, usize),
-}
-
-type Stmt = Expr; // 在 VX 中语句和表达式树节点共用同一套枚举，通过外层解析区分
-
-// ==================== 语法分析 ====================
-struct Parser {
-    tokens: Vec<Token>,
-    source: String,
-    pos: usize,
-}
-
-impl Parser {
-    fn new(tokens: Vec<Token>, source: &str) -> Self {
-        Self {
-            tokens,
-            source: source.to_string(),
-            pos: 0,
-        }
-    }
-    fn current(&self) -> &Token {
-        self.tokens
-            .get(self.pos)
-            .unwrap_or(self.tokens.last().unwrap())
-    }
-    fn peek(&self, o: usize) -> &Token {
-        self.tokens
-            .get(self.pos + o)
-            .unwrap_or(self.tokens.last().unwrap())
-    }
-    fn advance(&mut self) -> Token {
-        if self.pos < self.tokens.len() - 1 {
-            self.pos += 1;
-        }
-        self.tokens[self.pos - 1].clone()
-    }
-    fn expect(&mut self, t: TokenType, m: Option<&str>) -> Result<Token, VXError> {
-        if self.current().kind != t {
-            vx_error!(
-                m.unwrap_or(&format!("期望 {:?}", t)),
-                self.current().line,
-                self.current().col,
-                &self.source
-            );
-        }
-        Ok(self.advance())
-    }
-    fn match_kind(&self, kinds: &[TokenType]) -> bool {
-        kinds.contains(&self.current().kind)
-    }
-    fn skip_newlines(&mut self) {
-        while self.current().kind == TokenType::Newline {
-            self.advance();
-        }
-    }
-
-    fn parse_expression(&mut self) -> Result<Expr, VXError> {
-        self.parse_assignment()
-    }
-    fn parse_assignment(&mut self) -> Result<Expr, VXError> {
-        let e = self.parse_or()?;
-        if self.match_kind(&[
-            TokenType::Assign,
-            TokenType::PlusAssign,
-            TokenType::MinusAssign,
-            TokenType::StarAssign,
-            TokenType::SlashAssign,
-            TokenType::PercentAssign,
-            TokenType::PowerAssign,
-        ]) {
-            let (el, ec) = (e_line(&e), e_col(&e));
-            if !matches!(
-                &e,
-                Expr::Identifier(..) | Expr::IndexAccess(..) | Expr::PropertyAccess(..)
-            ) {
-                vx_error!("赋值目标必须是变量/索引/属性", el, ec, &self.source);
-            }
-            let op = self.advance().value;
-            let r = self.parse_assignment()?;
-            return Ok(Expr::Assign(Box::new(e), op, Box::new(r), el, ec));
-        }
-        Ok(e)
-    }
-    fn parse_or(&mut self) -> Result<Expr, VXError> {
-        let mut l = self.parse_and()?;
-        while self.current().kind == TokenType::Or {
-            let op = self.advance().value;
-            l = Expr::BinaryOp(
-                op,
-                Box::new(l.clone()),
-                Box::new(self.parse_and()?),
-                l_line(&l),
-                l_col(&l),
-            );
-        }
-        Ok(l)
-    }
-    fn parse_and(&mut self) -> Result<Expr, VXError> {
-        let mut l = self.parse_equality()?;
-        while self.current().kind == TokenType::And {
-            let op = self.advance().value;
-            l = Expr::BinaryOp(
-                op,
-                Box::new(l.clone()),
-                Box::new(self.parse_equality()?),
-                l_line(&l),
-                l_col(&l),
-            );
-        }
-        Ok(l)
-    }
-    fn parse_equality(&mut self) -> Result<Expr, VXError> {
-        let mut l = self.parse_comparison()?;
-        while self.match_kind(&[TokenType::Eq, TokenType::Ne]) {
-            let op = self.advance().value;
-            l = Expr::BinaryOp(
-                op,
-                Box::new(l.clone()),
-                Box::new(self.parse_comparison()?),
-                l_line(&l),
-                l_col(&l),
-            );
-        }
-        Ok(l)
-    }
-    fn parse_comparison(&mut self) -> Result<Expr, VXError> {
-        let mut l = self.parse_additive()?;
-        while self.match_kind(&[TokenType::Lt, TokenType::Gt, TokenType::Le, TokenType::Ge]) {
-            let op = self.advance().value;
-            l = Expr::BinaryOp(
-                op,
-                Box::new(l.clone()),
-                Box::new(self.parse_additive()?),
-                l_line(&l),
-                l_col(&l),
-            );
-        }
-        Ok(l)
-    }
-    fn parse_additive(&mut self) -> Result<Expr, VXError> {
-        let mut l = self.parse_multiplicative()?;
-        while self.match_kind(&[TokenType::Plus, TokenType::Minus]) {
-            let op = self.advance().value;
-            l = Expr::BinaryOp(
-                op,
-                Box::new(l.clone()),
-                Box::new(self.parse_multiplicative()?),
-                l_line(&l),
-                l_col(&l),
-            );
-        }
-        Ok(l)
-    }
-    fn parse_multiplicative(&mut self) -> Result<Expr, VXError> {
-        let mut l = self.parse_power()?;
-        while self.match_kind(&[TokenType::Star, TokenType::Slash, TokenType::Percent]) {
-            let op = self.advance().value;
-            l = Expr::BinaryOp(
-                op,
-                Box::new(l.clone()),
-                Box::new(self.parse_power()?),
-                l_line(&l),
-                l_col(&l),
-            );
-        }
-        Ok(l)
-    }
-    fn parse_power(&mut self) -> Result<Expr, VXError> {
-        let l = self.parse_unary()?;
-        if self.current().kind == TokenType::Power {
-            let op = self.advance().value;
-            return Ok(Expr::BinaryOp(
-                op,
-                Box::new(l.clone()),
-                Box::new(self.parse_power()?),
-                l_line(&l),
-                l_col(&l),
-            ));
-        }
-        Ok(l)
-    }
-    fn parse_unary(&mut self) -> Result<Expr, VXError> {
-        let (l, c) = (self.current().line, self.current().col);
-        if self.current().kind == TokenType::Ampersand {
-            self.advance();
-            return Ok(Expr::AddressOf(Box::new(self.parse_unary()?), l, c));
-        }
-        if self.current().kind == TokenType::Star {
-            self.advance();
-            return Ok(Expr::Deref(Box::new(self.parse_unary()?), l, c));
-        }
-        if self.match_kind(&[TokenType::Minus, TokenType::Not]) {
-            let op = self.advance().value;
-            return Ok(Expr::UnaryOp(op, Box::new(self.parse_unary()?), l, c));
-        }
-        self.parse_postfix()
-    }
-    fn parse_postfix(&mut self) -> Result<Expr, VXError> {
-        let mut e = self.parse_primary()?;
-        loop {
-            if self.current().kind == TokenType::LParen {
-                e = self.parse_call(e)?;
-            } else if self.current().kind == TokenType::LBracket {
-                e = self.parse_index(e)?;
-            } else if self.current().kind == TokenType::Dot {
-                self.advance();
-                let p = self.expect(TokenType::Identifier, None)?;
-                e = Expr::PropertyAccess(Box::new(e), p.value, p.line, p.col);
-            } else if self.current().kind == TokenType::Arrow {
-                self.advance();
-                let m = self.expect(TokenType::Identifier, None)?;
-                e = Expr::PointerMember(Box::new(e), m.value, m.line, m.col);
-            } else {
-                break;
-            }
-        }
-        Ok(e)
-    }
-    fn parse_call(&mut self, callee: Expr) -> Result<Expr, VXError> {
-        let (l, c) = (self.current().line, self.current().col);
-        self.advance();
-        let mut a = vec![];
-        if !self.match_kind(&[TokenType::RParen]) {
-            a.push(Box::new(self.parse_expression()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                a.push(Box::new(self.parse_expression()?));
-            }
-        }
-        self.expect(TokenType::RParen, None)?;
-        Ok(Expr::CallExpr(Box::new(callee), a, l, c))
-    }
-    fn parse_index(&mut self, e: Expr) -> Result<Expr, VXError> {
-        let (l, c) = (self.current().line, self.current().col);
-        self.advance();
-        let i = self.parse_expression()?;
-        self.expect(TokenType::RBracket, None)?;
-        Ok(Expr::IndexAccess(Box::new(e), Box::new(i), l, c))
-    }
-    fn parse_primary(&mut self) -> Result<Expr, VXError> {
-        let t = self.current().clone();
-        match t.kind {
-            TokenType::Int => {
-                self.advance();
-                Ok(Expr::IntLiteral(t.value.parse().unwrap(), t.line, t.col))
-            }
-            TokenType::Float => {
-                self.advance();
-                Ok(Expr::FloatLiteral(t.value.parse().unwrap(), t.line, t.col))
-            }
-            TokenType::String => {
-                self.advance();
-                Ok(Expr::StringLiteral(t.value.clone(), t.line, t.col))
-            }
-            TokenType::True | TokenType::False => {
-                self.advance();
-                Ok(Expr::BoolLiteral(t.kind == TokenType::True, t.line, t.col))
-            }
-            TokenType::Nil => {
-                self.advance();
-                Ok(Expr::NilLiteral(t.line, t.col))
-            }
-            TokenType::This => {
-                self.advance();
-                Ok(Expr::Identifier("this".into(), t.line, t.col))
-            }
-            TokenType::New => self.parse_new_expr(),
-            TokenType::Newz => self.parse_newz_expr(),
-            TokenType::Move => self.parse_move_expr(),
-            TokenType::Vector => self.parse_vector_literal(),
-            TokenType::In => {
-                self.advance();
-                Ok(Expr::Identifier(t.value.clone(), t.line, t.col))
-            }
-            TokenType::Identifier => {
-                self.advance();
-                Ok(Expr::Identifier(t.value.clone(), t.line, t.col))
-            }
-            TokenType::LBracket => self.parse_array(),
-            TokenType::LBrace => self.parse_map(),
-            TokenType::LParen => {
-                self.advance();
-                let e = self.parse_expression()?;
-                self.expect(TokenType::RParen, None)?;
-                Ok(e)
-            }
-            _ => vx_error!(
-                format!("意外token: {:?}", t.kind),
-                t.line,
-                t.col,
-                &self.source
-            ),
-        }
-    }
-    fn parse_new_expr(&mut self) -> Result<Expr, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let tn = self.expect(TokenType::Identifier, None)?.value;
-        let mut ta = vec![];
-        if self.current().kind == TokenType::Lt {
-            self.advance();
-            ta.push(Box::new(self.parse_type()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                ta.push(Box::new(self.parse_type()?));
-            }
-            self.expect(TokenType::Gt, None)?;
-        }
-        let mut a = vec![];
-        if self.current().kind == TokenType::LParen {
-            self.advance();
-            if !self.match_kind(&[TokenType::RParen]) {
-                a.push(Box::new(self.parse_expression()?));
-                while self.current().kind == TokenType::Comma {
-                    self.advance();
-                    a.push(Box::new(self.parse_expression()?));
-                }
-            }
-            self.expect(TokenType::RParen, None)?;
-        }
-        Ok(Expr::NewExpr(tn, ta, a, l, c))
-    }
-    fn parse_newz_expr(&mut self) -> Result<Expr, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let tn = self.expect(TokenType::Identifier, None)?.value;
-        let mut ta = vec![];
-        if self.current().kind == TokenType::Lt {
-            self.advance();
-            ta.push(Box::new(self.parse_type()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                ta.push(Box::new(self.parse_type()?));
-            }
-            self.expect(TokenType::Gt, None)?;
-        }
-        let mut a = vec![];
-        if self.current().kind == TokenType::LParen {
-            self.advance();
-            if !self.match_kind(&[TokenType::RParen]) {
-                a.push(Box::new(self.parse_expression()?));
-                while self.current().kind == TokenType::Comma {
-                    self.advance();
-                    a.push(Box::new(self.parse_expression()?));
-                }
-            }
-            self.expect(TokenType::RParen, None)?;
-        }
-        Ok(Expr::NewzExpr(tn, ta, a, l, c))
-    }
-    fn parse_move_expr(&mut self) -> Result<Expr, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        Ok(Expr::MoveExpr(Box::new(self.parse_unary()?), l, c))
-    }
-    fn parse_vector_literal(&mut self) -> Result<Expr, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let mut ta = None;
-        if self.current().kind == TokenType::Lt {
-            self.advance();
-            ta = Some(Box::new(self.parse_type()?));
-            self.expect(TokenType::Gt, None)?;
-        }
-        self.expect(TokenType::LBrace, None)?;
-        let mut e = vec![];
-        if !self.match_kind(&[TokenType::RBrace]) {
-            e.push(Box::new(self.parse_expression()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                e.push(Box::new(self.parse_expression()?));
-            }
-        }
-        self.expect(TokenType::RBrace, None)?;
-        Ok(Expr::VectorLiteral(ta, e, l, c))
-    }
-    fn parse_array(&mut self) -> Result<Expr, VXError> {
-        let (l, c) = (self.current().line, self.current().col);
-        self.advance();
-        let mut e = vec![];
-        if !self.match_kind(&[TokenType::RBracket]) {
-            e.push(Box::new(self.parse_expression()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                e.push(Box::new(self.parse_expression()?));
-            }
-        }
-        self.expect(TokenType::RBracket, None)?;
-        Ok(Expr::ArrayLiteral(e, l, c))
-    }
-    fn parse_map(&mut self) -> Result<Expr, VXError> {
-        let (l, c) = (self.current().line, self.current().col);
-        self.advance();
-        let mut p = vec![];
-        let mut e: Vec<Box<Expr>> = vec![];
-        if !self.match_kind(&[TokenType::RBrace]) {
-            let k = self.parse_expression()?;
-            if self.current().kind == TokenType::Colon {
-                self.advance();
-                let v = self.parse_expression()?;
-                p.push((Box::new(k), Box::new(v)));
-                while self.current().kind == TokenType::Comma {
-                    self.advance();
-                    let kk = self.parse_expression()?;
-                    self.expect(TokenType::Colon, None)?;
-                    let vv = self.parse_expression()?;
-                    p.push((Box::new(kk), Box::new(vv)));
-                }
-                self.expect(TokenType::RBrace, None)?;
-                return Ok(Expr::MapLiteral(p, l, c));
-            } else {
-                e.push(Box::new(k));
-            }
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                e.push(Box::new(self.parse_expression()?));
-            }
-            self.expect(TokenType::RBrace, None)?;
-            return Ok(Expr::ArrayLiteral(e, l, c));
-        }
-        Ok(Expr::MapLiteral(p, l, c))
-    }
-    fn parse_type(&mut self) -> Result<Expr, VXError> {
-        let (l, c) = (self.current().line, self.current().col);
-        let nm = if self.match_kind(&[
-            TokenType::IntT,
-            TokenType::FloatT,
-            TokenType::DoubleT,
-            TokenType::StringT,
-            TokenType::VarT,
-            TokenType::BoolT,
-            TokenType::VoidT,
-        ]) {
-            let t = self.advance().value;
-            match t.as_str() {
-                "int" | "float" | "double" | "string" | "var" | "bool" | "void" => t,
-                _ => {
-                    vx_error!(format!("未知类型: {}", t), l, c, &self.source);
-                }
-            }
-        } else if self.current().kind == TokenType::Vector {
-            self.advance();
-            "vector".into()
-        } else if self.current().kind == TokenType::Identifier {
-            self.advance().value
-        } else {
-            vx_error!("期望类型", l, c, &self.source);
-        };
-
-        let mut ta = vec![];
-        if self.current().kind == TokenType::Lt {
-            self.advance();
-            ta.push(Box::new(self.parse_type()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                ta.push(Box::new(self.parse_type()?));
-            }
-            self.expect(TokenType::Gt, None)?;
-        }
-        if !ta.is_empty() {
-            // 如果有类型参数，我们需要创建一个复合类型表达式
-            Ok(Expr::TypeExpr(
-                format!(
-                    "{}<{}>",
-                    nm,
-                    ta.iter()
-                        .map(|t| expr_to_type_name(t.as_ref()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                l,
-                c,
-            ))
-        } else {
-            Ok(Expr::TypeExpr(nm, l, c))
-        }
-    }
-    fn parse_statement(&mut self) -> Result<Stmt, VXError> {
-        self.skip_newlines();
-        match self.current().kind {
-            TokenType::Struct => self.parse_struct_decl(),
-            TokenType::Class => self.parse_class_decl(),
-            TokenType::Enum => self.parse_enum_decl(),
-            TokenType::Union => self.parse_union_decl(),
-            TokenType::Identifier if self.peek(1).kind == TokenType::Colon => self.parse_var_decl(),
-            TokenType::Import => self.parse_import_stmt(),
-            TokenType::Func => self.parse_func_decl(),
-            TokenType::If => self.parse_if_stmt(),
-            TokenType::While => self.parse_while_stmt(),
-            TokenType::For => self.parse_for_stmt(),
-            TokenType::Return => self.parse_return_stmt(),
-            TokenType::Break => {
-                let t = self.advance();
-                Ok(Expr::BreakStmt(t.line, t.col))
-            }
-            TokenType::Continue => {
-                let t = self.advance();
-                Ok(Expr::ContinueStmt(t.line, t.col))
-            }
-            TokenType::Free => self.parse_free_stmt(),
-            _ => {
-                let e = self.parse_expression()?;
-                Ok(Expr::ExprStmt(Box::new(e.clone()), e_line(&e), e_col(&e)))
-            }
-        }
-    }
-    // 其余解析函数(结构体/类/枚举/联合/变量/函数/控制流/导入/块)逻辑与Python完全一致
-    // 为节省篇幅，此处省略重复样板代码，实际编译时需补全。结构体/类解析逻辑已在下方Compiler中体现兼容。
-    fn parse_struct_decl(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
-        self.expect(TokenType::Colon, None)?;
-        self.skip_newlines();
-        let mut f = vec![];
-        let mut m = vec![];
-        self.expect(TokenType::Indent, None)?;
-        while !self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-            self.skip_newlines();
-            if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-                break;
-            }
-            if self.current().kind == TokenType::Func {
-                m.push(Box::new(self.parse_func_decl()?));
-            } else {
-                let fn_name = self.expect(TokenType::Identifier, None)?.value;
-                self.expect(TokenType::Colon, None)?;
-                let ft = self.parse_type()?;
-                f.push((expr_to_type_name(&ft), fn_name));
-            }
-        }
-        self.expect(TokenType::Dedent, None)?;
-        Ok(Expr::StructDecl(n, f, m, l, c))
-    }
-    fn parse_class_decl(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
-        let (mut p, mut ii) = (None, vec![]);
-        if self.current().kind == TokenType::Extends {
-            self.advance();
-            p = Some(self.expect(TokenType::Identifier, None)?.value);
-        }
-        if self.current().kind == TokenType::Implements {
-            self.advance();
-            ii.push(self.expect(TokenType::Identifier, None)?.value);
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                ii.push(self.expect(TokenType::Identifier, None)?.value);
-            }
-        }
-        self.expect(TokenType::Colon, None)?;
-        self.skip_newlines();
-        self.expect(TokenType::Indent, None)?;
-        let mut f = vec![];
-        let mut m = vec![];
-        while !self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-            self.skip_newlines();
-            if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-                break;
-            }
-            let mut acc = "public".to_string();
-            match self.current().kind {
-                TokenType::Public => {
-                    self.advance();
-                }
-                TokenType::Private => {
-                    self.advance();
-                    acc = "private".into();
-                }
-                TokenType::Protected => {
-                    self.advance();
-                    acc = "protected".into();
-                }
-                _ => {}
-            }
-            if self.current().kind == TokenType::Func {
-                m.push(Box::new(self.parse_func_decl()?));
-            } else {
-                let fn_name = self.expect(TokenType::Identifier, None)?.value;
-                self.expect(TokenType::Colon, None)?;
-                let ft = self.parse_type()?;
-                f.push((expr_to_type_name(&ft), fn_name, acc));
-            }
-        }
-        self.expect(TokenType::Dedent, None)?;
-        Ok(Expr::ClassDecl(n, f, m, p, ii, l, c))
-    }
-    fn parse_enum_decl(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
-        self.expect(TokenType::Colon, None)?;
-        self.skip_newlines();
-        self.expect(TokenType::Indent, None)?;
-        let mut v = vec![];
-        let mut auto = 0;
-        while !self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-            self.skip_newlines();
-            if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-                break;
-            }
-            let vn = self.expect(TokenType::Identifier, None)?.value;
-            let mut vv = auto;
-            if self.current().kind == TokenType::Assign {
-                self.advance();
-                vv = self.expect(TokenType::Int, None)?.value.parse().unwrap();
-            }
-            v.push((vn, vv));
-            auto = vv + 1;
-        }
-        self.expect(TokenType::Dedent, None)?;
-        Ok(Expr::EnumDecl(n, v, l, c))
-    }
-    fn parse_union_decl(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
-        self.expect(TokenType::Colon, None)?;
-        self.skip_newlines();
-        self.expect(TokenType::Indent, None)?;
-        let mut f = vec![];
-        while !self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-            self.skip_newlines();
-            if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-                break;
-            }
-            let fn_name = self.expect(TokenType::Identifier, None)?.value;
-            self.expect(TokenType::Colon, None)?;
-            f.push((expr_to_type_name(&self.parse_type()?), fn_name));
-        }
-        self.expect(TokenType::Dedent, None)?;
-        Ok(Expr::UnionDecl(n, f, l, c))
-    }
-    fn parse_var_decl(&mut self) -> Result<Stmt, VXError> {
-        let nm = self.expect(TokenType::Identifier, None)?.value;
-        self.expect(TokenType::Colon, None)?;
-        let mut th = self.parse_type()?;
-        let (l, c) = (th_line(&th), th_col(&th));
-        while self.current().kind == TokenType::Star {
-            self.advance();
-            th = Expr::TypeExpr("pointer".into(), l, c);
-        }
-        let mut v = Expr::NilLiteral(l, c);
-        if self.current().kind == TokenType::Assign {
-            self.advance();
-            v = self.parse_expression()?;
-        }
-        Ok(Expr::VarDecl(
-            nm,
-            Some(Box::new(th)),
-            Box::new(v),
-            false,
-            l,
-            c,
-        ))
-    }
-    fn parse_func_decl(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
-        self.expect(TokenType::LParen, None)?;
-        let mut p = vec![];
-        if !self.match_kind(&[TokenType::RParen]) {
-            let pn = self.expect(TokenType::Identifier, None)?.value;
-            self.expect(TokenType::Colon, None)?;
-            let pt = expr_to_type_name(&self.parse_type()?);
-            p.push((pn, pt));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                let pn = self.expect(TokenType::Identifier, None)?.value;
-                self.expect(TokenType::Colon, None)?;
-                let pt = expr_to_type_name(&self.parse_type()?);
-                p.push((pn, pt));
-            }
-        }
-        self.expect(TokenType::RParen, None)?;
-        let mut rt = None;
-        if self.current().kind == TokenType::Arrow {
-            self.advance();
-            rt = Some(expr_to_type_name(&self.parse_type()?));
-        }
-        let b = self.parse_block()?;
-        Ok(Expr::FuncDecl(n, p, rt, b, l, c))
-    }
-    fn parse_if_stmt(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let cond = self.parse_expression()?;
-        let body = self.parse_block()?;
-        let mut elifs: Vec<(Box<Expr>, Vec<Box<Stmt>>)> = vec![];
-        self.skip_newlines();
-        while self.current().kind == TokenType::Elif {
-            self.advance();
-            let ec = self.parse_expression()?;
-            let eb = self.parse_block()?;
-            elifs.push((Box::new(ec), eb));
-            self.skip_newlines();
-        }
-        let mut ebody: Option<Vec<Box<Stmt>>> = None;
-        if self.current().kind == TokenType::Else {
-            self.advance();
-            self.skip_newlines();
-            ebody = Some(self.parse_block()?);
-        }
-        Ok(Expr::IfStmt(Box::new(cond), body, elifs, ebody, l, c))
-    }
-    fn parse_for_stmt(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let var = self.expect(TokenType::Identifier, None)?.value;
-        self.expect(TokenType::In, None)?;
-        let it = self.parse_expression()?;
-        let body = self.parse_block()?;
-        Ok(Expr::ForStmt(var, Box::new(it), body, l, c))
-    }
-    fn parse_while_stmt(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let cond = self.parse_expression()?;
-        let body = self.parse_block()?;
-        Ok(Expr::WhileStmt(Box::new(cond), body, l, c))
-    }
-    fn parse_return_stmt(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let v = if !self.match_kind(&[TokenType::Newline, TokenType::Dedent, TokenType::EOF]) {
-            Some(Box::new(self.parse_expression()?))
-        } else {
-            None
-        };
-        Ok(Expr::ReturnStmt(v, l, c))
-    }
-    fn parse_free_stmt(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let target = self.parse_expression()?;
-        Ok(Expr::FreeStmt(Box::new(target), l, c))
-    }
-    fn parse_import_stmt(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let nm = self.expect(TokenType::Identifier, None)?.value;
-        let (mut al, mut di) = (None, None);
-        while self.match_kind(&[TokenType::As, TokenType::Dirs]) {
-            if self.current().kind == TokenType::As {
-                self.advance();
-                al = Some(self.expect(TokenType::Identifier, None)?.value);
-            } else {
-                self.advance();
-                di = Some(self.expect(TokenType::String, None)?.value);
-            }
-        }
-        Ok(Expr::ImportStmt(nm, al, di, l, c))
-    }
-    fn parse_block(&mut self) -> Result<Vec<Box<Stmt>>, VXError> {
-        let mut st: Vec<Box<Stmt>> = vec![];
-        self.skip_newlines();
-        if self.current().kind == TokenType::Colon {
-            self.advance();
-            self.skip_newlines();
-            if !self.match_kind(&[TokenType::Indent]) {
-                st.push(Box::new(self.parse_statement()?));
-                return Ok(st);
-            }
-            self.advance();
-        }
-        while !self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-            self.skip_newlines();
-            if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
-                break;
-            }
-            st.push(Box::new(self.parse_statement()?));
-        }
-        if self.current().kind == TokenType::Dedent {
-            self.advance();
-        }
-        Ok(st)
-    }
-    fn parse(&mut self) -> Result<Vec<Stmt>, VXError> {
-        let mut st = vec![];
-        while !self.match_kind(&[TokenType::EOF]) {
-            self.skip_newlines();
-            if self.match_kind(&[TokenType::EOF]) {
-                break;
-            }
-            st.push(self.parse_statement()?);
-        }
-        Ok(st)
-    }
-}
-
-// 辅助函数：从 Expr::TypeExpr 提取类型名
-fn expr_to_type_name(e: &Expr) -> String {
-    if let Expr::TypeExpr(name, _, _) = e {
-        name.clone()
-    } else {
-        String::new()
-    }
-}
-fn e_line(e: &Expr) -> usize {
-    match e {
-        Expr::IntLiteral(_, l, _) => *l,
-        Expr::FloatLiteral(_, l, _) => *l,
-        Expr::StringLiteral(_, l, _) => *l,
-        Expr::BoolLiteral(_, l, _) => *l,
-        Expr::NilLiteral(l, _) => *l,
-        Expr::Identifier(_, l, _) => *l,
-        Expr::ArrayLiteral(_, l, _) => *l,
-        Expr::MapLiteral(_, l, _) => *l,
-        Expr::AddressOf(_, l, _) => *l,
-        Expr::Deref(_, l, _) => *l,
-        Expr::PointerMember(_, _, l, _) => *l,
-        Expr::TypeExpr(_, l, _) => *l,
-        Expr::BinaryOp(_, _, _, l, _) => *l,
-        Expr::UnaryOp(_, _, l, _) => *l,
-        Expr::VarDecl(_, _, _, _, l, _) => *l,
-        Expr::Assign(_, _, _, l, _) => *l,
-        Expr::IndexAccess(_, _, l, _) => *l,
-        Expr::PropertyAccess(_, _, l, _) => *l,
-        Expr::IfStmt(_, _, _, _, l, _) => *l,
-        Expr::WhileStmt(_, _, l, _) => *l,
-        Expr::ForStmt(_, _, _, l, _) => *l,
-        Expr::BreakStmt(l, _) => *l,
-        Expr::ContinueStmt(l, _) => *l,
-        Expr::FuncDecl(_, _, _, _, l, _) => *l,
-        Expr::ReturnStmt(_, l, _) => *l,
-        Expr::CallExpr(_, _, l, _) => *l,
-        Expr::StructDecl(_, _, _, l, _) => *l,
-        Expr::ClassDecl(_, _, _, _, _, l, _) => *l,
-        Expr::EnumDecl(_, _, l, _) => *l,
-        Expr::UnionDecl(_, _, l, _) => *l,
-        Expr::VectorLiteral(_, _, l, _) => *l,
-        Expr::NewExpr(_, _, _, l, _) => *l,
-        Expr::NewzExpr(_, _, _, l, _) => *l,
-        Expr::FreeStmt(_, l, _) => *l,
-        Expr::MoveExpr(_, l, _) => *l,
-        Expr::Block(_, l, _) => *l,
-        Expr::ExprStmt(_, l, _) => *l,
-        Expr::ImportStmt(_, _, _, l, _) => *l,
-    }
-}
-fn e_col(e: &Expr) -> usize {
-    match e {
-        Expr::IntLiteral(_, _, c) => *c,
-        Expr::FloatLiteral(_, _, c) => *c,
-        Expr::StringLiteral(_, _, c) => *c,
-        Expr::BoolLiteral(_, _, c) => *c,
-        Expr::NilLiteral(_, c) => *c,
-        Expr::Identifier(_, _, c) => *c,
-        Expr::ArrayLiteral(_, _, c) => *c,
-        Expr::MapLiteral(_, _, c) => *c,
-        Expr::AddressOf(_, _, c) => *c,
-        Expr::Deref(_, _, c) => *c,
-        Expr::PointerMember(_, _, _, c) => *c,
-        Expr::TypeExpr(_, _, c) => *c,
-        Expr::BinaryOp(_, _, _, _, c) => *c,
-        Expr::UnaryOp(_, _, _, c) => *c,
-        Expr::VarDecl(_, _, _, _, _, c) => *c,
-        Expr::Assign(_, _, _, _, c) => *c,
-        Expr::IndexAccess(_, _, _, c) => *c,
-        Expr::PropertyAccess(_, _, _, c) => *c,
-        Expr::IfStmt(_, _, _, _, _, c) => *c,
-        Expr::WhileStmt(_, _, _, c) => *c,
-        Expr::ForStmt(_, _, _, _, c) => *c,
-        Expr::BreakStmt(_, c) => *c,
-        Expr::ContinueStmt(_, c) => *c,
-        Expr::FuncDecl(_, _, _, _, _, c) => *c,
-        Expr::ReturnStmt(_, _, c) => *c,
-        Expr::CallExpr(_, _, _, c) => *c,
-        Expr::StructDecl(_, _, _, _, c) => *c,
-        Expr::ClassDecl(_, _, _, _, _, _, c) => *c,
-        Expr::EnumDecl(_, _, _, c) => *c,
-        Expr::UnionDecl(_, _, _, c) => *c,
-        Expr::VectorLiteral(_, _, _, c) => *c,
-        Expr::NewExpr(_, _, _, _, c) => *c,
-        Expr::NewzExpr(_, _, _, _, c) => *c,
-        Expr::FreeStmt(_, _, c) => *c,
-        Expr::MoveExpr(_, _, c) => *c,
-        Expr::Block(_, _, c) => *c,
-        Expr::ExprStmt(_, _, c) => *c,
-        Expr::ImportStmt(_, _, _, _, c) => *c,
-    }
-}
-fn th_line(e: &Expr) -> usize {
-    e_line(e)
-}
-fn th_col(e: &Expr) -> usize {
-    e_col(e)
-}
-fn l_line(e: &Expr) -> usize {
-    e_line(e)
-}
-fn l_col(e: &Expr) -> usize {
-    e_col(e)
-}
+use token::Lexer;
+use parser::{Parser, Expr, Stmt};
 
 // ==================== 字节码 ====================
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 enum OpCode {
     LoadConst = 0x01,
     LoadNil = 0x02,
@@ -1682,13 +104,13 @@ struct Instruction {
 struct BytecodeFunction {
     name: String,
     instructions: Vec<Instruction>,
-    constants: Vec<ConstantValue>,
     num_params: usize,
     has_return: bool,
     param_names: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum ConstantValue {
     Nil,
     Bool(bool),
@@ -1700,12 +122,8 @@ enum ConstantValue {
 struct CompiledModule {
     functions: Vec<BytecodeFunction>,
     constants: Vec<ConstantValue>,
-    imports: Vec<(String, Option<String>, Option<String>, usize, usize)>,
     structs: Vec<(String, Vec<String>)>,
     classes: Vec<(String, Vec<String>)>,
-    enums: Vec<(String, Vec<(String, i64)>)>,
-    unions: Vec<(String, Vec<String>)>,
-    source_file: String,
 }
 
 // ==================== 所有权检查器 ====================
@@ -1880,7 +298,7 @@ impl OwnershipChecker {
     fn do_borrow(&mut self, owner: &str, borrower: &str) {
         self.borrows.insert(borrower.to_string(), owner.to_string());
         self.set_state(owner, OwnershipState::Borrowed);
-        self.declare_var(borrower, self.heap_vars.contains(owner));
+        self.declare_var(borrower, false); // borrower is a reference, not a heap owner
     }
     fn check_assign(&mut self, name: &str, value: &Expr, line: usize, col: usize) {
         match value {
@@ -2112,13 +530,12 @@ impl OwnershipChecker {
 struct LoopInfo {
     start: usize,
     break_jumps: Vec<usize>,
+    continue_jumps: Vec<usize>,
 }
 
 struct Compiler {
-    source_dir: String,
     vxmodel: HashMap<String, String>,
     constants: Vec<ConstantValue>,
-    cmap: HashMap<String, usize>,
     instructions: Vec<Instruction>,
     functions: Vec<BytecodeFunction>,
     loop_stack: Vec<LoopInfo>,
@@ -2126,12 +543,10 @@ struct Compiler {
 }
 
 impl Compiler {
-    fn new(source_dir: String, vxmodel: HashMap<String, String>) -> Self {
+    fn new(vxmodel: HashMap<String, String>) -> Self {
         Self {
-            source_dir,
             vxmodel,
             constants: Vec::new(),
-            cmap: HashMap::new(),
             instructions: Vec::new(),
             functions: Vec::new(),
             loop_stack: Vec::new(),
@@ -2140,9 +555,7 @@ impl Compiler {
     }
     fn add_const(&mut self, v: ConstantValue) -> usize {
         self.constants.push(v.clone());
-        let i = self.constants.len() - 1;
-        self.cmap.insert(format!("{:?}", v), i);
-        i
+        self.constants.len() - 1
     }
     fn emit(&mut self, op: OpCode, arg: BytecodeArg) -> usize {
         self.instructions.push(Instruction { op, arg });
@@ -2311,164 +724,183 @@ impl Compiler {
             _ => {}
         }
     }
+    /// 编译赋值操作（被 ExprStmt(Assign) 重用）
+    fn compile_assign(&mut self, target: &Expr, op: &str, value: &Expr) {
+        if op == "=" {
+            match target {
+                Expr::Identifier(name, _, _) => {
+                    self.compile_expr(value);
+                    self.emit(OpCode::StoreVar, BytecodeArg::String(name.clone()));
+                }
+                Expr::IndexAccess(obj, index, _, _) => {
+                    self.compile_expr(value);
+                    self.compile_expr(obj);
+                    self.compile_expr(index);
+                    self.emit(OpCode::IndexSet, BytecodeArg::None);
+                }
+                Expr::PropertyAccess(obj, prop, _, _) => {
+                    self.compile_expr(value);
+                    self.compile_expr(obj);
+                    self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
+                    self.emit(OpCode::Pop, BytecodeArg::None);
+                }
+                _ => {}
+            }
+        } else {
+            let bin_op = match op {
+                "+=" => "+",
+                "-=" => "-",
+                "*=" => "*",
+                "/=" => "/",
+                "%=" => "%",
+                "^=" => "^",
+                _ => op,
+            };
+            match target {
+                Expr::Identifier(name, _, _) => {
+                    self.emit(OpCode::LoadVar, BytecodeArg::String(name.clone()));
+                    self.compile_expr(value);
+                    let oc = match bin_op {
+                        "+" => OpCode::BinaryAdd,
+                        "-" => OpCode::BinarySub,
+                        "*" => OpCode::BinaryMul,
+                        "/" => OpCode::BinaryDiv,
+                        "%" => OpCode::BinaryMod,
+                        "^" => OpCode::BinaryPow,
+                        _ => {
+                            eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
+                            process::exit(1);
+                        }
+                    };
+                    self.emit(oc, BytecodeArg::None);
+                    self.emit(OpCode::StoreVar, BytecodeArg::String(name.clone()));
+                }
+                Expr::IndexAccess(obj, index, _, _) => {
+                    self.compile_expr(obj);
+                    self.compile_expr(index);
+                    self.emit(OpCode::IndexGet, BytecodeArg::None);
+                    self.compile_expr(value);
+                    let oc = match bin_op {
+                        "+" => OpCode::BinaryAdd,
+                        "-" => OpCode::BinarySub,
+                        "*" => OpCode::BinaryMul,
+                        "/" => OpCode::BinaryDiv,
+                        "%" => OpCode::BinaryMod,
+                        "^" => OpCode::BinaryPow,
+                        _ => {
+                            eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
+                            process::exit(1);
+                        }
+                    };
+                    self.emit(oc, BytecodeArg::None);
+                    let tmp = format!("__asg_v_{}", self.instructions.len());
+                    self.emit(OpCode::StoreVar, BytecodeArg::String(tmp.clone()));
+                    self.compile_expr(obj);
+                    self.compile_expr(index);
+                    self.emit(OpCode::LoadVar, BytecodeArg::String(tmp));
+                    self.emit(OpCode::IndexSet, BytecodeArg::None);
+                }
+                Expr::PropertyAccess(obj, prop, _, _) => {
+                    self.compile_expr(obj);
+                    self.emit(OpCode::PropertyGet, BytecodeArg::String(prop.clone()));
+                    self.compile_expr(value);
+                    let oc = match bin_op {
+                        "+" => OpCode::BinaryAdd,
+                        "-" => OpCode::BinarySub,
+                        "*" => OpCode::BinaryMul,
+                        "/" => OpCode::BinaryDiv,
+                        "%" => OpCode::BinaryMod,
+                        "^" => OpCode::BinaryPow,
+                        _ => {
+                            eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
+                            process::exit(1);
+                        }
+                    };
+                    self.emit(oc, BytecodeArg::None);
+                    let tmp = format!("__asg_v_{}", self.instructions.len());
+                    self.emit(OpCode::StoreVar, BytecodeArg::String(tmp.clone()));
+                    self.compile_expr(obj);
+                    self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
+                    self.emit(OpCode::Pop, BytecodeArg::None);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn compile_stmt(&mut self, s: &Stmt) {
         match s {
             Expr::ExprStmt(expr, _, _) => {
-                self.compile_expr(expr);
+                // Assign 被解析器包裹在 ExprStmt 中，需要特殊处理
+                if let Expr::Assign(ref target, ref op, ref value, _, _) = **expr {
+                    self.compile_assign(target, op, value);
+                } else {
+                    self.compile_expr(expr);
+                }
             }
             Expr::VarDecl(name, _, value, _, _, _) => {
                 self.compile_expr(value);
                 self.emit(OpCode::DefineVar, BytecodeArg::String(name.clone()));
             }
-            Expr::Assign(target, op, value, _, _) => {
-                if op == "=" {
-                    match target.as_ref() {
-                        Expr::Identifier(name, _, _) => {
-                            self.compile_expr(value);
-                            self.emit(OpCode::StoreVar, BytecodeArg::String(name.clone()));
-                        }
-                        Expr::IndexAccess(obj, index, _, _) => {
-                            self.compile_expr(value);
-                            self.compile_expr(obj);
-                            self.compile_expr(index);
-                            self.emit(OpCode::IndexSet, BytecodeArg::None);
-                        }
-                        Expr::PropertyAccess(obj, prop, _, _) => {
-                            self.compile_expr(value);
-                            self.compile_expr(obj);
-                            self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
-                            self.emit(OpCode::Pop, BytecodeArg::None);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    let bin_op = match op.as_ref() {
-                        "+=" => "+",
-                        "-=" => "-",
-                        "*=" => "*",
-                        "/=" => "/",
-                        "%=" => "%",
-                        "^=" => "^",
-                        _ => op,
-                    };
-                    match target.as_ref() {
-                        Expr::Identifier(name, _, _) => {
-                            self.emit(OpCode::LoadVar, BytecodeArg::String(name.clone()));
-                            self.compile_expr(value);
-                            let oc = match bin_op.as_ref() {
-                                "+" => OpCode::BinaryAdd,
-                                "-" => OpCode::BinarySub,
-                                "*" => OpCode::BinaryMul,
-                                "/" => OpCode::BinaryDiv,
-                                "%" => OpCode::BinaryMod,
-                                "^" => OpCode::BinaryPow,
-                                _ => {
-                                    eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
-                                    process::exit(1);
-                                }
-                            };
-                            self.emit(oc, BytecodeArg::None);
-                            self.emit(OpCode::StoreVar, BytecodeArg::String(name.clone()));
-                        }
-                        Expr::IndexAccess(obj, index, _, _) => {
-                            self.compile_expr(obj);
-                            self.compile_expr(index);
-                            self.emit(OpCode::IndexGet, BytecodeArg::None);
-                            self.compile_expr(value);
-                            let oc = match bin_op.as_ref() {
-                                "+" => OpCode::BinaryAdd,
-                                "-" => OpCode::BinarySub,
-                                "*" => OpCode::BinaryMul,
-                                "/" => OpCode::BinaryDiv,
-                                "%" => OpCode::BinaryMod,
-                                "^" => OpCode::BinaryPow,
-                                _ => {
-                                    eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
-                                    process::exit(1);
-                                }
-                            };
-                            self.emit(oc, BytecodeArg::None);
-                            let tmp = format!("__asg_v_{}", self.instructions.len());
-                            self.emit(OpCode::StoreVar, BytecodeArg::String(tmp.clone()));
-                            self.compile_expr(obj);
-                            self.compile_expr(index);
-                            self.emit(OpCode::LoadVar, BytecodeArg::String(tmp));
-                            self.emit(OpCode::IndexSet, BytecodeArg::None);
-                        }
-                        Expr::PropertyAccess(obj, prop, _, _) => {
-                            self.compile_expr(obj);
-                            self.emit(OpCode::PropertyGet, BytecodeArg::String(prop.clone()));
-                            self.compile_expr(value);
-                            let oc = match bin_op.as_ref() {
-                                "+" => OpCode::BinaryAdd,
-                                "-" => OpCode::BinarySub,
-                                "*" => OpCode::BinaryMul,
-                                "/" => OpCode::BinaryDiv,
-                                "%" => OpCode::BinaryMod,
-                                "^" => OpCode::BinaryPow,
-                                _ => {
-                                    eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
-                                    process::exit(1);
-                                }
-                            };
-                            self.emit(oc, BytecodeArg::None);
-                            let tmp = format!("__asg_v_{}", self.instructions.len());
-                            self.emit(OpCode::StoreVar, BytecodeArg::String(tmp.clone()));
-                            self.compile_expr(obj);
-                            self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
-                            self.emit(OpCode::Pop, BytecodeArg::None);
-                        }
-                        _ => {}
-                    }
-                }
-            }
             Expr::IfStmt(cond, body, elifs, else_body, _, _) => {
                 self.compile_expr(cond);
-                let j = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
+                let jump_to_elif = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
                 for x in body {
                     self.compile_stmt(x);
                 }
-                let _e = self.emit(OpCode::Jump, BytecodeArg::None);
-                self.patch(j, self.instructions.len());
+                let mut exit_jumps: Vec<usize> = Vec::new();
+                exit_jumps.push(self.emit(OpCode::Jump, BytecodeArg::None));
+                self.patch(jump_to_elif, self.instructions.len());
                 for (c, b) in elifs {
                     self.compile_expr(c);
-                    let jj = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
+                    let jump_to_next = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
                     for x in b {
                         self.compile_stmt(x);
                     }
-                    let _ee = self.emit(OpCode::Jump, BytecodeArg::None);
-                    self.patch(jj, self.instructions.len());
-                    let _e = self.emit(OpCode::Jump, BytecodeArg::None); // fix patch target later
+                    exit_jumps.push(self.emit(OpCode::Jump, BytecodeArg::None));
+                    self.patch(jump_to_next, self.instructions.len());
                 }
                 if let Some(b) = else_body {
                     for x in b {
                         self.compile_stmt(x);
                     }
                 }
-                // Simplified jump patching logic matching Python
+                let end_pc = self.instructions.len();
+                for j in exit_jumps {
+                    self.patch(j, end_pc);
+                }
             }
             Expr::WhileStmt(cond, body, _, _) => {
                 let start = self.instructions.len();
                 self.loop_stack.push(LoopInfo {
                     start,
                     break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
                 });
                 self.compile_expr(cond);
                 let exit_j = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
                 for x in body {
                     self.compile_stmt(x);
                 }
-                self.emit(OpCode::Jump, BytecodeArg::None); // placeholder
+                self.emit(OpCode::Jump, BytecodeArg::None);
                 let exit_pc = self.instructions.len();
                 self.patch(exit_j, exit_pc);
                 self.patch(self.instructions.len() - 1, start);
-                for bj in self.loop_stack.last().unwrap().break_jumps.clone() {
-                    self.patch(bj, exit_pc);
+                let (break_jumps, continue_jumps) = {
+                    let info = self.loop_stack.last().unwrap();
+                    (info.break_jumps.clone(), info.continue_jumps.clone())
+                };
+                for bj in &break_jumps {
+                    self.patch(*bj, exit_pc);
+                }
+                for cj in &continue_jumps {
+                    self.patch(*cj, start);
                 }
                 self.loop_stack.pop();
             }
             Expr::ForStmt(var, iter, body, _, _) => {
-                let for_id = self.functions.len();
+                let for_id = self.for_counter;
+                self.for_counter += 1;
                 let src_var = format!("__for_{}_src", for_id);
                 let idx_var = format!("__for_{}_idx", for_id);
                 self.compile_expr(iter);
@@ -2480,6 +912,7 @@ impl Compiler {
                 self.loop_stack.push(LoopInfo {
                     start,
                     break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
                 });
                 self.emit(OpCode::LoadVar, BytecodeArg::String(idx_var.clone()));
                 self.emit(OpCode::LoadVar, BytecodeArg::String(src_var.clone()));
@@ -2506,8 +939,15 @@ impl Compiler {
                 let exit_pc = self.instructions.len();
                 self.patch(exit_j, exit_pc);
                 self.patch(self.instructions.len() - 1, start);
-                for bj in self.loop_stack.last().unwrap().break_jumps.clone() {
-                    self.patch(bj, exit_pc);
+                let (break_jumps, continue_jumps) = {
+                    let info = self.loop_stack.last().unwrap();
+                    (info.break_jumps.clone(), info.continue_jumps.clone())
+                };
+                for bj in &break_jumps {
+                    self.patch(*bj, exit_pc);
+                }
+                for cj in &continue_jumps {
+                    self.patch(*cj, cont_pc);
                 }
                 self.loop_stack.pop();
             }
@@ -2519,14 +959,17 @@ impl Compiler {
                 let bj = self.emit(OpCode::Jump, BytecodeArg::None);
                 self.loop_stack.last_mut().unwrap().break_jumps.push(bj);
             }
-            Expr::ContinueStmt(_, _) => {
+            Expr::ContinueStmt(line, col) => {
                 if self.loop_stack.is_empty() {
-                    eprintln!("VX Error: continue outside loop");
+                    eprintln!("VX Error [line {}, col {}]: continue outside loop", line, col);
                     process::exit(1);
                 }
-                let _target = self.loop_stack.last().unwrap().start;
-                self.emit(OpCode::Jump, BytecodeArg::None); // patched later or direct
-                                                            // Simplified for brevity
+                let cj = self.emit(OpCode::Jump, BytecodeArg::None);
+                self.loop_stack
+                    .last_mut()
+                    .unwrap()
+                    .continue_jumps
+                    .push(cj);
             }
             Expr::ReturnStmt(val, _, _) => {
                 if let Some(v) = val {
@@ -2543,18 +986,14 @@ impl Compiler {
             _ => {}
         }
     }
-    fn compile(&mut self, ast: &[Stmt], source_file: &str) -> CompiledModule {
+    fn compile(&mut self, ast: &[Stmt]) -> CompiledModule {
         self.constants.clear();
-        self.cmap.clear();
         self.instructions.clear();
         self.functions.clear();
         self.loop_stack.clear();
         self.for_counter = 0;
         let mut structs = Vec::new();
         let mut classes = Vec::new();
-        let mut enums = Vec::new();
-        let mut unions = Vec::new();
-        let mut imports = Vec::new();
 
         for s in ast {
             match s {
@@ -2572,7 +1011,6 @@ impl Compiler {
                     self.functions.push(BytecodeFunction {
                         name: name.clone(),
                         instructions: std::mem::replace(&mut self.instructions, save),
-                        constants: self.constants.clone(),
                         num_params: fields.len(),
                         has_return: true,
                         param_names: fields.iter().map(|f| f.1.clone()).collect(),
@@ -2595,7 +1033,6 @@ impl Compiler {
                     self.functions.push(BytecodeFunction {
                         name: name.clone(),
                         instructions: std::mem::replace(&mut self.instructions, save),
-                        constants: self.constants.clone(),
                         num_params: fields.len(),
                         has_return: true,
                         param_names: fields.iter().map(|f| f.1.clone()).collect(),
@@ -2617,7 +1054,6 @@ impl Compiler {
                             self.functions.push(BytecodeFunction {
                                 name: method_name,
                                 instructions: std::mem::replace(&mut self.instructions, msave),
-                                constants: self.constants.clone(),
                                 num_params: params.len(),
                                 has_return: true,
                                 param_names: params.iter().map(|p| p.0.clone()).collect(),
@@ -2633,12 +1069,9 @@ impl Compiler {
                         }
                     }
                 }
-                Expr::EnumDecl(name, values, _, _) => enums.push((name.clone(), values.clone())),
-                Expr::UnionDecl(name, fields, _, _) => {
-                    unions.push((name.clone(), fields.iter().map(|f| f.1.clone()).collect()))
-                }
-                Expr::ImportStmt(name, alias, dirs, line, col) => {
-                    imports.push((name.clone(), alias.clone(), dirs.clone(), *line, *col));
+                Expr::EnumDecl(_, _, _, _) => {}
+                Expr::UnionDecl(_, _, _, _) => {}
+                Expr::ImportStmt(name, alias, _dirs, _, _) => {
                     let lib_path = self.vxmodel.get(name).cloned();
                     self.emit(
                         OpCode::Import,
@@ -2660,7 +1093,6 @@ impl Compiler {
                     self.functions.push(BytecodeFunction {
                         name: fname.clone(),
                         instructions: std::mem::replace(&mut self.instructions, save),
-                        constants: self.constants.clone(),
                         num_params: params.len(),
                         has_return: true,
                         param_names: params.iter().map(|p| p.0.clone()).collect(),
@@ -2682,7 +1114,6 @@ impl Compiler {
                 BytecodeFunction {
                     name: "__main__".into(),
                     instructions: std::mem::replace(&mut self.instructions, Vec::new()),
-                    constants: self.constants.clone(),
                     num_params: 0,
                     has_return: false,
                     param_names: Vec::new(),
@@ -2692,86 +1123,28 @@ impl Compiler {
         CompiledModule {
             functions: std::mem::replace(&mut self.functions, Vec::new()),
             constants: std::mem::replace(&mut self.constants, Vec::new()),
-            imports,
             structs,
             classes,
-            enums,
-            unions,
-            source_file: source_file.to_string(),
         }
     }
     fn save(&self, der: &CompiledModule, path: &str) -> io::Result<()> {
-        let mut f = fs::File::create(path)?;
-        f.write_all(b"VXOBJ")?;
-        f.write_all(&2u32.to_be_bytes())?;
-        f.write_all(&(der.constants.len() as u32).to_be_bytes())?;
-        for c in &der.constants {
-            match c {
-                ConstantValue::Nil => f.write_all(&[0])?,
-                ConstantValue::Bool(b) => {
-                    f.write_all(&[4])?;
-                    f.write_all(&[if *b { 1 } else { 0 }])?;
-                }
-                ConstantValue::Int(v) => {
-                    f.write_all(&[1])?;
-                    f.write_all(&(*v as i64).to_be_bytes())?;
-                }
-                ConstantValue::Float(v) => {
-                    f.write_all(&[2])?;
-                    f.write_all(&v.to_be_bytes())?;
-                }
-                ConstantValue::String(s) => {
-                    let b = s.as_bytes();
-                    f.write_all(&[3])?;
-                    f.write_all(&(b.len() as u32).to_be_bytes())?;
-                    f.write_all(b)?;
-                }
-            }
-        }
-        f.write_all(&(der.functions.len() as u32).to_be_bytes())?;
-        for fn_ in &der.functions {
-            let nb = fn_.name.as_bytes();
-            f.write_all(&(nb.len() as u32).to_be_bytes())?;
-            f.write_all(nb)?;
-            f.write_all(&(fn_.num_params as u32).to_be_bytes())?;
-            f.write_all(&[if fn_.has_return { 1 } else { 0 }])?;
-            f.write_all(&(fn_.param_names.len() as u32).to_be_bytes())?;
-            for pn in &fn_.param_names {
-                let pb = pn.as_bytes();
-                f.write_all(&(pb.len() as u32).to_be_bytes())?;
-                f.write_all(pb)?;
-            }
-            f.write_all(&0u32.to_be_bytes())?; // local constants pool (unused)
-            f.write_all(&(fn_.instructions.len() as u32).to_be_bytes())?;
-            for inst in &fn_.instructions {
-                f.write_all(&[inst.op as u8])?;
-                match &inst.arg {
-                    BytecodeArg::None => f.write_all(&[0])?,
-                    BytecodeArg::Int(v) => {
-                        f.write_all(&[1])?;
-                        f.write_all(&v.to_be_bytes())?;
-                    }
-                    BytecodeArg::String(s) => {
-                        let b = s.as_bytes();
-                        f.write_all(&[2])?;
-                        f.write_all(&(b.len() as u32).to_be_bytes())?;
-                        f.write_all(b)?;
-                    }
-                    BytecodeArg::ImportTuple(a, b, c) => {
-                        let s = format!(
-                            "{},{},{}",
-                            a,
-                            b.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                            c.as_ref().map(|s| s.as_str()).unwrap_or("")
-                        )
-                        .into_bytes();
-                        f.write_all(&[2])?;
-                        f.write_all(&(s.len() as u32).to_be_bytes())?;
-                        f.write_all(&s)?;
-                    }
-                }
-            }
-        }
+        use std::io::BufWriter;
+
+        let mut f = BufWriter::new(fs::File::create(path)?);
+
+        // 将编译结果转换为 bytecode 模块所需的数据结构
+        let constants: Vec<bytecode::SerializedConstant> = der
+            .constants
+            .iter()
+            .map(|c| match c {
+                ConstantValue::Nil => bytecode::SerializedConstant::Nil,
+                ConstantValue::Bool(b) => bytecode::SerializedConstant::Bool(*b),
+                ConstantValue::Int(v) => bytecode::SerializedConstant::Int(*v),
+                ConstantValue::Float(v) => bytecode::SerializedConstant::Float(*v),
+                ConstantValue::String(s) => bytecode::SerializedConstant::String(s.clone()),
+            })
+            .collect();
+
         let mut struct_map = HashMap::new();
         for (n, f) in &der.structs {
             struct_map.insert(n.clone(), f.clone());
@@ -2779,19 +1152,62 @@ impl Compiler {
         for (n, f) in &der.classes {
             struct_map.insert(n.clone(), f.clone());
         }
-        f.write_all(&(struct_map.len() as u32).to_be_bytes())?;
-        for (sname, fields) in &struct_map {
-            let nb = sname.as_bytes();
-            f.write_all(&(nb.len() as u32).to_be_bytes())?;
-            f.write_all(nb)?;
-            f.write_all(&(fields.len() as u32).to_be_bytes())?;
-            for fname in fields {
-                let fb = fname.as_bytes();
-                f.write_all(&(fb.len() as u32).to_be_bytes())?;
-                f.write_all(fb)?;
+
+        // 构建函数数据
+        let mut func_data: Vec<(
+            &str,
+            u32,
+            bool,
+            Vec<String>,
+            Vec<(u8, u8, Option<i32>, Option<String>)>,
+        )> = Vec::with_capacity(der.functions.len());
+
+        let mut temp_strings = Vec::new(); // 保持 String 所有权
+        for fn_ in &der.functions {
+            let mut insts: Vec<(u8, u8, Option<i32>, Option<String>)> =
+                Vec::with_capacity(fn_.instructions.len());
+            for inst in &fn_.instructions {
+                let (arg_type, iarg, sarg) = match &inst.arg {
+                    BytecodeArg::None => (0, None, None),
+                    BytecodeArg::Int(v) => (1, Some(*v), None),
+                    BytecodeArg::String(s) => (2, None, Some(s.clone())),
+                    BytecodeArg::ImportTuple(a, b, c) => {
+                        let s = format!(
+                            "{},{},{}",
+                            b.as_deref().unwrap_or(""),
+                            c.as_deref().unwrap_or(""),
+                            a,
+                        );
+                        temp_strings.push(s.clone());
+                        (2, None, Some(s))
+                    }
+                };
+                insts.push((inst.op as u8, arg_type, iarg, sarg));
             }
+            func_data.push((
+                fn_.name.as_str(),
+                fn_.num_params as u32,
+                fn_.has_return,
+                fn_.param_names.clone(),
+                insts,
+            ));
         }
-        Ok(())
+
+        // 转为 bytecode 模块期望的引用形式
+        let func_refs: Vec<(
+            &str,
+            u32,
+            bool,
+            &[String],
+            &[(u8, u8, Option<i32>, Option<String>)],
+        )> = func_data
+            .iter()
+            .map(|(name, np, hr, pn, insts)| {
+                (*name, *np, *hr, pn.as_slice(), insts.as_slice())
+            })
+            .collect();
+
+        bytecode::write_vxobj(&mut f, &constants, &func_refs, &struct_map)
     }
 }
 
@@ -2873,8 +1289,8 @@ fn main() {
         process::exit(1);
     }
 
-    let mut comp = Compiler::new(source_dir, vxmodel);
-    let der = comp.compile(&ast, input);
+    let mut comp = Compiler::new(vxmodel);
+    let der = comp.compile(&ast);
     match comp.save(&der, &output) {
         Ok(_) => println!("Compiled: {}", output),
         Err(e) => {
