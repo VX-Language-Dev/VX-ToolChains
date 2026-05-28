@@ -756,7 +756,6 @@ dependencies = [
  "assert_cmd",
  "predicates",
  "serde",
- "serde_json",
  "tempfile",
  "trycmd",
  "yaml-rust2",

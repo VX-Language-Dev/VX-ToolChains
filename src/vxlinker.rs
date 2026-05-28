@@ -3,12 +3,21 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-// VXOBJ V1 头部: Magic[5] + Version[4] + PickleLen[4] = 13
-// VXOBJ V2 头部: Magic[5] + Version[4] = 9
-#[allow(dead_code)]
-const VXOBJ_V1_HEADER_SIZE: usize = 13;
-#[allow(dead_code)]
-const VXOBJ_V2_HEADER_SIZE: usize = 9;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+use vx_vm::bytecode;
+
+// 平台相关的默认配置
+#[cfg(target_os = "windows")]
+const DEFAULT_STUB: &str = "vx_runtime_x64.exe";
+#[cfg(not(target_os = "windows"))]
+const DEFAULT_STUB: &str = "vx_runtime";
+
+#[cfg(target_os = "windows")]
+const DEFAULT_OUTPUT_EXT: &str = "exe";
+#[cfg(not(target_os = "windows"))]
+const DEFAULT_OUTPUT_EXT: &str = "out";
 
 #[derive(Debug)]
 pub enum LinkerError {
@@ -69,42 +78,45 @@ impl VXLinker {
     fn read_vxobj_payload(path: &str) -> Result<Vec<u8>, LinkerError> {
         let file_data = Self::read_file_to_vec(path)?;
 
-        if file_data.len() < 9 {
-            return Err(LinkerError::InvalidFile(
-                "文件过小或已损坏".to_string(),
-            ));
-        }
-
-        // 检查魔数 "VXOBJ"
-        if &file_data[0..5] != b"VXOBJ" {
-            return Err(LinkerError::InvalidFile(
-                "缺少 VXOBJ 魔数".to_string(),
-            ));
-        }
-
-        // 读取版本号 (大端序)
-        let version = ((file_data[5] as u32) << 24)
-            | ((file_data[6] as u32) << 16)
-            | ((file_data[7] as u32) << 8)
-            | (file_data[8] as u32);
-
-        if version != 1 && version != 2 {
-            return Err(LinkerError::UnsupportedVersion(version));
-        }
+        // 使用 bytecode 模块验证 VXOBJ 格式
+        bytecode::parse_vxobj(&file_data).map_err(|e| {
+            LinkerError::InvalidFile(format!("VXOBJ 解析失败: {}", e))
+        })?;
 
         // V2 格式：保留完整文件内容（含头部），由运行时 VM 直接解析
         Ok(file_data)
     }
 
-    /// 读取运行时存根
+    /// 读取运行时存根（自动搜索 common 构建输出目录）
     fn read_runtime_stub(path: &str) -> Result<Vec<u8>, LinkerError> {
-        if !Path::new(path).exists() {
-            return Err(LinkerError::FileNotFound(format!(
-                "{};\n请确保 vx_runtime_x64.exe 存在",
-                path
-            )));
+        // 候选搜索路径列表
+        let mut search_paths = vec![path.to_string()];
+
+        // 添加 cargo 构建输出目录中的候选路径
+        let cargo_dirs = [
+            format!("target/debug/{}", DEFAULT_STUB),
+            format!("target/release/{}", DEFAULT_STUB),
+        ];
+        for dir in &cargo_dirs {
+            if !search_paths.contains(dir) && Path::new(dir).exists() {
+                search_paths.push(dir.clone());
+            }
         }
-        Self::read_file_to_vec(path)
+
+        // 依次尝试每个路径
+        for p in &search_paths {
+            if Path::new(p).exists() {
+                let stub = Self::read_file_to_vec(p)?;
+                println!("[*] 找到运行时存根: {}", p);
+                return Ok(stub);
+            }
+        }
+
+        // 所有路径都不存在
+        Err(LinkerError::FileNotFound(format!(
+            "{};\n请确保 {} 存在（通过 `cargo build --bin vx_runtime` 编译生成）",
+            search_paths[0], DEFAULT_STUB
+        )))
     }
 
     /// 写入最终可执行文件
@@ -117,15 +129,25 @@ impl VXLinker {
 
         // 写入存根
         out_file.write_all(stub)?;
-        
+
         // 追加字节码载荷
         out_file.write_all(payload)?;
-        
+
         // 在文件末尾写入载荷大小 (8 字节 uint64_t)，供运行时解析
         let payload_size = payload.len() as u64;
         out_file.write_all(&payload_size.to_le_bytes())?;
 
         out_file.flush()?;
+
+        // Unix 平台：设置可执行权限
+        #[cfg(unix)]
+        {
+            let metadata = out_file.metadata()?;
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(out_path, perms)?;
+        }
+
         Ok(())
     }
 }
@@ -153,7 +175,7 @@ fn main() {
 
     let input_file = args[1].clone();
     let mut output_file = String::new();
-    let mut stub_file = "vx_runtime_x64.exe".to_string();
+    let mut stub_file = DEFAULT_STUB.to_string();
 
     // 简易参数解析
     let mut i = 2;
@@ -178,11 +200,7 @@ fn main() {
     // 默认输出文件名处理
     if output_file.is_empty() {
         let path = Path::new(&input_file);
-        let mut output = path.with_extension("exe");
-        // 如果输入文件没有扩展名，添加 .exe
-        if output.extension().is_none() {
-            output.set_extension("exe");
-        }
+        let output = path.with_extension(DEFAULT_OUTPUT_EXT);
         output_file = output.to_string_lossy().to_string();
     }
 
