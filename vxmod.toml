@@ -1,0 +1,7 @@
+# VX Module Configuration
+# 由 VPM 自动管理
+
+[fib190]
+path = "package/fib190"
+version = "1.0.0"
+language = "ts"
