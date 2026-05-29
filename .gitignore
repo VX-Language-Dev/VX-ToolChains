@@ -27,3 +27,4 @@ logs/
 
 # Qodana
 qodana.yaml
+*.toml
