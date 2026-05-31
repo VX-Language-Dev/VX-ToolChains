@@ -553,8 +553,36 @@ impl VM {
                     self.push(Value::Array(Vec::new()));
                 }
                 OpCode::System => {
-                    self.pop();
-                    self.push(Value::Int(0));
+                    let cmd_arg = self.pop();
+                    match cmd_arg {
+                        Value::String(ref cmd) => {
+                            // 使用 shell 执行命令以支持管道、重定向等
+                            let status = if cfg!(target_os = "windows") {
+                                std::process::Command::new("cmd")
+                                    .args(["/C", cmd])
+                                    .stdout(std::process::Stdio::inherit())
+                                    .stderr(std::process::Stdio::inherit())
+                                    .status()
+                            } else {
+                                std::process::Command::new("sh")
+                                    .args(["-c", cmd])
+                                    .stdout(std::process::Stdio::inherit())
+                                    .stderr(std::process::Stdio::inherit())
+                                    .status()
+                            };
+                            match status {
+                                Ok(s) => {
+                                    self.push(Value::Int(s.code().unwrap_or(-1) as i64));
+                                }
+                                Err(_) => {
+                                    self.push(Value::Int(-1));
+                                }
+                            }
+                        }
+                        _ => {
+                            self.runtime_error("os_system 参数必须为字符串类型");
+                        }
+                    }
                 }
                 OpCode::FileRead => {
                     self.pop();

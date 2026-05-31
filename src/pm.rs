@@ -138,6 +138,22 @@ fn get_toolchain_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// 查找工作区根目录（向上搜索 vxmod.toml 或 Cargo.toml）
+fn find_workspace_root() -> Result<PathBuf, VpmError> {
+    let mut dir = env::current_dir().map_err(VpmError::Io)?;
+    loop {
+        if dir.join(VXMOD_FILE).exists() || dir.join("Cargo.toml").exists() {
+            return Ok(dir);
+        }
+        if !dir.pop() {
+            return Err(VpmError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "无法找到工作区根目录（未找到 vxmod.toml 或 Cargo.toml）",
+            )));
+        }
+    }
+}
+
 // ==================== 命令实现 ====================
 
 /// 输出使用帮助
@@ -257,8 +273,9 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
         });
     }
 
-    // 9. 检查目标目录是否已存在
-    let target_dir = PathBuf::from(PACKAGE_DIR).join(pkg_name);
+    // 9. 确定工作区根目录并检查目标目录是否已存在
+    let workspace_root = find_workspace_root()?;
+    let target_dir = workspace_root.join(PACKAGE_DIR).join(pkg_name);
     if target_dir.exists() {
         let _ = fs::remove_dir_all(&temp_dir);
         return Err(VpmError::PackageExists(pkg_name.clone()));
@@ -348,8 +365,9 @@ fn append_to_vxmod(
     name: &str,
     version: &str,
     language: &str,
-) -> Result<(), io::Error> {
-    let vxmod_path = PathBuf::from(VXMOD_FILE);
+) -> Result<(), VpmError> {
+    let workspace_root = find_workspace_root()?;
+    let vxmod_path = workspace_root.join(VXMOD_FILE);
     let mut content = if vxmod_path.exists() {
         fs::read_to_string(&vxmod_path)?
     } else {
@@ -380,7 +398,8 @@ fn cmd_rm(package_name: &str) -> Result<(), VpmError> {
         return Err(VpmError::MissingArg("请指定要卸载的包名".to_string()));
     }
 
-    let target_dir = PathBuf::from(PACKAGE_DIR).join(package_name);
+    let workspace_root = find_workspace_root()?;
+    let target_dir = workspace_root.join(PACKAGE_DIR).join(package_name);
     if !target_dir.exists() {
         return Err(VpmError::PackageNotFound(package_name.to_string()));
     }
@@ -394,7 +413,7 @@ fn cmd_rm(package_name: &str) -> Result<(), VpmError> {
     println!("[VPM] 已从 {} 移除 '{}' 的配置", VXMOD_FILE, package_name);
 
     // 如果 package 目录为空，也一并清理
-    let pkg_root = PathBuf::from(PACKAGE_DIR);
+    let pkg_root = workspace_root.join(PACKAGE_DIR);
     if pkg_root.exists() {
         if let Ok(entries) = fs::read_dir(&pkg_root) {
             if entries.count() == 0 {
@@ -408,8 +427,9 @@ fn cmd_rm(package_name: &str) -> Result<(), VpmError> {
 }
 
 /// 从 vxmod.tmol 中移除指定包的配置块
-fn remove_from_vxmod(package_name: &str) -> Result<(), io::Error> {
-    let vxmod_path = PathBuf::from(VXMOD_FILE);
+fn remove_from_vxmod(package_name: &str) -> Result<(), VpmError> {
+    let workspace_root = find_workspace_root()?;
+    let vxmod_path = workspace_root.join(VXMOD_FILE);
     if !vxmod_path.exists() {
         return Ok(());
     }
@@ -618,6 +638,9 @@ language = "python"
         let dir = TempDir::new().unwrap();
         let original_dir = env::current_dir().unwrap();
         env::set_current_dir(dir.path()).unwrap();
+
+        // 创建工作区根目录标记文件，使 find_workspace_root() 能定位到此临时目录
+        fs::write(VXMOD_FILE, "# test workspace\n").unwrap();
 
         append_to_vxmod("test-pkg", "1.0.0", "Rust").unwrap();
         let content = fs::read_to_string(VXMOD_FILE).unwrap();

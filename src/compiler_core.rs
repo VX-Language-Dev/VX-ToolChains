@@ -130,6 +130,27 @@ impl Compiler {
                 }
             }
             Expr::CallExpr(callee, args, _, _) => {
+                // 内置函数特殊处理: os_system / file_read / file_write / file_exists
+                // 这些标识符对应的 OpCode 期望参数已在栈上，因此需先编译参数再发射 OpCode
+                if let Expr::Identifier(name, _, _) = callee.as_ref() {
+                    let builtin_op = match name.as_str() {
+                        "os_system" => Some(OpCode::System),
+                        "file_read" => Some(OpCode::FileRead),
+                        "file_write" => Some(OpCode::FileWrite),
+                        "file_exists" => Some(OpCode::FileExists),
+                        _ => None,
+                    };
+                    if let Some(op) = builtin_op {
+                        // 先编译参数（将参数推入栈），再发射对应的 OpCode
+                        // OpCode::System/FileRead/FileWrite 会从栈顶弹出参数
+                        for a in args {
+                            self.compile_expr(a);
+                        }
+                        self.emit(op, BytecodeArg::None);
+                        return;
+                    }
+                }
+
                 if let Expr::PropertyAccess(obj, prop, _, _) = callee.as_ref() {
                     self.compile_expr(obj);
                     let idx = self.add_const(ConstantValue::String(prop.clone())) as i32;
