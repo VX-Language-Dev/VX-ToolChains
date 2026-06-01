@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::process;
 
-use crate::parser::{Expr, Stmt};
+use vx_vm::parser::{Expr, Stmt};
 use crate::compiler_opcode::OpCode;
 use crate::compiler_bytecode::{BytecodeArg, Instruction, BytecodeFunction, ConstantValue, CompiledModule};
 use vx_vm::bytecode;
@@ -224,7 +224,26 @@ impl Compiler {
                 self.emit(OpCode::AliveCheck, BytecodeArg::None);
                 self.emit(OpCode::PropertyGet, BytecodeArg::String(member.clone()));
             }
-            _ => {}
+            // 表达式位置不应出现语句级节点: 解析器保证此处不可达。
+            // 添加新变体时编译器会报非穷尽 match 错误，强制显式处理。
+            Expr::StructDecl(..)
+            | Expr::ClassDecl(..)
+            | Expr::EnumDecl(..)
+            | Expr::UnionDecl(..)
+            | Expr::FuncDecl(..)
+            | Expr::ImportStmt(..)
+            | Expr::VectorLiteral(..)
+            | Expr::TypeExpr(..)
+            | Expr::ExprStmt(..)
+            | Expr::VarDecl(..)
+            | Expr::Assign(..)
+            | Expr::IfStmt(..)
+            | Expr::WhileStmt(..)
+            | Expr::ForStmt(..)
+            | Expr::BreakStmt(..)
+            | Expr::ContinueStmt(..)
+            | Expr::ReturnStmt(..)
+            | Expr::FreeStmt(..) => {}
         }
     }
     pub fn compile_assign(&mut self, target: &Expr, op: &str, value: &Expr) {
@@ -246,6 +265,7 @@ impl Compiler {
                     self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
                     self.emit(OpCode::Pop, BytecodeArg::None);
                 }
+                // 不可达: 解析器 parse_assignment 仅允许 Identifier/IndexAccess/PropertyAccess
                 _ => {}
             }
         } else {
@@ -325,6 +345,7 @@ impl Compiler {
                     self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
                     self.emit(OpCode::Pop, BytecodeArg::None);
                 }
+                // 不可达: 解析器 parse_assignment 仅允许 Identifier/IndexAccess/PropertyAccess
                 _ => {}
             }
         }
@@ -484,6 +505,7 @@ impl Compiler {
                 self.compile_expr(target);
                 self.emit(OpCode::Free, BytecodeArg::None);
             }
+            // 不可达: parse_statement 不会产生其他 Expr 变体作为顶层语句
             _ => {}
         }
     }

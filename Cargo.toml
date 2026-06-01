@@ -23,21 +23,24 @@ path = "src/main.rs"
 name = "vpm"
 path = "src/pm.rs"
 
+[[bin]]
+name = "vx-lsp"
+path = "src/lsp/main.rs"
+
 [lib]
 name = "vx_vm"
 path = "src/lib.rs"
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-yaml-rust2 = "0.9"
-pyo3 = { version = "0.23", features = ["auto-initialize"] }
+tower-lsp = "0.20"
+lsp-types = "0.95"
+serde_json = "1.0"
+tokio = { version = "1", features = ["full", "io-util"] }
+dashmap = "5"
 
 [dev-dependencies]
-assert_cmd = "2.0"
-predicates = "3.0"
 tempfile = "3.0"
-trycmd = "0.14"
 
 [profile.dev]
 opt-level = 0
@@ -48,8 +51,3 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
-
-[features]
-default = []
-debug_info = []
-memory_checking = ["debug_info"]

@@ -77,86 +77,62 @@ pub fn expr_to_type_name(e: &Expr) -> String {
     }
 }
 
-pub fn e_line(e: &Expr) -> usize {
-    match e {
-        Expr::IntLiteral(_, l, _) => *l,
-        Expr::FloatLiteral(_, l, _) => *l,
-        Expr::StringLiteral(_, l, _) => *l,
-        Expr::BoolLiteral(_, l, _) => *l,
-        Expr::NilLiteral(l, _) => *l,
-        Expr::Identifier(_, l, _) => *l,
-        Expr::ArrayLiteral(_, l, _) => *l,
-        Expr::MapLiteral(_, l, _) => *l,
-        Expr::AddressOf(_, l, _) => *l,
-        Expr::Deref(_, l, _) => *l,
-        Expr::PointerMember(_, _, l, _) => *l,
-        Expr::TypeExpr(_, l, _) => *l,
-        Expr::BinaryOp(_, _, _, l, _) => *l,
-        Expr::UnaryOp(_, _, l, _) => *l,
-        Expr::VarDecl(_, _, _, _, l, _) => *l,
-        Expr::Assign(_, _, _, l, _) => *l,
-        Expr::IndexAccess(_, _, l, _) => *l,
-        Expr::PropertyAccess(_, _, l, _) => *l,
-        Expr::IfStmt(_, _, _, _, l, _) => *l,
-        Expr::WhileStmt(_, _, l, _) => *l,
-        Expr::ForStmt(_, _, _, l, _) => *l,
-        Expr::BreakStmt(l, _) => *l,
-        Expr::ContinueStmt(l, _) => *l,
-        Expr::FuncDecl(_, _, _, _, l, _) => *l,
-        Expr::ReturnStmt(_, l, _) => *l,
-        Expr::CallExpr(_, _, l, _) => *l,
-        Expr::StructDecl(_, _, _, l, _) => *l,
-        Expr::ClassDecl(_, _, _, _, _, l, _) => *l,
-        Expr::EnumDecl(_, _, l, _) => *l,
-        Expr::UnionDecl(_, _, l, _) => *l,
-        Expr::VectorLiteral(_, _, l, _) => *l,
-        Expr::NewExpr(_, _, _, l, _) => *l,
-        Expr::NewzExpr(_, _, _, l, _) => *l,
-        Expr::FreeStmt(_, l, _) => *l,
-        Expr::MoveExpr(_, l, _) => *l,
-        Expr::ExprStmt(_, l, _) => *l,
-        Expr::ImportStmt(_, _, _, l, _) => *l,
+/// 从源码中按 1-indexed 行号提取源代码行；行号越界返回空串
+pub fn get_src_line(source: &str, line: usize) -> String {
+    if line > 0 {
+        source.lines().nth(line - 1).unwrap_or("").to_string()
+    } else {
+        String::new()
     }
 }
 
-pub fn e_col(e: &Expr) -> usize {
+/// 提取任意 Expr 节点的 (行, 列) 位置，作为 e_line/e_col 的单一事实源
+pub fn pos(e: &Expr) -> (usize, usize) {
     match e {
-        Expr::IntLiteral(_, _, c) => *c,
-        Expr::FloatLiteral(_, _, c) => *c,
-        Expr::StringLiteral(_, _, c) => *c,
-        Expr::BoolLiteral(_, _, c) => *c,
-        Expr::NilLiteral(_, c) => *c,
-        Expr::Identifier(_, _, c) => *c,
-        Expr::ArrayLiteral(_, _, c) => *c,
-        Expr::MapLiteral(_, _, c) => *c,
-        Expr::AddressOf(_, _, c) => *c,
-        Expr::Deref(_, _, c) => *c,
-        Expr::PointerMember(_, _, _, c) => *c,
-        Expr::TypeExpr(_, _, c) => *c,
-        Expr::BinaryOp(_, _, _, _, c) => *c,
-        Expr::UnaryOp(_, _, _, c) => *c,
-        Expr::VarDecl(_, _, _, _, _, c) => *c,
-        Expr::Assign(_, _, _, _, c) => *c,
-        Expr::IndexAccess(_, _, _, c) => *c,
-        Expr::PropertyAccess(_, _, _, c) => *c,
-        Expr::IfStmt(_, _, _, _, _, c) => *c,
-        Expr::WhileStmt(_, _, _, c) => *c,
-        Expr::ForStmt(_, _, _, _, c) => *c,
-        Expr::BreakStmt(_, c) => *c,
-        Expr::ContinueStmt(_, c) => *c,
-        Expr::FuncDecl(_, _, _, _, _, c) => *c,
-        Expr::ReturnStmt(_, _, c) => *c,
-        Expr::CallExpr(_, _, _, c) => *c,
-        Expr::StructDecl(_, _, _, _, c) => *c,
-        Expr::ClassDecl(_, _, _, _, _, _, c) => *c,
-        Expr::EnumDecl(_, _, _, c) => *c,
-        Expr::UnionDecl(_, _, _, c) => *c,
-        Expr::VectorLiteral(_, _, _, c) => *c,
-        Expr::NewExpr(_, _, _, _, c) => *c,
-        Expr::NewzExpr(_, _, _, _, c) => *c,
-        Expr::FreeStmt(_, _, c) => *c,
-        Expr::MoveExpr(_, _, c) => *c,
-        Expr::ExprStmt(_, _, c) => *c,
-        Expr::ImportStmt(_, _, _, _, c) => *c,
+        Expr::IntLiteral(_, l, c) => (*l, *c),
+        Expr::FloatLiteral(_, l, c) => (*l, *c),
+        Expr::StringLiteral(_, l, c) => (*l, *c),
+        Expr::BoolLiteral(_, l, c) => (*l, *c),
+        Expr::NilLiteral(l, c) => (*l, *c),
+        Expr::Identifier(_, l, c) => (*l, *c),
+        Expr::ArrayLiteral(_, l, c) => (*l, *c),
+        Expr::MapLiteral(_, l, c) => (*l, *c),
+        Expr::AddressOf(_, l, c) => (*l, *c),
+        Expr::Deref(_, l, c) => (*l, *c),
+        Expr::PointerMember(_, _, l, c) => (*l, *c),
+        Expr::TypeExpr(_, l, c) => (*l, *c),
+        Expr::BinaryOp(_, _, _, l, c) => (*l, *c),
+        Expr::UnaryOp(_, _, l, c) => (*l, *c),
+        Expr::VarDecl(_, _, _, _, l, c) => (*l, *c),
+        Expr::Assign(_, _, _, l, c) => (*l, *c),
+        Expr::IndexAccess(_, _, l, c) => (*l, *c),
+        Expr::PropertyAccess(_, _, l, c) => (*l, *c),
+        Expr::IfStmt(_, _, _, _, l, c) => (*l, *c),
+        Expr::WhileStmt(_, _, l, c) => (*l, *c),
+        Expr::ForStmt(_, _, _, l, c) => (*l, *c),
+        Expr::BreakStmt(l, c) => (*l, *c),
+        Expr::ContinueStmt(l, c) => (*l, *c),
+        Expr::FuncDecl(_, _, _, _, l, c) => (*l, *c),
+        Expr::ReturnStmt(_, l, c) => (*l, *c),
+        Expr::CallExpr(_, _, l, c) => (*l, *c),
+        Expr::StructDecl(_, _, _, l, c) => (*l, *c),
+        Expr::ClassDecl(_, _, _, _, _, l, c) => (*l, *c),
+        Expr::EnumDecl(_, _, l, c) => (*l, *c),
+        Expr::UnionDecl(_, _, l, c) => (*l, *c),
+        Expr::VectorLiteral(_, _, l, c) => (*l, *c),
+        Expr::NewExpr(_, _, _, l, c) => (*l, *c),
+        Expr::NewzExpr(_, _, _, l, c) => (*l, *c),
+        Expr::FreeStmt(_, l, c) => (*l, *c),
+        Expr::MoveExpr(_, l, c) => (*l, *c),
+        Expr::ExprStmt(_, l, c) => (*l, *c),
+        Expr::ImportStmt(_, _, _, l, c) => (*l, *c),
     }
+}
+
+pub fn e_line(e: &Expr) -> usize {
+    pos(e).0
+}
+
+pub fn e_col(e: &Expr) -> usize {
+    pos(e).1
 }

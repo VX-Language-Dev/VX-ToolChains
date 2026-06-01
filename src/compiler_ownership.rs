@@ -1,7 +1,7 @@
 // ==================== 所有权检查器 ====================
 
 use std::collections::HashMap;
-use crate::parser::Expr;
+use crate::parser::{Expr, get_src_line};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OwnershipState {
@@ -223,11 +223,7 @@ impl OwnershipChecker {
         }
     }
     fn get_src_line(&self, line: usize) -> String {
-        if line > 0 && line <= self.source.lines().count() {
-            self.source.lines().nth(line - 1).unwrap().to_string()
-        } else {
-            String::new()
-        }
+        get_src_line(&self.source, line)
     }
     pub fn check_ast(&mut self, ast: &[crate::parser::Stmt]) {
         for stmt in ast {
@@ -358,6 +354,9 @@ impl OwnershipChecker {
                     }
                 }
             }
+            // 不可达: 声明节点不含用户变量 (StructDecl/ClassDecl/EnumDecl/UnionDecl/ImportStmt
+            //         /FuncDecl/VarDecl 中变量名已由其它分支处理)；
+            // 表达式节点不会被作为顶层语句传入
             _ => {}
         }
     }
@@ -397,6 +396,8 @@ impl OwnershipChecker {
                     self.check_use(name, *l, *c);
                 }
             }
+            // 字面量 (Int/Float/String/Bool/Nil) 和 Array/Map/Vector 等容器
+            // 不持有命名变量，无需所有权检查
             _ => {}
         }
     }

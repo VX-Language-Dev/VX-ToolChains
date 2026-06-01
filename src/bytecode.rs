@@ -33,7 +33,6 @@ fn write_u32_be(w: &mut dyn Write, v: u32) -> io::Result<()> {
 }
 
 /// 将 i32 以大端序写入 writer
-#[allow(dead_code)]
 fn write_i32_be(w: &mut dyn Write, v: i32) -> io::Result<()> {
     w.write_all(&v.to_be_bytes())
 }

@@ -8,31 +8,28 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-// 子模块
-mod token;
-mod parser;
+// 子模块：仅保留编译器实现相关的私有模块
+// token/parser/compiler_ownership 已迁移到 vx_vm 库中共享给 LSP 等其他目标
 mod compiler_opcode;
 mod compiler_bytecode;
-mod compiler_ownership;
 mod compiler_core;
 
-use token::Lexer;
-use parser::Parser;
-use compiler_ownership::OwnershipChecker;
+use vx_vm::token::Lexer;
+use vx_vm::parser::Parser;
+use vx_vm::compiler_ownership::OwnershipChecker;
 use compiler_core::Compiler;
 
 // ==================== 主程序 ====================
-fn parse_vxmodel<P: AsRef<Path>>(path: P) -> HashMap<String, String> {
+/// 解析简单的 key:value / key=value 配置文件，跳过空行、`#` 注释和 `[section]`
+fn parse_simple_kv(content: &str, delimiter: char) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    if let Ok(content) = fs::read_to_string(path.as_ref()) {
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some((k, v)) = line.split_once(':') {
-                map.insert(k.trim().to_string(), v.trim().to_string());
-            }
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once(delimiter) {
+            map.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
         }
     }
     map
@@ -60,7 +57,9 @@ fn main() {
         eprintln!("VX Error: 缺少 vxmodel 文件: {}", vxmodel_path.display());
         process::exit(1);
     }
-    let vxmodel = parse_vxmodel(&vxmodel_path);
+    let vxmodel = fs::read_to_string(&vxmodel_path)
+        .map(|c| parse_simple_kv(&c, ':'))
+        .unwrap_or_default();
 
     let src = match fs::read_to_string(input) {
         Err(e) => {

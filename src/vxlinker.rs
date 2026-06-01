@@ -224,28 +224,31 @@ mod tests {
         // 创建临时的 V2 格式 .vxobj 文件
         let dir = TempDir::new().unwrap();
         let vxobj_path = dir.path().join("test.vxobj");
-        
+
         let mut file = fs::File::create(&vxobj_path).unwrap();
         // Magic: "VXOBJ"
         file.write_all(b"VXOBJ").unwrap();
         // Version: 2 (大端序)
         file.write_all(&[0, 0, 0, 2]).unwrap();
-        // 一些模拟的字节码数据
-        file.write_all(&[1, 2, 3, 4, 5]).unwrap();
+        // 数量字段必须先于常量数据，否则 parse_vxobj 会触发巨大分配
+        // NumConstants: 0
+        file.write_all(&[0, 0, 0, 0]).unwrap();
+        // NumFunctions: 0
+        file.write_all(&[0, 0, 0, 0]).unwrap();
         file.flush().unwrap();
 
         let result = VXLinker::read_vxobj_payload(vxobj_path.to_str().unwrap());
         assert!(result.is_ok());
         let payload = result.unwrap();
         assert_eq!(&payload[0..5], b"VXOBJ");
-        assert_eq!(payload.len(), 5 + 4 + 5);
+        assert_eq!(payload.len(), 5 + 4 + 4 + 4);
     }
 
     #[test]
     fn test_read_vxobj_payload_invalid_magic() {
         let dir = TempDir::new().unwrap();
         let vxobj_path = dir.path().join("test.vxobj");
-        
+
         let mut file = fs::File::create(&vxobj_path).unwrap();
         file.write_all(b"INVALID").unwrap();
         file.flush().unwrap();
@@ -257,13 +260,16 @@ mod tests {
     #[test]
     fn test_link_integration() {
         let dir = TempDir::new().unwrap();
-        
-        // 创建模拟的 .vxobj 文件
+
+        // 创建模拟的 .vxobj 文件 (最小有效格式: magic + version + 0常量 + 0函数)
         let vxobj_path = dir.path().join("test.vxobj");
         let mut vxobj_file = fs::File::create(&vxobj_path).unwrap();
         vxobj_file.write_all(b"VXOBJ").unwrap();
         vxobj_file.write_all(&[0, 0, 0, 2]).unwrap();
-        vxobj_file.write_all(&[0xDE, 0xAD, 0xBE, 0xEF]).unwrap();
+        // NumConstants: 0
+        vxobj_file.write_all(&[0, 0, 0, 0]).unwrap();
+        // NumFunctions: 0
+        vxobj_file.write_all(&[0, 0, 0, 0]).unwrap();
         vxobj_file.flush().unwrap();
 
         // 创建模拟的存根文件
@@ -273,15 +279,15 @@ mod tests {
         stub_file.flush().unwrap();
 
         let output_path = dir.path().join("output.exe");
-        
+
         let result = VXLinker::link(
             vxobj_path.to_str().unwrap(),
             output_path.to_str().unwrap(),
             stub_path.to_str().unwrap(),
         );
-        
+
         assert!(result.is_ok());
-        
+
         // 验证输出文件
         let output_data = fs::read(output_path).unwrap();
         assert_eq!(&output_data[0..2], &[0x4D, 0x5A]); // MZ header
@@ -297,6 +303,7 @@ mod tests {
             output_data[len - 2],
             output_data[len - 1],
         ]);
-        assert_eq!(payload_size as usize, 5 + 4 + 4); // VXOBJ + version + data
+        // payload 长度 = magic(5) + version(4) + num_constants(4) + num_functions(4)
+        assert_eq!(payload_size as usize, 5 + 4 + 4 + 4);
     }
 }

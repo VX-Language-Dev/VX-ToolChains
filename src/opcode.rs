@@ -60,7 +60,7 @@ pub enum OpCode {
     Dup = 0x37,
     Pop = 0x38,
     // Memory Safety / Ownership
-    NewZ = 0x39,
+    Newz = 0x39,
     Free = 0x3A,
     OwnershipMove = 0x3B,
     ScopeDrop = 0x3C,
@@ -128,7 +128,7 @@ impl TryFrom<u8> for OpCode {
             0x36 => Ok(OpCode::FileExists),
             0x37 => Ok(OpCode::Dup),
             0x38 => Ok(OpCode::Pop),
-            0x39 => Ok(OpCode::NewZ),
+            0x39 => Ok(OpCode::Newz),
             0x3A => Ok(OpCode::Free),
             0x3B => Ok(OpCode::OwnershipMove),
             0x3C => Ok(OpCode::ScopeDrop),

@@ -16,9 +16,7 @@ const PACKAGE_DIR: &str = "package";
 const INFO_FILE: &str = "info.toml";
 
 const SUPPORTED_LANGUAGES: &[&str] = &[
-    "python", "ts", "js", "javascript", "typescript",
-    "java", "rust", "rs", "go", "golang",
-    "c", "cpp", "c++", "cxx",
+    "python", "ts", "js", "java", "rust", "go", "c", "cpp",
 ];
 
 // ==================== 错误处理 ====================
@@ -109,25 +107,28 @@ fn normalize_language(lang: &str) -> String {
     }
 }
 
-/// 判断语言是否被支持
+/// 判断语言是否被支持 (先规范化别名再查表，避免 py/js/typescript 等大小写不一致)
 fn is_language_supported(lang: &str) -> bool {
-    SUPPORTED_LANGUAGES.contains(&lang.to_lowercase().as_str())
+    let normalized = normalize_language(lang);
+    SUPPORTED_LANGUAGES.contains(&normalized.as_str())
 }
 
 /// 解析简单 TOML 格式的 info 文件为键值对
 /// 支持: key = "value" 和 key = value 两种格式
 fn parse_info_toml(content: &str) -> HashMap<String, String> {
+    parse_simple_kv(content, '=')
+}
+
+/// 解析简单的 key 分隔的配置文件，跳过空行、`#` 注释和 `[section]`
+fn parse_simple_kv(content: &str, delimiter: char) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in content.lines() {
         let line = line.trim();
-        // 跳过空行和注释
         if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
             continue;
         }
-        if let Some((key, value)) = line.split_once('=') {
-            let k = key.trim().to_string();
-            let v = value.trim().trim_matches('"').to_string();
-            map.insert(k, v);
+        if let Some((k, v)) = line.split_once(delimiter) {
+            map.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
         }
     }
     map
@@ -215,7 +216,7 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
         .args([
             "x",
             "-y", // 自动确认
-            vack_abs.to_str().unwrap(),
+            &vack_abs.to_string_lossy(),
             &format!("-o{}", temp_dir.display()),
         ])
         .output()
@@ -284,10 +285,9 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
     // 10. 复制包文件到目标目录
     fs::create_dir_all(&target_dir)?;
 
-    let pkg_source_dir = if info_path.parent().map(|p| p != temp_dir).unwrap_or(false) {
-        info_path.parent().unwrap().to_path_buf()
-    } else {
-        temp_dir.clone()
+    let pkg_source_dir = match info_path.parent() {
+        Some(p) if p != temp_dir.as_path() => p.to_path_buf(),
+        _ => temp_dir.clone(),
     };
 
     copy_dir_all(&pkg_source_dir, &target_dir)?;
@@ -309,7 +309,7 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
     );
 
     // 11. 更新 vxmod.tmol
-    append_to_vxmod(pkg_name, pkg_version, pkg_lang)?;
+    append_to_vxmod(&workspace_root, pkg_name, pkg_version, pkg_lang)?;
     println!("[VPM] 已更新 {} 配置文件", VXMOD_FILE);
 
     // 12. 清理临时目录
@@ -362,11 +362,11 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), io::Error> {
 
 /// 向 vxmod.tmol 追加包配置
 fn append_to_vxmod(
+    workspace_root: &Path,
     name: &str,
     version: &str,
     language: &str,
 ) -> Result<(), VpmError> {
-    let workspace_root = find_workspace_root()?;
     let vxmod_path = workspace_root.join(VXMOD_FILE);
     let mut content = if vxmod_path.exists() {
         fs::read_to_string(&vxmod_path)?
@@ -409,7 +409,7 @@ fn cmd_rm(package_name: &str) -> Result<(), VpmError> {
     println!("[VPM] 已删除包目录: {}", target_dir.display());
 
     // 从 vxmod.tmol 移除配置
-    remove_from_vxmod(package_name)?;
+    remove_from_vxmod(&workspace_root, package_name)?;
     println!("[VPM] 已从 {} 移除 '{}' 的配置", VXMOD_FILE, package_name);
 
     // 如果 package 目录为空，也一并清理
@@ -427,8 +427,7 @@ fn cmd_rm(package_name: &str) -> Result<(), VpmError> {
 }
 
 /// 从 vxmod.tmol 中移除指定包的配置块
-fn remove_from_vxmod(package_name: &str) -> Result<(), VpmError> {
-    let workspace_root = find_workspace_root()?;
+fn remove_from_vxmod(workspace_root: &Path, package_name: &str) -> Result<(), VpmError> {
     let vxmod_path = workspace_root.join(VXMOD_FILE);
     if !vxmod_path.exists() {
         return Ok(());
@@ -636,31 +635,21 @@ language = "python"
     #[test]
     fn test_append_to_vxmod() {
         let dir = TempDir::new().unwrap();
-        let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(dir.path()).unwrap();
+        // 显式传入 workspace_root 避免修改全局 cwd (线程安全)
+        fs::write(dir.path().join(VXMOD_FILE), "# test workspace\n").unwrap();
 
-        // 创建工作区根目录标记文件，使 find_workspace_root() 能定位到此临时目录
-        fs::write(VXMOD_FILE, "# test workspace\n").unwrap();
-
-        append_to_vxmod("test-pkg", "1.0.0", "Rust").unwrap();
-        let content = fs::read_to_string(VXMOD_FILE).unwrap();
+        append_to_vxmod(dir.path(), "test-pkg", "1.0.0", "Rust").unwrap();
+        let content = fs::read_to_string(dir.path().join(VXMOD_FILE)).unwrap();
         assert!(content.contains("[test-pkg]"));
         assert!(content.contains("path = \"package/test-pkg\""));
         assert!(content.contains("version = \"1.0.0\""));
         assert!(content.contains("language = \"rust\""));
-
-        // 删除测试文件
-        let _ = fs::remove_file(VXMOD_FILE);
-        env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]
     fn test_remove_from_vxmod() {
         let dir = TempDir::new().unwrap();
-        let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(dir.path()).unwrap();
-
-        // 创建包含多个包的 vxmod.tmol
+        // 显式传入 workspace_root 避免修改全局 cwd (线程安全)
         let content = r#"# VX Module Configuration
 
 [pkg-a]
@@ -678,19 +667,15 @@ path = "package/pkg-c"
 version = "3.0.0"
 language = "go"
 "#;
-        fs::write(VXMOD_FILE, content).unwrap();
+        fs::write(dir.path().join(VXMOD_FILE), content).unwrap();
 
         // 删除 pkg-b
-        remove_from_vxmod("pkg-b").unwrap();
-        let updated = fs::read_to_string(VXMOD_FILE).unwrap();
+        remove_from_vxmod(dir.path(), "pkg-b").unwrap();
+        let updated = fs::read_to_string(dir.path().join(VXMOD_FILE)).unwrap();
         assert!(updated.contains("[pkg-a]"));
         assert!(updated.contains("[pkg-c]"));
         assert!(!updated.contains("[pkg-b]"));
         assert!(!updated.contains("pkg-b"));
-
-        // 清理
-        let _ = fs::remove_file(VXMOD_FILE);
-        env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]

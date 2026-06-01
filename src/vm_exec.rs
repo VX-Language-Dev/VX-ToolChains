@@ -557,19 +557,7 @@ impl VM {
                     match cmd_arg {
                         Value::String(ref cmd) => {
                             // 使用 shell 执行命令以支持管道、重定向等
-                            let status = if cfg!(target_os = "windows") {
-                                std::process::Command::new("cmd")
-                                    .args(["/C", cmd])
-                                    .stdout(std::process::Stdio::inherit())
-                                    .stderr(std::process::Stdio::inherit())
-                                    .status()
-                            } else {
-                                std::process::Command::new("sh")
-                                    .args(["-c", cmd])
-                                    .stdout(std::process::Stdio::inherit())
-                                    .stderr(std::process::Stdio::inherit())
-                                    .status()
-                            };
+                            let status = self.run_shell_command(cmd);
                             match status {
                                 Ok(s) => {
                                     self.push(Value::Int(s.code().unwrap_or(-1) as i64));
@@ -598,7 +586,7 @@ impl VM {
                 }
 
                 // ===== Memory Safety / Ownership =====
-                OpCode::NewZ => {
+                OpCode::Newz => {
                     let num_args = inst.iarg.unwrap_or(0) as usize;
                     let mut args: Vec<Value> =
                         self.stack.drain(self.stack.len() - num_args..).collect();
@@ -667,5 +655,24 @@ impl VM {
         }
 
         Value::nil()
+    }
+
+    /// 平台特定的 shell 命令执行 (Windows 使用 cmd /C, Unix 使用 sh -c)
+    #[cfg(target_os = "windows")]
+    fn run_shell_command(&self, cmd: &str) -> std::io::Result<std::process::ExitStatus> {
+        std::process::Command::new("cmd")
+            .args(["/C", cmd])
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn run_shell_command(&self, cmd: &str) -> std::io::Result<std::process::ExitStatus> {
+        std::process::Command::new("sh")
+            .args(["-c", cmd])
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
     }
 }
