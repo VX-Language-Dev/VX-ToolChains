@@ -3,12 +3,12 @@
 use std::collections::HashMap;
 use crate::opcode::OpCode;
 use crate::value::Value;
-use crate::vm::VM;
+use crate::vm::{VM, DebugAction, StepMode};
 
 impl VM {
-    pub fn run(&mut self) -> Value {
+    pub fn run(&mut self) -> Result<Value, String> {
         if self.module.functions.is_empty() {
-            return Value::nil();
+            return Ok(Value::Nil);
         }
 
         let main_idx = self
@@ -22,32 +22,73 @@ impl VM {
             fn_idx: main_idx,
             pc: 0,
             stack_base: 0,
+            tos_base: 0,
             locals: HashMap::new(),
             owned_allocs: Vec::new(),
         });
 
         while let Some(frame) = self.frames.last() {
+            // Debugging support: check hook and breakpoints before executing instruction
+            if let Some(ref hook) = self.debug_hook {
+                match hook(self) {
+                    DebugAction::Break => {
+                        return Ok(self.handle_breakpoint());
+                    }
+                    DebugAction::StepInto => {
+                        self.step_mode = StepMode::Into;
+                        self.step_count = 1;
+                    }
+                    DebugAction::StepOver => {
+                        self.step_mode = StepMode::Over;
+                        self.step_count = 1;
+                    }
+                    DebugAction::StepOut => {
+                        self.step_mode = StepMode::Out;
+                        self.step_count = 1;
+                    }
+                    DebugAction::Continue => {}
+                }
+            }
+
+            // Breakpoint check: if we are about to execute an instruction at a breakpoint
+            if self.breakpoints.contains(&frame.pc) {
+                if let Some(ref hook) = self.debug_hook {
+                    match hook(self) {
+                        DebugAction::Break => {
+                            return Ok(self.handle_breakpoint());
+                        }
+                        _ => {} // continue based on hook
+                    }
+                } else {
+                    return Ok(self.handle_breakpoint());
+                }
+            }
+
             if frame.pc >= self.current_fn().instructions.len() {
                 let leaving_frame = self.frames.pop().unwrap();
                 self.cleanup_frame_allocs(&leaving_frame);
                 continue;
             }
 
-            let inst = self.current_fn().instructions[frame.pc].clone();
-            self.current_frame_mut().pc += 1;
+            let fn_idx = self.frames.last().unwrap().fn_idx;
+            let pc = self.frames.last().unwrap().pc;
+            let inst = &self.module.functions[fn_idx].instructions[pc];
+            self.frames.last_mut().unwrap().pc += 1;
 
+            // Step handling: if we are in step mode and step_count>0, we want to stop after this instruction
+            // We'll execute the instruction and then check for step completion
             match inst.op {
                 // ===== Load / Store =====
                 OpCode::LoadConst => {
                     let idx = inst.iarg.unwrap_or(0) as usize;
                     if idx >= self.module.constants.len() {
-                        self.runtime_error("Constant index out of bounds");
+                        return self.runtime_error("Constant index out of bounds");
                     }
                     self.push(self.module.constants[idx].clone());
                 }
-                OpCode::LoadNil => self.push(Value::nil()),
-                OpCode::LoadTrue => self.push(Value::bool(true)),
-                OpCode::LoadFalse => self.push(Value::bool(false)),
+                OpCode::LoadNil => self.push(Value::Nil),
+                OpCode::LoadTrue => self.push(Value::Bool(true)),
+                OpCode::LoadFalse => self.push(Value::Bool(false)),
                 OpCode::LoadVar => {
                     let name = inst.sarg.clone().unwrap_or_default();
                     if let Some(v) = self.current_frame().locals.get(&name) {
@@ -55,7 +96,7 @@ impl VM {
                     } else if let Some(v) = self.globals.get(&name) {
                         self.push(v.clone());
                     } else {
-                        self.runtime_error(&format!("Undefined variable: {}", name));
+                        return self.runtime_error(&format!("Undefined variable: {}", name));
                     }
                 }
                 OpCode::StoreVar => {
@@ -76,7 +117,7 @@ impl VM {
                     if let Some(v) = self.peek(0) {
                         self.push(v.clone());
                     } else {
-                        self.runtime_error("Stack underflow on DUP");
+                        return self.runtime_error("Stack underflow on DUP");
                     }
                 }
                 OpCode::Pop => {
@@ -86,36 +127,41 @@ impl VM {
                 // ===== Call / Return =====
                 OpCode::Call => {
                     let num_args = inst.iarg.unwrap_or(0) as usize;
-                    if num_args > self.stack.len() {
-                        self.runtime_error("Not enough arguments on stack");
+                    if num_args > self.stack_len() {
+                        return self.runtime_error("Not enough arguments on stack");
                     }
                     let mut args: Vec<Value> =
-                        self.stack.drain(self.stack.len() - num_args..).collect();
+                        self.drain_stack(self.stack_len() - num_args..self.stack_len());
                     args.reverse();
                     let callee = self.pop();
 
                     match &callee {
                         Value::String(ref s) => {
                             if let Some(&fn_idx) = self.module.function_map.get(s) {
-                                self.call_user_function(fn_idx, &args).ok();
+                                if let Err(e) = self.call_user_function(fn_idx, &args) {
+                                    return self.runtime_error(&e);
+                                }
                             } else if let Some(f) = self.builtins.get(s) {
                                 let result = f(&mut args);
                                 self.push(result);
                             } else {
-                                self.runtime_error(&format!("Unknown function: {}", s));
+                                return self.runtime_error(&format!("Unknown function: {}", s));
                             }
                         }
-                        _ => self.runtime_error("Callee is not callable"),
+                        _ => return self.runtime_error("Callee is not callable"),
                     }
                 }
                 OpCode::Return => {
                     let ret = self.pop();
                     let leaving_frame = self.frames.pop().unwrap();
                     self.cleanup_frame_allocs(&leaving_frame);
-                    if let Some(_frame) = self.frames.last() {
+                    if let Some(frame) = self.frames.last_mut() {
+                        while self.stack.len() > frame.stack_base {
+                            self.stack.pop();
+                        }
                         self.push(ret);
                     } else {
-                        return ret;
+                        return Ok(ret);
                     }
                 }
 
@@ -144,15 +190,15 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) => Value::int(ai + bi),
-                        (Value::Float(af), Value::Float(bf)) => Value::float(af + bf),
+                        (Value::Int(ai), Value::Int(bi)) => Value::Int(ai + bi),
+                        (Value::Float(af), Value::Float(bf)) => Value::Float(af + bf),
                         (Value::String(as_), Value::String(bs)) => {
-                            Value::string(format!("{}{}", as_, bs))
+                            Value::String(format!("{}{}", as_, bs))
                         }
                         (Value::String(as_), _) => {
-                            Value::string(format!("{}{}", as_, b.to_string()))
+                            Value::String(format!("{}{}", as_, b.to_string()))
                         }
-                        _ => self.runtime_error("Type mismatch in +"),
+                        _ => return self.runtime_error("Type mismatch in +"),
                     };
                     self.push(result);
                 }
@@ -160,9 +206,9 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) => Value::int(ai - bi),
-                        (Value::Float(af), Value::Float(bf)) => Value::float(af - bf),
-                        _ => self.runtime_error("Type mismatch in -"),
+                        (Value::Int(ai), Value::Int(bi)) => Value::Int(ai - bi),
+                        (Value::Float(af), Value::Float(bf)) => Value::Float(af - bf),
+                        _ => return self.runtime_error("Type mismatch in -"),
                     };
                     self.push(result);
                 }
@@ -170,9 +216,9 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) => Value::int(ai * bi),
-                        (Value::Float(af), Value::Float(bf)) => Value::float(af * bf),
-                        _ => self.runtime_error("Type mismatch in *"),
+                        (Value::Int(ai), Value::Int(bi)) => Value::Int(ai * bi),
+                        (Value::Float(af), Value::Float(bf)) => Value::Float(af * bf),
+                        _ => return self.runtime_error("Type mismatch in *"),
                     };
                     self.push(result);
                 }
@@ -180,9 +226,9 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) if *bi != 0 => Value::int(ai / bi),
-                        (Value::Float(af), Value::Float(bf)) if *bf != 0.0 => Value::float(af / bf),
-                        _ => self.runtime_error("Type mismatch in /"),
+                        (Value::Int(ai), Value::Int(bi)) if *bi != 0 => Value::Int(ai / bi),
+                        (Value::Float(af), Value::Float(bf)) if *bf != 0.0 => Value::Float(af / bf),
+                        _ => return self.runtime_error("Type mismatch in /"),
                     };
                     self.push(result);
                 }
@@ -190,8 +236,8 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) if *bi != 0 => Value::int(ai % bi),
-                        _ => self.runtime_error("Type mismatch in %"),
+                        (Value::Int(ai), Value::Int(bi)) if *bi != 0 => Value::Int(ai % bi),
+                        _ => return self.runtime_error("Type mismatch in %"),
                     };
                     self.push(result);
                 }
@@ -200,10 +246,10 @@ impl VM {
                     let a = self.pop();
                     let result = match (&a, &b) {
                         (Value::Int(ai), Value::Int(bi)) => {
-                            Value::int(((*ai as f64).powf(*bi as f64)) as i64)
+                            Value::Int(((*ai as f64).powf(*bi as f64)) as i64)
                         }
-                        (Value::Float(af), Value::Float(bf)) => Value::float(af.powf(*bf)),
-                        _ => self.runtime_error("Type mismatch in ^"),
+                        (Value::Float(af), Value::Float(bf)) => Value::Float(af.powf(*bf)),
+                        _ => return self.runtime_error("Type mismatch in ^"),
                     };
                     self.push(result);
                 }
@@ -213,21 +259,21 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let eq = a == b;
-                    self.push(Value::bool(eq));
+                    self.push(Value::Bool(eq));
                 }
                 OpCode::BinaryNe => {
                     let b = self.pop();
                     let a = self.pop();
                     let ne = a != b;
-                    self.push(Value::bool(ne));
+                    self.push(Value::Bool(ne));
                 }
                 OpCode::BinaryLt => {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) => Value::bool(ai < bi),
-                        (Value::Float(af), Value::Float(bf)) => Value::bool(af < bf),
-                        _ => self.runtime_error("Type mismatch in <"),
+                        (Value::Int(ai), Value::Int(bi)) => Value::Bool(ai < bi),
+                        (Value::Float(af), Value::Float(bf)) => Value::Bool(af < bf),
+                        _ => return self.runtime_error("Type mismatch in <"),
                     };
                     self.push(result);
                 }
@@ -235,9 +281,9 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) => Value::bool(ai > bi),
-                        (Value::Float(af), Value::Float(bf)) => Value::bool(af > bf),
-                        _ => self.runtime_error("Type mismatch in >"),
+                        (Value::Int(ai), Value::Int(bi)) => Value::Bool(ai > bi),
+                        (Value::Float(af), Value::Float(bf)) => Value::Bool(af > bf),
+                        _ => return self.runtime_error("Type mismatch in >"),
                     };
                     self.push(result);
                 }
@@ -245,9 +291,9 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) => Value::bool(ai <= bi),
-                        (Value::Float(af), Value::Float(bf)) => Value::bool(af <= bf),
-                        _ => self.runtime_error("Type mismatch in <="),
+                        (Value::Int(ai), Value::Int(bi)) => Value::Bool(ai <= bi),
+                        (Value::Float(af), Value::Float(bf)) => Value::Bool(af <= bf),
+                        _ => return self.runtime_error("Type mismatch in <="),
                     };
                     self.push(result);
                 }
@@ -255,43 +301,181 @@ impl VM {
                     let b = self.pop();
                     let a = self.pop();
                     let result = match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) => Value::bool(ai >= bi),
-                        (Value::Float(af), Value::Float(bf)) => Value::bool(af >= bf),
-                        _ => self.runtime_error("Type mismatch in >="),
+                        (Value::Int(ai), Value::Int(bi)) => Value::Bool(ai >= bi),
+                        (Value::Float(af), Value::Float(bf)) => Value::Bool(af >= bf),
+                        _ => return self.runtime_error("Type mismatch in >="),
                     };
                     self.push(result);
                 }
                 OpCode::BinaryAnd => {
                     let b = self.pop();
                     let a = self.pop();
-                    self.push(Value::bool(a.is_truthy() && b.is_truthy()));
+                    self.push(Value::Bool(a.is_truthy() && b.is_truthy()));
                 }
                 OpCode::BinaryOr => {
                     let b = self.pop();
                     let a = self.pop();
-                    self.push(Value::bool(a.is_truthy() || b.is_truthy()));
+                    self.push(Value::Bool(a.is_truthy() || b.is_truthy()));
+                }
+
+                // ===== Type-Specialized Binary Arithmetic =====
+                OpCode::AddInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    self.push_int(a + b);
+                }
+                OpCode::AddFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    self.push_float(a + b);
+                }
+                OpCode::SubInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    let result = a - b;
+                    self.push_int(result);
+                }
+                OpCode::SubFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    self.push_float(a - b);
+                }
+                OpCode::MulInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    self.push_int(a * b);
+                }
+                OpCode::MulFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    self.push_float(a * b);
+                }
+                OpCode::DivInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    if b != 0 {
+                        self.push_int(a / b);
+                    } else {
+                        return self.runtime_error("Division by zero");
+                    }
+                }
+                OpCode::DivFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    if b != 0.0 {
+                        self.push_float(a / b);
+                    } else {
+                        return self.runtime_error("Division by zero");
+                    }
+                }
+                OpCode::ModInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    if b != 0 {
+                        self.push_int(a % b);
+                    } else {
+                        return self.runtime_error("Modulo by zero");
+                    }
+                }
+
+                // ===== Type-Specialized Comparison =====
+                OpCode::EqInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    self.push_bool(a == b);
+                }
+                OpCode::EqFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    self.push_bool(a == b);
+                }
+                OpCode::LtInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    self.push_bool(a < b);
+                }
+                OpCode::LtFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    self.push_bool(a < b);
+                }
+                OpCode::GtInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    self.push_bool(a > b);
+                }
+                OpCode::GtFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    self.push_bool(a > b);
+                }
+                OpCode::LeInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    self.push_bool(a <= b);
+                }
+                OpCode::LeFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    self.push_bool(a <= b);
+                }
+                OpCode::GeInt => {
+                    let b = self.pop_int();
+                    let a = self.pop_int();
+                    self.push_bool(a >= b);
+                }
+                OpCode::GeFloat => {
+                    let b = self.pop_float();
+                    let a = self.pop_float();
+                    self.push_bool(a >= b);
+                }
+
+                // ===== Type-Specialized Logical =====
+                OpCode::And => {
+                    let b = self.pop_bool();
+                    let a = self.pop_bool();
+                    self.push_bool(a && b);
+                }
+                OpCode::Or => {
+                    let b = self.pop_bool();
+                    let a = self.pop_bool();
+                    self.push_bool(a || b);
+                }
+
+                // ===== Type-Specialized Unary =====
+                OpCode::NegInt => {
+                    let a = self.pop_int();
+                    self.push_int(-a);
+                }
+                OpCode::NegFloat => {
+                    let a = self.pop_float();
+                    self.push_float(-a);
+                }
+                OpCode::Not => {
+                    let a = self.pop_bool();
+                    self.push_bool(!a);
                 }
 
                 // ===== Unary =====
                 OpCode::UnaryNeg => {
                     let a = self.pop();
                     let result = match a {
-                        Value::Int(i) => Value::int(-i),
-                        Value::Float(f) => Value::float(-f),
-                        _ => self.runtime_error("Type mismatch in unary -"),
+                        Value::Int(i) => Value::Int(-i),
+                        Value::Float(f) => Value::Float(-f),
+                        _ => return self.runtime_error("Type mismatch in unary -"),
                     };
                     self.push(result);
                 }
                 OpCode::UnaryNot => {
                     let a = self.pop();
-                    self.push(Value::bool(!a.is_truthy()));
+                    self.push(Value::Bool(!a.is_truthy()));
                 }
 
                 // ===== Array =====
                 OpCode::MakeArray => {
                     let count = inst.iarg.unwrap_or(0) as usize;
                     let mut tmp: Vec<Value> =
-                        self.stack.drain(self.stack.len() - count..).collect();
+                        self.drain_stack(self.stack_len() - count..self.stack_len());
                     tmp.reverse();
                     self.push(Value::Array(tmp));
                 }
@@ -301,21 +485,21 @@ impl VM {
                     let result = match (&obj, &idx) {
                         (Value::Array(arr), Value::Int(i)) => {
                             if *i < 0 || (*i as usize) >= arr.len() {
-                                self.runtime_error(&format!("Array index out of bounds: {}", i));
+                                return self.runtime_error(&format!("Array index out of bounds: {}", i));
                             }
                             arr[*i as usize].clone()
                         }
                         (Value::Map(map), _) => {
                             let key = idx.to_string();
-                            map.get(&key).cloned().unwrap_or(Value::nil())
+                            map.get(&key).cloned().unwrap_or(Value::Nil)
                         }
                         (Value::String(s), Value::Int(i)) => {
                             if *i < 0 || (*i as usize) >= s.len() {
-                                self.runtime_error("String index out of bounds");
+                                return self.runtime_error("String index out of bounds");
                             }
-                            Value::string(s.chars().nth(*i as usize).unwrap().to_string())
+                            Value::String(s.chars().nth(*i as usize).unwrap().to_string())
                         }
-                        _ => self.runtime_error("Cannot index this type"),
+                        _ => return self.runtime_error("Cannot index this type"),
                     };
                     self.push(result);
                 }
@@ -327,7 +511,7 @@ impl VM {
                         Value::Array(arr) => {
                             if let Value::Int(i) = idx {
                                 if i < 0 || (i as usize) >= arr.len() {
-                                    self.runtime_error("Array index out of bounds in assignment");
+                                    return self.runtime_error("Array index out of bounds in assignment");
                                 }
                                 arr[i as usize] = val;
                             }
@@ -336,7 +520,7 @@ impl VM {
                             let key = idx.to_string();
                             map.insert(key, val);
                         }
-                        _ => self.runtime_error("Cannot index-assign this type"),
+                        _ => return self.runtime_error("Cannot index-assign this type"),
                     }
                     self.push(obj);
                 }
@@ -345,7 +529,7 @@ impl VM {
                 OpCode::MakeMap => {
                     let count = inst.iarg.unwrap_or(0) as usize;
                     let mut tmp: Vec<Value> =
-                        self.stack.drain(self.stack.len() - count * 2..).collect();
+                        self.drain_stack(self.stack_len() - count * 2..self.stack_len());
                     tmp.reverse();
                     let mut map = HashMap::new();
                     for i in 0..count {
@@ -358,7 +542,7 @@ impl VM {
                 // ===== Struct / Instance =====
                 OpCode::MakeStruct | OpCode::MakeClass => {
                     let name = inst.sarg.clone().unwrap_or_default();
-                    let mut inst_val = Value::instance(name.clone());
+                    let mut inst_val = Value::Instance { class_name: name.clone(), fields: HashMap::new() };
                     if let Some(fields) = self.module.struct_defs.get(&name) {
                         if let Value::Instance {
                             fields: ref mut inst_fields,
@@ -366,7 +550,7 @@ impl VM {
                         } = inst_val
                         {
                             for field in fields {
-                                inst_fields.insert(field.clone(), Value::nil());
+                                inst_fields.insert(field.clone(), Value::Nil);
                             }
                         }
                     }
@@ -380,9 +564,8 @@ impl VM {
                     let obj_type_name = obj.type_name();
                     let result = match &obj {
                         Value::Pointer { alloc_id, .. } => {
-                            if !self.validate_pointer(&obj) {
-                                Value::nil()
-                            } else if let Some(rec) = self.alloc_registry.get(alloc_id) {
+                            self.validate_pointer(&obj)?;
+                            if let Some(rec) = self.alloc_registry.get(alloc_id) {
                                 match &rec.instance {
                                     Value::Instance { fields, .. } | Value::Map(fields) => {
                                         if let Some(v) = fields.get(&prop_name) {
@@ -394,21 +577,21 @@ impl VM {
                                                 prop_name
                                             );
                                             if self.module.function_map.contains_key(&method_name) {
-                                                Value::string(method_name)
+                                                Value::String(method_name)
                                             } else {
-                                                self.runtime_error(&format!(
+                                                return self.runtime_error(&format!(
                                                     "Property not found: {}",
                                                     prop_name
                                                 ));
                                             }
                                         }
                                     }
-                                    _ => self.runtime_error(
+                                    _ => return self.runtime_error(
                                         "Cannot access property on dereferenced pointer type",
                                     ),
                                 }
                             } else {
-                                Value::nil()
+                                Value::Nil
                             }
                         }
                         Value::Instance { fields, .. } | Value::Map(fields) => {
@@ -417,18 +600,18 @@ impl VM {
                             } else {
                                 let method_name = format!("{}_{}", obj_type_name, prop_name);
                                 if self.module.function_map.contains_key(&method_name) {
-                                    Value::string(method_name)
+                                    Value::String(method_name)
                                 } else {
-                                    self.runtime_error(&format!(
+                                    return self.runtime_error(&format!(
                                         "Property not found: {}",
                                         prop_name
                                     ));
                                 }
                             }
                         }
-                        Value::Array(arr) if prop_name == "length" => Value::int(arr.len() as i64),
-                        Value::String(s) if prop_name == "length" => Value::int(s.len() as i64),
-                        _ => self.runtime_error("Cannot access property on this type"),
+                        Value::Array(arr) if prop_name == "length" => Value::Int(arr.len() as i64),
+                        Value::String(s) if prop_name == "length" => Value::Int(s.len() as i64),
+                        _ => return self.runtime_error("Cannot access property on this type"),
                     };
                     self.push(result);
                 }
@@ -438,7 +621,7 @@ impl VM {
                     let mut obj = self.pop();
                     if let Value::Pointer { alloc_id, .. } = &obj {
                         let alloc_id = *alloc_id;
-                        if self.validate_pointer(&obj) {
+                        if self.validate_pointer(&obj)? {
                             if let Some(rec) = self.alloc_registry.get_mut(&alloc_id) {
                                 if let Value::Instance { fields, .. } | Value::Map(fields) =
                                     &mut rec.instance
@@ -450,7 +633,7 @@ impl VM {
                     } else if let Value::Instance { fields, .. } | Value::Map(fields) = &mut obj {
                         fields.insert(prop_name, val);
                     } else {
-                        self.runtime_error("Cannot set property on this type");
+                        return self.runtime_error("Cannot set property on this type");
                     }
                     self.push(obj);
                 }
@@ -462,16 +645,15 @@ impl VM {
                 }
                 OpCode::Deref => {
                     let ptr = self.pop();
-                    self.push(self.deref_pointer(&ptr));
+                    self.push(self.deref_pointer(&ptr)?);
                 }
                 OpCode::PointerMember => {
                     let prop_name = inst.sarg.clone().unwrap_or_default();
                     let ptr = self.pop();
                     let result = match &ptr {
                         Value::Pointer { alloc_id, .. } => {
-                            if !self.validate_pointer(&ptr) {
-                                Value::nil()
-                            } else if let Some(rec) = self.alloc_registry.get(alloc_id) {
+                            self.validate_pointer(&ptr)?;
+                            if let Some(rec) = self.alloc_registry.get(alloc_id) {
                                 match &rec.instance {
                                     Value::Instance { fields, .. } | Value::Map(fields) => {
                                         if let Some(v) = fields.get(&prop_name) {
@@ -483,27 +665,27 @@ impl VM {
                                                 prop_name
                                             );
                                             if self.module.function_map.contains_key(&method_name) {
-                                                Value::string(method_name)
+                                                Value::String(method_name)
                                             } else {
-                                                self.runtime_error(&format!(
+                                                return self.runtime_error(&format!(
                                                     "Pointer member not found: {}",
                                                     prop_name
                                                 ));
                                             }
                                         }
                                     }
-                                    _ => self.runtime_error(
+                                    _ => return self.runtime_error(
                                         "Cannot access member through non-instance pointer",
                                     ),
                                 }
                             } else {
-                                Value::nil()
+                                Value::Nil
                             }
                         }
                         Value::Instance { fields, .. } | Value::Map(fields) => {
-                            fields.get(&prop_name).cloned().unwrap_or(Value::nil())
+                            fields.get(&prop_name).cloned().unwrap_or(Value::Nil)
                         }
-                        _ => self.runtime_error("Cannot access member through non-pointer type"),
+                        _ => return self.runtime_error("Cannot access member through non-pointer type"),
                     };
                     self.push(result);
                 }
@@ -511,27 +693,27 @@ impl VM {
                 OpCode::New => {
                     let class_name_val = self.pop();
                     if let Value::String(class_name) = class_name_val {
-                        let mut inst_val = Value::instance(class_name.clone());
+                        let mut inst_val = Value::Instance { class_name: class_name.clone(), fields: HashMap::new() };
                         if let Some(fields) = self.module.struct_defs.get(&class_name) {
                             if let Value::Instance {
                                 fields: fields_map, ..
                             } = &mut inst_val
                             {
                                 for field in fields {
-                                    fields_map.insert(field.clone(), Value::nil());
+                                    fields_map.insert(field.clone(), Value::Nil);
                                 }
                             }
                         }
                         self.push(inst_val);
                     } else {
-                        self.runtime_error("new: expected class name string");
+                        return self.runtime_error("new: expected class name string");
                     }
                 }
 
                 // ===== HALT =====
                 OpCode::Halt => {
                     self.frames.clear();
-                    return Value::nil();
+                    return Ok(Value::Nil);
                 }
 
                 // ===== Import =====
@@ -542,7 +724,7 @@ impl VM {
                         if !module_name.is_empty() {
                             self.globals.insert(
                                 module_name.to_string(),
-                                Value::instance(module_name.to_string()),
+                                Value::Instance { class_name: module_name.to_string(), fields: HashMap::new() },
                             );
                         }
                     }
@@ -568,13 +750,13 @@ impl VM {
                             }
                         }
                         _ => {
-                            self.runtime_error("os_system 参数必须为字符串类型");
+                            return self.runtime_error("os_system 参数必须为字符串类型");
                         }
                     }
                 }
                 OpCode::FileRead => {
                     self.pop();
-                    self.push(Value::nil());
+                    self.push(Value::Nil);
                 }
                 OpCode::FileWrite => {
                     self.pop();
@@ -589,16 +771,16 @@ impl VM {
                 OpCode::Newz => {
                     let num_args = inst.iarg.unwrap_or(0) as usize;
                     let mut args: Vec<Value> =
-                        self.stack.drain(self.stack.len() - num_args..).collect();
+                        self.drain_stack(self.stack_len() - num_args..self.stack_len());
                     args.reverse();
                     let class_name_val = self.pop();
 
                     if let Value::String(class_name) = class_name_val {
-                        let mut inst_val = Value::instance(class_name.clone());
+                        let mut inst_val = Value::Instance { class_name: class_name.clone(), fields: HashMap::new() };
                         if let Some(fields) = self.module.struct_defs.get(&class_name) {
                             let mut fields_map = HashMap::new();
                             for (i, field) in fields.iter().enumerate() {
-                                let val = args.get(i).cloned().unwrap_or(Value::nil());
+                                let val = args.get(i).cloned().unwrap_or(Value::Nil);
                                 fields_map.insert(field.clone(), val);
                             }
                             inst_val = Value::Instance {
@@ -612,9 +794,9 @@ impl VM {
                             .get(&alloc_id)
                             .map(|r| r.generation)
                             .unwrap_or(0);
-                        self.push(Value::pointer(alloc_id, gen, class_name));
+                        self.push(Value::Pointer { alloc_id: alloc_id, generation: gen, class_name: class_name });
                     } else {
-                        self.runtime_error("newz: expected class name string");
+                        return self.runtime_error("newz: expected class name string");
                     }
                 }
                 OpCode::Free => {
@@ -625,9 +807,9 @@ impl VM {
                         ..
                     } = ptr
                     {
-                        self.free_allocation(alloc_id, generation);
+                        self.free_allocation(alloc_id, generation)?;
                     } else {
-                        self.runtime_error("free: can only free heap pointers (newz allocations)");
+                        return self.runtime_error("free: can only free heap pointers (newz allocations)");
                     }
                 }
                 OpCode::OwnershipMove => {
@@ -642,19 +824,27 @@ impl VM {
                 OpCode::AliveCheck => {
                     if let Some(v) = self.peek(0) {
                         if let Value::Pointer { .. } = v {
-                            if !self.validate_pointer(v) {
+                            if self.validate_pointer(v).is_err() {
                                 self.pop();
-                                self.push(Value::nil());
+                                self.push(Value::Nil);
                             }
                         }
                     }
                 }
 
-                _ => self.runtime_error(&format!("Unimplemented opcode: {:?}", inst.op)),
+                _ => return self.runtime_error(&format!("Unimplemented opcode: {:?}", inst.op)),
+            }
+
+            // Step handling: if we are in step mode and step_count>0, decrement after executing instruction
+            if self.step_count > 0 {
+                self.step_count -= 1;
+                if self.step_count == 0 {
+                    return Ok(self.handle_breakpoint());
+                }
             }
         }
 
-        Value::nil()
+        Ok(Value::Nil)
     }
 
     /// 平台特定的 shell 命令执行 (Windows 使用 cmd /C, Unix 使用 sh -c)

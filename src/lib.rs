@@ -20,5 +20,5 @@ pub mod compiler_ownership;
 pub use opcode::OpCode;
 pub use value::Value;
 pub use instruction::{Instruction, Function, Module, CallFrame};
-pub use vm::VM;
+pub use vm::{VM, DebugAction, StepMode};
 pub use memory_safety::AllocRecord;

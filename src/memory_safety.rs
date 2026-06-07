@@ -60,8 +60,8 @@ impl VM {
     /// - 指针指向不存在的分配记录
     /// 
     /// # 返回
-    /// 如果指针有效返回 `true`，否则通过 `runtime_error` 终止执行
-    pub(crate) fn validate_pointer(&self, ptr: &Value) -> bool {
+    /// 如果指针有效返回 `Ok(true)`，否则返回 `Err(错误信息)`
+    pub(crate) fn validate_pointer(&self, ptr: &Value) -> Result<bool, String> {
         let (alloc_id, generation) = match ptr {
             Value::Pointer {
                 alloc_id,
@@ -69,26 +69,26 @@ impl VM {
                 ..
             } => (*alloc_id, *generation),
             _ => {
-                self.runtime_error("Expected a pointer for dereference/free operation");
+                return self.runtime_error("Expected a pointer for dereference/free operation");
             }
         };
 
         if let Some(rec) = self.alloc_registry.get(&alloc_id) {
             if !rec.alive {
-                self.runtime_error(&format!(
+                return self.runtime_error(&format!(
                     "Dangling pointer: allocation {} has been freed (use-after-free)",
                     alloc_id
                 ));
             }
             if rec.generation != generation {
-                self.runtime_error(&format!(
+                return self.runtime_error(&format!(
                     "Stale pointer: generation mismatch for allocation {} (expected gen {}, got {})",
                     alloc_id, rec.generation, generation
                 ));
             }
-            true
+            Ok(true)
         } else {
-            self.runtime_error(&format!(
+            return self.runtime_error(&format!(
                 "Dangling pointer: allocation {} does not exist (use-after-free)",
                 alloc_id
             ));
@@ -100,17 +100,17 @@ impl VM {
     /// 安全解引用指针，返回指针指向的实例
     /// 
     /// 内部调用 `validate_pointer` 进行安全检查
-    pub(crate) fn deref_pointer(&self, ptr: &Value) -> Value {
-        if !self.validate_pointer(ptr) {
-            return Value::nil();
+    pub(crate) fn deref_pointer(&self, ptr: &Value) -> Result<Value, String> {
+        if !self.validate_pointer(ptr)? {
+            return Ok(Value::Nil);
         }
         if let Value::Pointer { alloc_id, .. } = ptr {
-            self.alloc_registry
+            Ok(self.alloc_registry
                 .get(alloc_id)
                 .map(|r| r.instance.clone())
-                .unwrap_or(Value::nil())
+                .unwrap_or(Value::Nil))
         } else {
-            Value::nil()
+            Ok(Value::Nil)
         }
     }
 
@@ -127,16 +127,16 @@ impl VM {
     /// - 递增代数（generation）
     /// - 标记为非存活
     /// - 从当前帧的所有权列表中移除
-    pub(crate) fn free_allocation(&mut self, alloc_id: u64, generation: u32) {
+    pub(crate) fn free_allocation(&mut self, alloc_id: u64, generation: u32) -> Result<(), String> {
         if let Some(rec) = self.alloc_registry.get(&alloc_id) {
             if !rec.alive {
-                self.runtime_error(&format!(
+                return self.runtime_error(&format!(
                     "Double-free: allocation {} has already been freed",
                     alloc_id
                 ));
             }
             if rec.generation != generation {
-                self.runtime_error(&format!(
+                return self.runtime_error(&format!(
                     "Double-free: generation mismatch for allocation {}",
                     alloc_id
                 ));
@@ -151,8 +151,9 @@ impl VM {
                 let owned = &mut self.current_frame_mut().owned_allocs;
                 owned.retain(|&id| id != alloc_id);
             }
+            Ok(())
         } else {
-            self.runtime_error(&format!(
+            return self.runtime_error(&format!(
                 "Double-free: allocation {} does not exist",
                 alloc_id
             ));

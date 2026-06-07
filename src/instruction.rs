@@ -62,6 +62,7 @@ pub struct CallFrame {
     pub fn_idx: usize,
     pub pc: usize,
     pub stack_base: usize,
+    pub tos_base: usize,
     pub locals: HashMap<String, Value>,
     pub owned_allocs: Vec<u64>,
 }

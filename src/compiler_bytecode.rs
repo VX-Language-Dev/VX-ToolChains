@@ -10,7 +10,7 @@ pub enum BytecodeArg {
 
 #[derive(Debug, Clone)]
 pub struct Instruction {
-    pub op: super::compiler_opcode::OpCode,
+    pub op: vx_vm::OpCode,
     pub arg: BytecodeArg,
 }
 

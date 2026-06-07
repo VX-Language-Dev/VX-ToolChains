@@ -27,6 +27,10 @@ path = "src/pm.rs"
 name = "vx-lsp"
 path = "src/lsp/main.rs"
 
+[[bin]]
+name = "vxdbg"
+path = "src/debugger/main.rs"
+
 [lib]
 name = "vx_vm"
 path = "src/lib.rs"

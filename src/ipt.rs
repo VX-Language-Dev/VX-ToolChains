@@ -9,8 +9,7 @@ use std::path::Path;
 use std::process;
 
 // 子模块：仅保留编译器实现相关的私有模块
-// token/parser/compiler_ownership 已迁移到 vx_vm 库中共享给 LSP 等其他目标
-mod compiler_opcode;
+// token/parser/compiler_ownership/opcode 已迁移到 vx_vm 库中共享给 LSP 等其他目标
 mod compiler_bytecode;
 mod compiler_core;
 
@@ -38,15 +37,37 @@ fn parse_simple_kv(content: &str, delimiter: char) -> HashMap<String, String> {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: vxcompiler <input.vx> [-o output.vxobj]");
+        eprintln!("Usage: vxcompiler <input.vx> [-o output.vxobj] [--dump-bytecode]");
         process::exit(1);
     }
     let input = &args[1];
-    let output = if args.len() > 3 && args[2] == "-o" {
-        args[3].clone()
-    } else {
-        input.replacen(".vx", ".vxobj", 1)
-    };
+    let mut output = String::new();
+    let mut dump_bytecode = false;
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => {
+                if i + 1 < args.len() {
+                    output = args[i + 1].clone();
+                    i += 2;
+                } else {
+                    eprintln!("Missing output file for -o");
+                    process::exit(1);
+                }
+            }
+            "--dump-bytecode" => {
+                dump_bytecode = true;
+                i += 1;
+            }
+            _ => {
+                eprintln!("Unknown argument: {}", args[i]);
+                process::exit(1);
+            }
+        }
+    }
+    if output.is_empty() {
+        output = input.replacen(".vx", ".vxobj", 1);
+    }
 
     let source_dir = fs::canonicalize(input)
         .ok()
@@ -100,6 +121,21 @@ fn main() {
 
     let mut comp = Compiler::new(vxmodel);
     let der = comp.compile(&ast);
+    
+    if dump_bytecode {
+        println!("=== Constants ===");
+        for (i, c) in der.constants.iter().enumerate() {
+            println!("  [{}] {:?}", i, c);
+        }
+        println!("=== Functions ===");
+        for (i, f) in der.functions.iter().enumerate() {
+            println!("  [{}] {} ({} instrs, {} params):", i, f.name, f.instructions.len(), f.num_params);
+            for (j, inst) in f.instructions.iter().enumerate() {
+                println!("    {:3}: {:?} {:?}", j, inst.op, inst.arg);
+            }
+        }
+    }
+    
     match comp.save(&der, &output) {
         Ok(_) => println!("Compiled: {}", output),
         Err(e) => {

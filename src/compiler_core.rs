@@ -6,7 +6,7 @@ use std::io;
 use std::process;
 
 use vx_vm::parser::{Expr, Stmt};
-use crate::compiler_opcode::OpCode;
+use vx_vm::OpCode;
 use crate::compiler_bytecode::{BytecodeArg, Instruction, BytecodeFunction, ConstantValue, CompiledModule};
 use vx_vm::bytecode;
 
@@ -16,6 +16,15 @@ pub struct LoopInfo {
     pub continue_jumps: Vec<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KnownType {
+    Int,
+    Float,
+    Bool,
+    String,
+    Unknown,
+}
+
 pub struct Compiler {
     vxmodel: HashMap<String, String>,
     constants: Vec<ConstantValue>,
@@ -23,6 +32,8 @@ pub struct Compiler {
     functions: Vec<BytecodeFunction>,
     loop_stack: Vec<LoopInfo>,
     for_counter: usize,
+    var_types: HashMap<String, KnownType>,
+    stack_types: Vec<KnownType>,
 }
 
 impl Compiler {
@@ -34,6 +45,62 @@ impl Compiler {
             functions: Vec::new(),
             loop_stack: Vec::new(),
             for_counter: 0,
+            var_types: HashMap::new(),
+            stack_types: Vec::new(),
+        }
+    }
+
+    fn push_stack_type(&mut self, t: KnownType) {
+        self.stack_types.push(t);
+    }
+
+    fn pop_stack_type(&mut self) -> KnownType {
+        self.stack_types.pop().unwrap_or(KnownType::Unknown)
+    }
+
+
+
+    fn set_var_type(&mut self, name: &str, t: KnownType) {
+        self.var_types.insert(name.to_string(), t);
+    }
+
+    fn get_var_type(&self, name: &str) -> KnownType {
+        self.var_types.get(name).copied().unwrap_or(KnownType::Unknown)
+    }
+
+    fn binary_op_specialized(&self, op: &str, left: KnownType, right: KnownType) -> Option<OpCode> {
+        match (op, left, right) {
+            ("+", KnownType::Int, KnownType::Int) => Some(OpCode::AddInt),
+            ("+", KnownType::Float, KnownType::Float) => Some(OpCode::AddFloat),
+            ("-", KnownType::Int, KnownType::Int) => Some(OpCode::SubInt),
+            ("-", KnownType::Float, KnownType::Float) => Some(OpCode::SubFloat),
+            ("*", KnownType::Int, KnownType::Int) => Some(OpCode::MulInt),
+            ("*", KnownType::Float, KnownType::Float) => Some(OpCode::MulFloat),
+            ("/", KnownType::Int, KnownType::Int) => Some(OpCode::DivInt),
+            ("/", KnownType::Float, KnownType::Float) => Some(OpCode::DivFloat),
+            ("%", KnownType::Int, KnownType::Int) => Some(OpCode::ModInt),
+            ("==", KnownType::Int, KnownType::Int) => Some(OpCode::EqInt),
+            ("==", KnownType::Float, KnownType::Float) => Some(OpCode::EqFloat),
+            ("<", KnownType::Int, KnownType::Int) => Some(OpCode::LtInt),
+            ("<", KnownType::Float, KnownType::Float) => Some(OpCode::LtFloat),
+            (">", KnownType::Int, KnownType::Int) => Some(OpCode::GtInt),
+            (">", KnownType::Float, KnownType::Float) => Some(OpCode::GtFloat),
+            ("<=", KnownType::Int, KnownType::Int) => Some(OpCode::LeInt),
+            ("<=", KnownType::Float, KnownType::Float) => Some(OpCode::LeFloat),
+            (">=", KnownType::Int, KnownType::Int) => Some(OpCode::GeInt),
+            (">=", KnownType::Float, KnownType::Float) => Some(OpCode::GeFloat),
+            ("&&", KnownType::Bool, KnownType::Bool) => Some(OpCode::And),
+            ("||", KnownType::Bool, KnownType::Bool) => Some(OpCode::Or),
+            _ => None,
+        }
+    }
+
+    fn unary_op_specialized(&self, op: &str, operand: KnownType) -> Option<OpCode> {
+        match (op, operand) {
+            ("-", KnownType::Int) => Some(OpCode::NegInt),
+            ("-", KnownType::Float) => Some(OpCode::NegFloat),
+            ("!", KnownType::Bool) => Some(OpCode::Not),
+            _ => None,
         }
     }
     fn add_const(&mut self, v: ConstantValue) -> usize {
@@ -57,14 +124,17 @@ impl Compiler {
             Expr::IntLiteral(v, _, _) => {
                 let idx = self.add_const(ConstantValue::Int(*v)) as i32;
                 self.emit(OpCode::LoadConst, BytecodeArg::Int(idx));
+                self.push_stack_type(KnownType::Int);
             }
             Expr::FloatLiteral(v, _, _) => {
                 let idx = self.add_const(ConstantValue::Float(*v)) as i32;
                 self.emit(OpCode::LoadConst, BytecodeArg::Int(idx));
+                self.push_stack_type(KnownType::Float);
             }
             Expr::StringLiteral(v, _, _) => {
                 let idx = self.add_const(ConstantValue::String(v.clone())) as i32;
                 self.emit(OpCode::LoadConst, BytecodeArg::Int(idx));
+                self.push_stack_type(KnownType::String);
             }
             Expr::BoolLiteral(v, _, _) => {
                 if *v {
@@ -72,62 +142,102 @@ impl Compiler {
                 } else {
                     self.emit(OpCode::LoadFalse, BytecodeArg::None);
                 }
+                self.push_stack_type(KnownType::Bool);
             }
             Expr::NilLiteral(_, _) => {
                 self.emit(OpCode::LoadNil, BytecodeArg::None);
+                self.push_stack_type(KnownType::Unknown);
             }
             Expr::Identifier(name, _, _) => match name.as_str() {
                 "sys_argv" => {
                     self.emit(OpCode::SysArgv, BytecodeArg::None);
+                    self.push_stack_type(KnownType::Unknown);
                 }
                 "os_system" => {
                     self.emit(OpCode::System, BytecodeArg::None);
+                    self.push_stack_type(KnownType::Int);
                 }
                 "file_read" => {
                     self.emit(OpCode::FileRead, BytecodeArg::None);
+                    self.push_stack_type(KnownType::String);
                 }
                 "file_write" => {
                     self.emit(OpCode::FileWrite, BytecodeArg::None);
+                    self.push_stack_type(KnownType::Unknown);
                 }
                 "file_exists" => {
                     self.emit(OpCode::FileExists, BytecodeArg::None);
+                    self.push_stack_type(KnownType::Bool);
                 }
                 _ => {
+                    let var_type = self.get_var_type(name);
                     self.emit(OpCode::LoadVar, BytecodeArg::String(name.clone()));
+                    self.push_stack_type(var_type);
                 }
             },
             Expr::BinaryOp(op, left, right, _, _) => {
                 self.compile_expr(left);
                 self.compile_expr(right);
-                let oc = match op.as_ref() {
-                    "+" => OpCode::BinaryAdd,
-                    "-" => OpCode::BinarySub,
-                    "*" => OpCode::BinaryMul,
-                    "/" => OpCode::BinaryDiv,
-                    "%" => OpCode::BinaryMod,
-                    "^" => OpCode::BinaryPow,
-                    "==" => OpCode::BinaryEq,
-                    "!=" => OpCode::BinaryNe,
-                    "<" => OpCode::BinaryLt,
-                    ">" => OpCode::BinaryGt,
-                    "<=" => OpCode::BinaryLe,
-                    ">=" => OpCode::BinaryGe,
-                    "&&" => OpCode::BinaryAnd,
-                    "||" => OpCode::BinaryOr,
-                    _ => {
-                        eprintln!("VX Error: 未知的二元操作符: {}", op);
-                        process::exit(1);
-                    }
-                };
+                let right_type = self.pop_stack_type();
+                let left_type = self.pop_stack_type();
+                let oc = self.binary_op_specialized(op, left_type, right_type)
+                    .unwrap_or_else(|| match op.as_ref() {
+                        "+" => OpCode::BinaryAdd,
+                        "-" => OpCode::BinarySub,
+                        "*" => OpCode::BinaryMul,
+                        "/" => OpCode::BinaryDiv,
+                        "%" => OpCode::BinaryMod,
+                        "^" => OpCode::BinaryPow,
+                        "==" => OpCode::BinaryEq,
+                        "!=" => OpCode::BinaryNe,
+                        "<" => OpCode::BinaryLt,
+                        ">" => OpCode::BinaryGt,
+                        "<=" => OpCode::BinaryLe,
+                        ">=" => OpCode::BinaryGe,
+                        "&&" => OpCode::BinaryAnd,
+                        "||" => OpCode::BinaryOr,
+                        _ => {
+                            eprintln!("VX Error: 未知的二元操作符: {}", op);
+                            process::exit(1);
+                        }
+                    });
                 self.emit(oc, BytecodeArg::None);
+                let result_type = match (op.as_ref(), left_type, right_type) {
+                    ("+", KnownType::Int, KnownType::Int) => KnownType::Int,
+                    ("+", KnownType::Float, KnownType::Float) => KnownType::Float,
+                    ("-", KnownType::Int, KnownType::Int) => KnownType::Int,
+                    ("-", KnownType::Float, KnownType::Float) => KnownType::Float,
+                    ("*", KnownType::Int, KnownType::Int) => KnownType::Int,
+                    ("*", KnownType::Float, KnownType::Float) => KnownType::Float,
+                    ("/", KnownType::Int, KnownType::Int) => KnownType::Int,
+                    ("/", KnownType::Float, KnownType::Float) => KnownType::Float,
+                    ("%", KnownType::Int, KnownType::Int) => KnownType::Int,
+                    ("==" | "!=" | "<" | ">" | "<=" | ">=", KnownType::Int, KnownType::Int) => KnownType::Bool,
+                    ("==" | "!=" | "<" | ">" | "<=" | ">=", KnownType::Float, KnownType::Float) => KnownType::Bool,
+                    ("&&" | "||", KnownType::Bool, KnownType::Bool) => KnownType::Bool,
+                    _ => KnownType::Unknown,
+                };
+                self.push_stack_type(result_type);
             }
             Expr::UnaryOp(op, operand, _, _) => {
                 self.compile_expr(operand);
-                if &**op == "-" {
-                    self.emit(OpCode::UnaryNeg, BytecodeArg::None);
-                } else {
-                    self.emit(OpCode::UnaryNot, BytecodeArg::None);
-                }
+                let operand_type = self.pop_stack_type();
+                let oc = self.unary_op_specialized(&**op, operand_type)
+                    .unwrap_or_else(|| {
+                        if &**op == "-" {
+                            OpCode::UnaryNeg
+                        } else {
+                            OpCode::UnaryNot
+                        }
+                    });
+                self.emit(oc, BytecodeArg::None);
+                let result_type = match (&**op, operand_type) {
+                    ("-", KnownType::Int) => KnownType::Int,
+                    ("-", KnownType::Float) => KnownType::Float,
+                    ("!", KnownType::Bool) => KnownType::Bool,
+                    _ => KnownType::Unknown,
+                };
+                self.push_stack_type(result_type);
             }
             Expr::CallExpr(callee, args, _, _) => {
                 // 内置函数特殊处理: os_system / file_read / file_write / file_exists
@@ -251,6 +361,8 @@ impl Compiler {
             match target {
                 Expr::Identifier(name, _, _) => {
                     self.compile_expr(value);
+                    let value_type = self.pop_stack_type();
+                    self.set_var_type(name, value_type);
                     self.emit(OpCode::StoreVar, BytecodeArg::String(name.clone()));
                 }
                 Expr::IndexAccess(obj, index, _, _) => {
@@ -265,7 +377,6 @@ impl Compiler {
                     self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
                     self.emit(OpCode::Pop, BytecodeArg::None);
                 }
-                // 不可达: 解析器 parse_assignment 仅允许 Identifier/IndexAccess/PropertyAccess
                 _ => {}
             }
         } else {
@@ -281,20 +392,37 @@ impl Compiler {
             match target {
                 Expr::Identifier(name, _, _) => {
                     self.emit(OpCode::LoadVar, BytecodeArg::String(name.clone()));
+                    let var_type = self.get_var_type(name);
+                    self.push_stack_type(var_type);
                     self.compile_expr(value);
-                    let oc = match bin_op {
-                        "+" => OpCode::BinaryAdd,
-                        "-" => OpCode::BinarySub,
-                        "*" => OpCode::BinaryMul,
-                        "/" => OpCode::BinaryDiv,
-                        "%" => OpCode::BinaryMod,
-                        "^" => OpCode::BinaryPow,
-                        _ => {
-                            eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
-                            process::exit(1);
-                        }
-                    };
+                    let value_type = self.pop_stack_type();
+                    let oc = self.binary_op_specialized(bin_op, var_type, value_type)
+                        .unwrap_or_else(|| match bin_op {
+                            "+" => OpCode::BinaryAdd,
+                            "-" => OpCode::BinarySub,
+                            "*" => OpCode::BinaryMul,
+                            "/" => OpCode::BinaryDiv,
+                            "%" => OpCode::BinaryMod,
+                            "^" => OpCode::BinaryPow,
+                            _ => {
+                                eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
+                                process::exit(1);
+                            }
+                        });
                     self.emit(oc, BytecodeArg::None);
+                    let result_type = match (bin_op, var_type, value_type) {
+                        ("+", KnownType::Int, KnownType::Int) => KnownType::Int,
+                        ("+", KnownType::Float, KnownType::Float) => KnownType::Float,
+                        ("-", KnownType::Int, KnownType::Int) => KnownType::Int,
+                        ("-", KnownType::Float, KnownType::Float) => KnownType::Float,
+                        ("*", KnownType::Int, KnownType::Int) => KnownType::Int,
+                        ("*", KnownType::Float, KnownType::Float) => KnownType::Float,
+                        ("/", KnownType::Int, KnownType::Int) => KnownType::Int,
+                        ("/", KnownType::Float, KnownType::Float) => KnownType::Float,
+                        ("%", KnownType::Int, KnownType::Int) => KnownType::Int,
+                        _ => KnownType::Unknown,
+                    };
+                    self.set_var_type(name, result_type);
                     self.emit(OpCode::StoreVar, BytecodeArg::String(name.clone()));
                 }
                 Expr::IndexAccess(obj, index, _, _) => {
@@ -345,7 +473,6 @@ impl Compiler {
                     self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
                     self.emit(OpCode::Pop, BytecodeArg::None);
                 }
-                // 不可达: 解析器 parse_assignment 仅允许 Identifier/IndexAccess/PropertyAccess
                 _ => {}
             }
         }
@@ -362,6 +489,8 @@ impl Compiler {
             }
             Expr::VarDecl(name, _, value, _, _, _) => {
                 self.compile_expr(value);
+                let value_type = self.pop_stack_type();
+                self.set_var_type(name, value_type);
                 self.emit(OpCode::DefineVar, BytecodeArg::String(name.clone()));
             }
             Expr::IfStmt(cond, body, elifs, else_body, _, _) => {
@@ -563,9 +692,22 @@ impl Compiler {
                     for m in methods {
                         if let Expr::FuncDecl(mname, params, _, mbody, _, _) = m.as_ref() {
                             let msave = std::mem::replace(&mut self.instructions, Vec::new());
+                            let save_var_types = self.var_types.clone();
+                            self.var_types.clear();
+                            for (pname, ptype) in params {
+                                let known_type = match ptype.as_str() {
+                                    "int" => KnownType::Int,
+                                    "float" => KnownType::Float,
+                                    "bool" => KnownType::Bool,
+                                    "string" => KnownType::String,
+                                    _ => KnownType::Unknown,
+                                };
+                                self.var_types.insert(pname.clone(), known_type);
+                            }
                             for x in mbody {
                                 self.compile_stmt(x);
                             }
+                            self.var_types = save_var_types;
                             if !mbody
                                 .iter()
                                 .any(|x| matches!(&**x, Expr::ReturnStmt(_, _, _)))
@@ -603,9 +745,22 @@ impl Compiler {
                 }
                 Expr::FuncDecl(fname, params, _, body, _, _) => {
                     let save = std::mem::replace(&mut self.instructions, Vec::new());
+                    let save_var_types = self.var_types.clone();
+                    self.var_types.clear();
+                    for (pname, ptype) in params {
+                        let known_type = match ptype.as_str() {
+                            "int" => KnownType::Int,
+                            "float" => KnownType::Float,
+                            "bool" => KnownType::Bool,
+                            "string" => KnownType::String,
+                            _ => KnownType::Unknown,
+                        };
+                        self.var_types.insert(pname.clone(), known_type);
+                    }
                     for x in body {
                         self.compile_stmt(x);
                     }
+                    self.var_types = save_var_types;
                     if !body
                         .iter()
                         .any(|x| matches!(&**x, Expr::ReturnStmt(_, _, _)))
