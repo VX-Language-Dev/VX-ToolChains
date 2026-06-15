@@ -204,7 +204,7 @@ fn function_hover(ast: &[Stmt], name: &str) -> Option<Hover> {
 fn type_hover(ast: &[Stmt], name: &str) -> Option<Hover> {
     for stmt in ast {
         match stmt {
-            vx_vm::parser::Expr::StructDecl(sname, fields, _, line, col) => {
+            vx_vm::parser::Expr::StructDecl(sname, fields, _, line, _col) => {
                 if sname == name {
                     let field_str = fields
                         .iter()

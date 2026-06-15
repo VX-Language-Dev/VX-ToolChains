@@ -5,10 +5,17 @@ mod opcode;
 mod value;
 mod instruction;
 mod vm;
+mod vm_dispatch;
 mod vm_exec;
 mod memory_safety;
 
 pub mod bytecode;
+pub mod type_ir;
+
+// AOT 后端: Feature-gated Cranelift 原生代码生成
+// 启用: cargo build --features aot
+#[cfg(feature = "aot")]
+pub mod aot_backend;
 
 // VX Language Core: 词法分析、语法分析、所有权检查
 // 这些模块由编译器、LSP 服务器等共享使用

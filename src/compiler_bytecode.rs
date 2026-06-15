@@ -8,10 +8,41 @@ pub enum BytecodeArg {
     ImportTuple(String, Option<String>, Option<String>),
 }
 
+impl BytecodeArg {
+    #[allow(dead_code)]
+    pub fn to_vm_args(&self) -> (Option<i32>, Option<String>) {
+        match self {
+            BytecodeArg::None => (None, None),
+            BytecodeArg::Int(v) => (Some(*v), None),
+            BytecodeArg::String(s) => (None, Some(s.clone())),
+            BytecodeArg::ImportTuple(a, b, c) => {
+                let s = format!(
+                    "{},{},{}",
+                    b.as_deref().unwrap_or(""),
+                    c.as_deref().unwrap_or(""),
+                    a,
+                );
+                (None, Some(s))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Instruction {
     pub op: vx_vm::OpCode,
     pub arg: BytecodeArg,
+}
+
+impl Instruction {
+    #[allow(dead_code)]
+    pub fn to_vm_instruction(&self) -> vx_vm::Instruction {
+        let (iarg, sarg) = self.arg.to_vm_args();
+        let mut inst = vx_vm::Instruction::new(self.op);
+        inst.iarg = iarg;
+        inst.sarg = sarg.map(|s| s.into_boxed_str());
+        inst
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -38,4 +69,6 @@ pub struct CompiledModule {
     pub constants: Vec<ConstantValue>,
     pub structs: Vec<(String, Vec<String>)>,
     pub classes: Vec<(String, Vec<String>)>,
+    pub type_ir_data: Vec<u8>,
+    pub target_triple: String,
 }

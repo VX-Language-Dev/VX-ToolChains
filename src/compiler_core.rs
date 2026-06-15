@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::process;
 
 use vx_vm::parser::{Expr, Stmt};
 use vx_vm::OpCode;
+use vx_vm::type_ir::{self, Type, TypeModule, TypeFunction, TypedInstruction, FuncId};
 use crate::compiler_bytecode::{BytecodeArg, Instruction, BytecodeFunction, ConstantValue, CompiledModule};
 use vx_vm::bytecode;
 
@@ -33,6 +33,8 @@ pub struct Compiler {
     loop_stack: Vec<LoopInfo>,
     for_counter: usize,
     var_types: HashMap<String, KnownType>,
+    var_slots: HashMap<String, u32>,
+    next_slot: u32,
     stack_types: Vec<KnownType>,
 }
 
@@ -46,8 +48,20 @@ impl Compiler {
             loop_stack: Vec::new(),
             for_counter: 0,
             var_types: HashMap::new(),
+            var_slots: HashMap::new(),
+            next_slot: 0,
             stack_types: Vec::new(),
         }
+    }
+
+    fn allocate_slot(&mut self, name: &str) -> u32 {
+        if let Some(&slot) = self.var_slots.get(name) {
+            return slot;
+        }
+        let slot = self.next_slot;
+        self.next_slot += 1;
+        self.var_slots.insert(name.to_string(), slot);
+        slot
     }
 
     fn push_stack_type(&mut self, t: KnownType) {
@@ -119,7 +133,7 @@ impl Compiler {
             };
         }
     }
-    pub fn compile_expr(&mut self, e: &Expr) {
+    pub fn compile_expr(&mut self, e: &Expr) -> Result<(), String> {
         match e {
             Expr::IntLiteral(v, _, _) => {
                 let idx = self.add_const(ConstantValue::Int(*v)) as i32;
@@ -171,17 +185,19 @@ impl Compiler {
                 }
                 _ => {
                     let var_type = self.get_var_type(name);
-                    self.emit(OpCode::LoadVar, BytecodeArg::String(name.clone()));
+                    let slot = self.allocate_slot(name);
+                    self.emit(OpCode::LoadVar, BytecodeArg::Int(slot as i32));
                     self.push_stack_type(var_type);
                 }
             },
             Expr::BinaryOp(op, left, right, _, _) => {
-                self.compile_expr(left);
-                self.compile_expr(right);
+                self.compile_expr(left)?;
+                self.compile_expr(right)?;
                 let right_type = self.pop_stack_type();
                 let left_type = self.pop_stack_type();
-                let oc = self.binary_op_specialized(op, left_type, right_type)
-                    .unwrap_or_else(|| match op.as_ref() {
+                let oc = match self.binary_op_specialized(op, left_type, right_type) {
+                    Some(oc) => oc,
+                    None => match op.as_ref() {
                         "+" => OpCode::BinaryAdd,
                         "-" => OpCode::BinarySub,
                         "*" => OpCode::BinaryMul,
@@ -196,11 +212,9 @@ impl Compiler {
                         ">=" => OpCode::BinaryGe,
                         "&&" => OpCode::BinaryAnd,
                         "||" => OpCode::BinaryOr,
-                        _ => {
-                            eprintln!("VX Error: 未知的二元操作符: {}", op);
-                            process::exit(1);
-                        }
-                    });
+                        _ => return Err(format!("VX Error: 未知的二元操作符: {}", op)),
+                    },
+                };
                 self.emit(oc, BytecodeArg::None);
                 let result_type = match (op.as_ref(), left_type, right_type) {
                     ("+", KnownType::Int, KnownType::Int) => KnownType::Int,
@@ -220,7 +234,7 @@ impl Compiler {
                 self.push_stack_type(result_type);
             }
             Expr::UnaryOp(op, operand, _, _) => {
-                self.compile_expr(operand);
+                self.compile_expr(operand)?;
                 let operand_type = self.pop_stack_type();
                 let oc = self.unary_op_specialized(&**op, operand_type)
                     .unwrap_or_else(|| {
@@ -254,48 +268,48 @@ impl Compiler {
                         // 先编译参数（将参数推入栈），再发射对应的 OpCode
                         // OpCode::System/FileRead/FileWrite 会从栈顶弹出参数
                         for a in args {
-                            self.compile_expr(a);
+                            self.compile_expr(a)?;
                         }
                         self.emit(op, BytecodeArg::None);
-                        return;
+                        return Ok(());
                     }
                 }
 
                 if let Expr::PropertyAccess(obj, prop, _, _) = callee.as_ref() {
-                    self.compile_expr(obj);
+                    self.compile_expr(obj)?;
                     let idx = self.add_const(ConstantValue::String(prop.clone())) as i32;
                     self.emit(OpCode::LoadConst, BytecodeArg::Int(idx));
                     for a in args {
-                        self.compile_expr(a);
+                        self.compile_expr(a)?;
                     }
                     self.emit(OpCode::Call, BytecodeArg::Int((1 + args.len()) as i32));
                 } else {
-                    self.compile_expr(callee);
+                    self.compile_expr(callee)?;
                     for a in args {
-                        self.compile_expr(a);
+                        self.compile_expr(a)?;
                     }
                     self.emit(OpCode::Call, BytecodeArg::Int(args.len() as i32));
                 }
             }
             Expr::IndexAccess(obj, index, _, _) => {
-                self.compile_expr(obj);
-                self.compile_expr(index);
+                self.compile_expr(obj)?;
+                self.compile_expr(index)?;
                 self.emit(OpCode::IndexGet, BytecodeArg::None);
             }
             Expr::PropertyAccess(obj, prop, _, _) => {
-                self.compile_expr(obj);
+                self.compile_expr(obj)?;
                 self.emit(OpCode::PropertyGet, BytecodeArg::String(prop.clone()));
             }
             Expr::ArrayLiteral(elements, _, _) => {
                 for x in elements {
-                    self.compile_expr(x);
+                    self.compile_expr(x)?;
                 }
                 self.emit(OpCode::MakeArray, BytecodeArg::Int(elements.len() as i32));
             }
             Expr::MapLiteral(pairs, _, _) => {
                 for (k, v) in pairs {
-                    self.compile_expr(k);
-                    self.compile_expr(v);
+                    self.compile_expr(k)?;
+                    self.compile_expr(v)?;
                 }
                 self.emit(OpCode::MakeMap, BytecodeArg::Int(pairs.len() as i32));
             }
@@ -303,7 +317,7 @@ impl Compiler {
                 let idx = self.add_const(ConstantValue::String(type_name.clone())) as i32;
                 self.emit(OpCode::LoadConst, BytecodeArg::Int(idx));
                 for a in args {
-                    self.compile_expr(a);
+                    self.compile_expr(a)?;
                 }
                 self.emit(OpCode::Call, BytecodeArg::Int(args.len() as i32));
             }
@@ -311,26 +325,26 @@ impl Compiler {
                 let idx = self.add_const(ConstantValue::String(type_name.clone())) as i32;
                 self.emit(OpCode::LoadConst, BytecodeArg::Int(idx));
                 for a in args {
-                    self.compile_expr(a);
+                    self.compile_expr(a)?;
                 }
                 self.emit(OpCode::Newz, BytecodeArg::Int(args.len() as i32));
             }
             Expr::MoveExpr(target, _, _) => {
-                self.compile_expr(target);
+                self.compile_expr(target)?;
                 self.emit(OpCode::OwnershipMove, BytecodeArg::None);
             }
             Expr::AddressOf(operand, _, _) => {
-                self.compile_expr(operand);
+                self.compile_expr(operand)?;
                 self.emit(OpCode::BorrowCheck, BytecodeArg::None);
                 self.emit(OpCode::AddressOf, BytecodeArg::None);
             }
             Expr::Deref(operand, _, _) => {
-                self.compile_expr(operand);
+                self.compile_expr(operand)?;
                 self.emit(OpCode::AliveCheck, BytecodeArg::None);
                 self.emit(OpCode::Deref, BytecodeArg::None);
             }
             Expr::PointerMember(obj, member, _, _) => {
-                self.compile_expr(obj);
+                self.compile_expr(obj)?;
                 self.emit(OpCode::AliveCheck, BytecodeArg::None);
                 self.emit(OpCode::PropertyGet, BytecodeArg::String(member.clone()));
             }
@@ -355,25 +369,27 @@ impl Compiler {
             | Expr::ReturnStmt(..)
             | Expr::FreeStmt(..) => {}
         }
+        Ok(())
     }
-    pub fn compile_assign(&mut self, target: &Expr, op: &str, value: &Expr) {
+    pub fn compile_assign(&mut self, target: &Expr, op: &str, value: &Expr) -> Result<(), String> {
         if op == "=" {
             match target {
                 Expr::Identifier(name, _, _) => {
-                    self.compile_expr(value);
+                    self.compile_expr(value)?;
                     let value_type = self.pop_stack_type();
                     self.set_var_type(name, value_type);
-                    self.emit(OpCode::StoreVar, BytecodeArg::String(name.clone()));
+                    let slot = self.allocate_slot(name);
+                    self.emit(OpCode::StoreVar, BytecodeArg::Int(slot as i32));
                 }
                 Expr::IndexAccess(obj, index, _, _) => {
-                    self.compile_expr(value);
-                    self.compile_expr(obj);
-                    self.compile_expr(index);
+                    self.compile_expr(value)?;
+                    self.compile_expr(obj)?;
+                    self.compile_expr(index)?;
                     self.emit(OpCode::IndexSet, BytecodeArg::None);
                 }
                 Expr::PropertyAccess(obj, prop, _, _) => {
-                    self.compile_expr(value);
-                    self.compile_expr(obj);
+                    self.compile_expr(value)?;
+                    self.compile_expr(obj)?;
                     self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
                     self.emit(OpCode::Pop, BytecodeArg::None);
                 }
@@ -391,24 +407,24 @@ impl Compiler {
             };
             match target {
                 Expr::Identifier(name, _, _) => {
-                    self.emit(OpCode::LoadVar, BytecodeArg::String(name.clone()));
+                    let slot = self.allocate_slot(name);
+                    self.emit(OpCode::LoadVar, BytecodeArg::Int(slot as i32));
                     let var_type = self.get_var_type(name);
                     self.push_stack_type(var_type);
-                    self.compile_expr(value);
+                    self.compile_expr(value)?;
                     let value_type = self.pop_stack_type();
-                    let oc = self.binary_op_specialized(bin_op, var_type, value_type)
-                        .unwrap_or_else(|| match bin_op {
+                    let oc = match self.binary_op_specialized(bin_op, var_type, value_type) {
+                        Some(oc) => oc,
+                        None => match bin_op {
                             "+" => OpCode::BinaryAdd,
                             "-" => OpCode::BinarySub,
                             "*" => OpCode::BinaryMul,
                             "/" => OpCode::BinaryDiv,
                             "%" => OpCode::BinaryMod,
                             "^" => OpCode::BinaryPow,
-                            _ => {
-                                eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
-                                process::exit(1);
-                            }
-                        });
+                            _ => return Err(format!("VX Error: 未知的二元操作符: {}", bin_op)),
+                        },
+                    };
                     self.emit(oc, BytecodeArg::None);
                     let result_type = match (bin_op, var_type, value_type) {
                         ("+", KnownType::Int, KnownType::Int) => KnownType::Int,
@@ -423,13 +439,14 @@ impl Compiler {
                         _ => KnownType::Unknown,
                     };
                     self.set_var_type(name, result_type);
-                    self.emit(OpCode::StoreVar, BytecodeArg::String(name.clone()));
+                    let slot2 = self.allocate_slot(name);
+                    self.emit(OpCode::StoreVar, BytecodeArg::Int(slot2 as i32));
                 }
                 Expr::IndexAccess(obj, index, _, _) => {
-                    self.compile_expr(obj);
-                    self.compile_expr(index);
+                    self.compile_expr(obj)?;
+                    self.compile_expr(index)?;
                     self.emit(OpCode::IndexGet, BytecodeArg::None);
-                    self.compile_expr(value);
+                    self.compile_expr(value)?;
                     let oc = match bin_op {
                         "+" => OpCode::BinaryAdd,
                         "-" => OpCode::BinarySub,
@@ -437,23 +454,22 @@ impl Compiler {
                         "/" => OpCode::BinaryDiv,
                         "%" => OpCode::BinaryMod,
                         "^" => OpCode::BinaryPow,
-                        _ => {
-                            eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
-                            process::exit(1);
-                        }
+                        _ => return Err(format!("VX Error: 未知的二元操作符: {}", bin_op)),
                     };
                     self.emit(oc, BytecodeArg::None);
                     let tmp = format!("__asg_v_{}", self.instructions.len());
-                    self.emit(OpCode::StoreVar, BytecodeArg::String(tmp.clone()));
-                    self.compile_expr(obj);
-                    self.compile_expr(index);
-                    self.emit(OpCode::LoadVar, BytecodeArg::String(tmp));
+                    let tmp_slot = self.allocate_slot(&tmp);
+                    self.emit(OpCode::StoreVar, BytecodeArg::Int(tmp_slot as i32));
+                    self.compile_expr(obj)?;
+                    self.compile_expr(index)?;
+                    let tmp_slot2 = self.allocate_slot(&tmp);
+                    self.emit(OpCode::LoadVar, BytecodeArg::Int(tmp_slot2 as i32));
                     self.emit(OpCode::IndexSet, BytecodeArg::None);
                 }
                 Expr::PropertyAccess(obj, prop, _, _) => {
-                    self.compile_expr(obj);
+                    self.compile_expr(obj)?;
                     self.emit(OpCode::PropertyGet, BytecodeArg::String(prop.clone()));
-                    self.compile_expr(value);
+                    self.compile_expr(value)?;
                     let oc = match bin_op {
                         "+" => OpCode::BinaryAdd,
                         "-" => OpCode::BinarySub,
@@ -461,59 +477,59 @@ impl Compiler {
                         "/" => OpCode::BinaryDiv,
                         "%" => OpCode::BinaryMod,
                         "^" => OpCode::BinaryPow,
-                        _ => {
-                            eprintln!("VX Error: 未知的二元操作符: {}", bin_op);
-                            process::exit(1);
-                        }
+                        _ => return Err(format!("VX Error: 未知的二元操作符: {}", bin_op)),
                     };
                     self.emit(oc, BytecodeArg::None);
                     let tmp = format!("__asg_v_{}", self.instructions.len());
-                    self.emit(OpCode::StoreVar, BytecodeArg::String(tmp.clone()));
-                    self.compile_expr(obj);
+                    let tmp_slot = self.allocate_slot(&tmp);
+                    self.emit(OpCode::StoreVar, BytecodeArg::Int(tmp_slot as i32));
+                    self.compile_expr(obj)?;
                     self.emit(OpCode::PropertySet, BytecodeArg::String(prop.clone()));
                     self.emit(OpCode::Pop, BytecodeArg::None);
                 }
                 _ => {}
             }
         }
+        Ok(())
     }
 
-    pub fn compile_stmt(&mut self, s: &Stmt) {
+    pub fn compile_stmt(&mut self, s: &Stmt) -> Result<(), String> {
         match s {
             Expr::ExprStmt(expr, _, _) => {
                 if let Expr::Assign(ref target, ref op, ref value, _, _) = **expr {
-                    self.compile_assign(target, op, value);
+                    self.compile_assign(target, op, value)?;
                 } else {
-                    self.compile_expr(expr);
+                    self.compile_expr(expr)?;
                 }
             }
             Expr::VarDecl(name, _, value, _, _, _) => {
-                self.compile_expr(value);
+                self.compile_expr(value)?;
                 let value_type = self.pop_stack_type();
                 self.set_var_type(name, value_type);
-                self.emit(OpCode::DefineVar, BytecodeArg::String(name.clone()));
+                let slot = self.allocate_slot(name);
+                self.emit(OpCode::DefineVar, BytecodeArg::Int(slot as i32));
             }
             Expr::IfStmt(cond, body, elifs, else_body, _, _) => {
-                self.compile_expr(cond);
+                self.compile_expr(cond)?;
                 let jump_to_elif = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
                 for x in body {
-                    self.compile_stmt(x);
+                    self.compile_stmt(x)?;
                 }
                 let mut exit_jumps: Vec<usize> = Vec::new();
                 exit_jumps.push(self.emit(OpCode::Jump, BytecodeArg::None));
                 self.patch(jump_to_elif, self.instructions.len());
                 for (c, b) in elifs {
-                    self.compile_expr(c);
+                    self.compile_expr(c)?;
                     let jump_to_next = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
                     for x in b {
-                        self.compile_stmt(x);
+                        self.compile_stmt(x)?;
                     }
                     exit_jumps.push(self.emit(OpCode::Jump, BytecodeArg::None));
                     self.patch(jump_to_next, self.instructions.len());
                 }
                 if let Some(b) = else_body {
                     for x in b {
-                        self.compile_stmt(x);
+                        self.compile_stmt(x)?;
                     }
                 }
                 let end_pc = self.instructions.len();
@@ -528,10 +544,10 @@ impl Compiler {
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
                 });
-                self.compile_expr(cond);
+                self.compile_expr(cond)?;
                 let exit_j = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
                 for x in body {
-                    self.compile_stmt(x);
+                    self.compile_stmt(x)?;
                 }
                 self.emit(OpCode::Jump, BytecodeArg::None);
                 let exit_pc = self.instructions.len();
@@ -554,38 +570,47 @@ impl Compiler {
                 self.for_counter += 1;
                 let src_var = format!("__for_{}_src", for_id);
                 let idx_var = format!("__for_{}_idx", for_id);
-                self.compile_expr(iter);
-                self.emit(OpCode::DefineVar, BytecodeArg::String(src_var.clone()));
+                self.compile_expr(iter)?;
+                let src_slot = self.allocate_slot(&src_var);
+                self.emit(OpCode::DefineVar, BytecodeArg::Int(src_slot as i32));
                 let const_0 = self.add_const(ConstantValue::Int(0)) as i32;
                 self.emit(OpCode::LoadConst, BytecodeArg::Int(const_0));
-                self.emit(OpCode::DefineVar, BytecodeArg::String(idx_var.clone()));
+                let idx_slot = self.allocate_slot(&idx_var);
+                self.emit(OpCode::DefineVar, BytecodeArg::Int(idx_slot as i32));
                 let start = self.instructions.len();
                 self.loop_stack.push(LoopInfo {
                     start,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
                 });
-                self.emit(OpCode::LoadVar, BytecodeArg::String(idx_var.clone()));
-                self.emit(OpCode::LoadVar, BytecodeArg::String(src_var.clone()));
+                let idx_slot2 = self.allocate_slot(&idx_var);
+                self.emit(OpCode::LoadVar, BytecodeArg::Int(idx_slot2 as i32));
+                let src_slot2 = self.allocate_slot(&src_var);
+                self.emit(OpCode::LoadVar, BytecodeArg::Int(src_slot2 as i32));
                 let const_len = self.add_const(ConstantValue::String("len".into())) as i32;
                 self.emit(OpCode::LoadConst, BytecodeArg::Int(const_len));
                 self.emit(OpCode::Call, BytecodeArg::Int(1));
                 self.emit(OpCode::BinaryLt, BytecodeArg::None);
                 let exit_j = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
-                self.emit(OpCode::LoadVar, BytecodeArg::String(src_var.clone()));
-                self.emit(OpCode::LoadVar, BytecodeArg::String(idx_var.clone()));
+                let src_slot3 = self.allocate_slot(&src_var);
+                self.emit(OpCode::LoadVar, BytecodeArg::Int(src_slot3 as i32));
+                let idx_slot3 = self.allocate_slot(&idx_var);
+                self.emit(OpCode::LoadVar, BytecodeArg::Int(idx_slot3 as i32));
                 self.emit(OpCode::IndexGet, BytecodeArg::None);
-                self.emit(OpCode::DefineVar, BytecodeArg::String(var.clone()));
+                let var_slot = self.allocate_slot(var);
+                self.emit(OpCode::DefineVar, BytecodeArg::Int(var_slot as i32));
                 for x in body {
-                    self.compile_stmt(x);
+                    self.compile_stmt(x)?;
                 }
                 let cont_pc = self.instructions.len();
                 self.loop_stack.last_mut().unwrap().start = cont_pc;
-                self.emit(OpCode::LoadVar, BytecodeArg::String(idx_var.clone()));
+                let idx_slot4 = self.allocate_slot(&idx_var);
+                self.emit(OpCode::LoadVar, BytecodeArg::Int(idx_slot4 as i32));
                 let const_1 = self.add_const(ConstantValue::Int(1)) as i32;
                 self.emit(OpCode::LoadConst, BytecodeArg::Int(const_1));
                 self.emit(OpCode::BinaryAdd, BytecodeArg::None);
-                self.emit(OpCode::StoreVar, BytecodeArg::String(idx_var));
+                let idx_slot5 = self.allocate_slot(&idx_var);
+                self.emit(OpCode::StoreVar, BytecodeArg::Int(idx_slot5 as i32));
                 self.emit(OpCode::Jump, BytecodeArg::None);
                 let exit_pc = self.instructions.len();
                 self.patch(exit_j, exit_pc);
@@ -604,16 +629,14 @@ impl Compiler {
             }
             Expr::BreakStmt(line, col) => {
                 if self.loop_stack.is_empty() {
-                    eprintln!("VX Error [line {}, col {}]: break outside loop", line, col);
-                    process::exit(1);
+                    return Err(format!("VX Error [line {}, col {}]: break outside loop", line, col));
                 }
                 let bj = self.emit(OpCode::Jump, BytecodeArg::None);
                 self.loop_stack.last_mut().unwrap().break_jumps.push(bj);
             }
             Expr::ContinueStmt(line, col) => {
                 if self.loop_stack.is_empty() {
-                    eprintln!("VX Error [line {}, col {}]: continue outside loop", line, col);
-                    process::exit(1);
+                    return Err(format!("VX Error [line {}, col {}]: continue outside loop", line, col));
                 }
                 let cj = self.emit(OpCode::Jump, BytecodeArg::None);
                 self.loop_stack
@@ -624,21 +647,22 @@ impl Compiler {
             }
             Expr::ReturnStmt(val, _, _) => {
                 if let Some(v) = val {
-                    self.compile_expr(v);
+                    self.compile_expr(v)?;
                 } else {
                     self.emit(OpCode::LoadNil, BytecodeArg::None);
                 }
                 self.emit(OpCode::Return, BytecodeArg::None);
             }
             Expr::FreeStmt(target, _, _) => {
-                self.compile_expr(target);
+                self.compile_expr(target)?;
                 self.emit(OpCode::Free, BytecodeArg::None);
             }
             // 不可达: parse_statement 不会产生其他 Expr 变体作为顶层语句
             _ => {}
         }
+        Ok(())
     }
-    pub fn compile(&mut self, ast: &[Stmt]) -> CompiledModule {
+    pub fn compile(&mut self, ast: &[Stmt]) -> Result<CompiledModule, String> {
         self.constants.clear();
         self.instructions.clear();
         self.functions.clear();
@@ -705,7 +729,7 @@ impl Compiler {
                                 self.var_types.insert(pname.clone(), known_type);
                             }
                             for x in mbody {
-                                self.compile_stmt(x);
+                                self.compile_stmt(x)?;
                             }
                             self.var_types = save_var_types;
                             if !mbody
@@ -746,7 +770,11 @@ impl Compiler {
                 Expr::FuncDecl(fname, params, _, body, _, _) => {
                     let save = std::mem::replace(&mut self.instructions, Vec::new());
                     let save_var_types = self.var_types.clone();
+                    let save_var_slots = self.var_slots.clone();
+                    let save_next_slot = self.next_slot;
                     self.var_types.clear();
+                    self.var_slots.clear();
+                    self.next_slot = 0;
                     for (pname, ptype) in params {
                         let known_type = match ptype.as_str() {
                             "int" => KnownType::Int,
@@ -756,11 +784,14 @@ impl Compiler {
                             _ => KnownType::Unknown,
                         };
                         self.var_types.insert(pname.clone(), known_type);
+                        self.allocate_slot(pname);
                     }
                     for x in body {
-                        self.compile_stmt(x);
+                        self.compile_stmt(x)?;
                     }
                     self.var_types = save_var_types;
+                    self.var_slots = save_var_slots;
+                    self.next_slot = save_next_slot;
                     if !body
                         .iter()
                         .any(|x| matches!(&**x, Expr::ReturnStmt(_, _, _)))
@@ -777,10 +808,11 @@ impl Compiler {
                     });
                     let fname_const = self.add_const(ConstantValue::String(fname.clone())) as i32;
                     self.emit(OpCode::LoadConst, BytecodeArg::Int(fname_const));
-                    self.emit(OpCode::StoreVar, BytecodeArg::String(fname.clone()));
+                    let fname_slot = self.allocate_slot(fname);
+                    self.emit(OpCode::StoreVar, BytecodeArg::Int(fname_slot as i32));
                 }
                 _ => {
-                    self.compile_stmt(s);
+                    self.compile_stmt(s)?;
                 }
             }
         }
@@ -798,13 +830,116 @@ impl Compiler {
                 },
             );
         }
-        CompiledModule {
+        // Generate TypeIR from the compiled bytecode (before replacing self.functions)
+        let type_ir_data = self.generate_type_ir(&self.functions);
+        Ok(CompiledModule {
             functions: std::mem::replace(&mut self.functions, Vec::new()),
             constants: std::mem::replace(&mut self.constants, Vec::new()),
             structs,
             classes,
+            type_ir_data,
+            target_triple: String::new(),
+        })
+    }
+
+    fn generate_type_ir(&self, functions: &[BytecodeFunction]) -> Vec<u8> {
+        let mut type_mod = TypeModule::new();
+        for (i, func) in functions.iter().enumerate() {
+            let mut tf = TypeFunction::new(&func.name, i as FuncId);
+            tf.param_count = func.num_params as u32;
+            tf.has_return = func.has_return;
+            for param_name in &func.param_names {
+                let ptype = self.get_var_type(param_name);
+                tf.params.push((param_name.clone(), self.known_to_type(ptype)));
+            }
+            for inst in &func.instructions {
+                let typed = self.bytecode_to_typed(inst);
+                tf.body.push(typed);
+            }
+            // Infer local types from instructions
+            tf.var_count = tf.body.len() as u32;
+            type_mod.functions.push(tf);
+            type_mod.function_map.insert(i as FuncId, func.name.clone());
+        }
+        if let Some(main_idx) = functions.iter().position(|f| f.name == "__main__") {
+            type_mod.entry_point = Some(main_idx as FuncId);
+        }
+        type_ir::serialize_type_module(&type_mod)
+    }
+
+    fn known_to_type(&self, kt: KnownType) -> Type {
+        match kt {
+            KnownType::Int => Type::Int,
+            KnownType::Float => Type::Float,
+            KnownType::Bool => Type::Bool,
+            KnownType::String => Type::String,
+            KnownType::Unknown => Type::Unknown,
         }
     }
+
+    fn bytecode_to_typed(&self, inst: &Instruction) -> TypedInstruction {
+        use TypedInstruction::*;
+        match inst.op {
+            OpCode::LoadConst => match inst.arg {
+                BytecodeArg::Int(idx) => {
+                    if let Some(cv) = self.constants.get(idx as usize) {
+                        match cv {
+                            ConstantValue::Int(v) => ConstInt(*v),
+                            ConstantValue::Float(v) => ConstFloat(*v),
+                            ConstantValue::Bool(v) => ConstBool(*v),
+                            ConstantValue::String(s) => ConstString(s.clone()),
+                            ConstantValue::Nil => ConstNil,
+                        }
+                    } else { ConstNil }
+                }
+                _ => ConstNil,
+            },
+            OpCode::LoadNil => ConstNil,
+            OpCode::LoadTrue => ConstBool(true),
+            OpCode::LoadFalse => ConstBool(false),
+            OpCode::LoadVar => LoadVar(0),
+            OpCode::StoreVar | OpCode::DefineVar => StoreVar(0),
+            OpCode::Call => Call(0, vec![]),
+            OpCode::Return => Return(None),
+            OpCode::Jump => match inst.arg { BytecodeArg::Int(t) => Jump(t as u32), _ => Jump(0) },
+            OpCode::JumpIfFalse => match inst.arg { BytecodeArg::Int(t) => JumpIfFalse(0, t as u32), _ => JumpIfFalse(0, 0) },
+            OpCode::JumpIfTrue => match inst.arg { BytecodeArg::Int(t) => JumpIfTrue(0, t as u32), _ => JumpIfTrue(0, 0) },
+            OpCode::AddInt | OpCode::BinaryAdd => I32Add(0, 0),
+            OpCode::SubInt | OpCode::BinarySub => I32Sub(0, 0),
+            OpCode::MulInt | OpCode::BinaryMul => I32Mul(0, 0),
+            OpCode::DivInt | OpCode::BinaryDiv => I32Div(0, 0),
+            OpCode::ModInt | OpCode::BinaryMod => I32Mod(0, 0),
+            OpCode::AddFloat => F64Add(0, 0),
+            OpCode::SubFloat => F64Sub(0, 0),
+            OpCode::MulFloat => F64Mul(0, 0),
+            OpCode::DivFloat => F64Div(0, 0),
+            OpCode::EqInt | OpCode::BinaryEq => I32Eq(0, 0),
+            OpCode::BinaryNe => I32Ne(0, 0),
+            OpCode::LtInt | OpCode::BinaryLt => I32Lt(0, 0),
+            OpCode::GtInt | OpCode::BinaryGt => I32Gt(0, 0),
+            OpCode::LeInt | OpCode::BinaryLe => I32Le(0, 0),
+            OpCode::GeInt | OpCode::BinaryGe => I32Ge(0, 0),
+            OpCode::EqFloat => F64Eq(0, 0),
+            OpCode::LtFloat => F64Lt(0, 0),
+            OpCode::GtFloat => F64Gt(0, 0),
+            OpCode::LeFloat => F64Le(0, 0),
+            OpCode::GeFloat => F64Ge(0, 0),
+            OpCode::NegInt => I32Neg(0),
+            OpCode::NegFloat => F64Neg(0),
+            OpCode::Not | OpCode::UnaryNot => BoolNot(0),
+            OpCode::MakeArray => MakeArray(0, vec![]),
+            OpCode::IndexGet => IndexGet(0, 0),
+            OpCode::IndexSet => IndexSet(0, 0, 0),
+            OpCode::Dup => Dup,
+            OpCode::Pop => Pop,
+            OpCode::OwnershipMove => OwnershipMove(0),
+            OpCode::BorrowCheck => Borrow(0),
+            OpCode::AliveCheck => AliveCheck(0),
+            OpCode::Free => Free(0),
+            _ => ConstNil,
+        }
+    }
+
     pub fn save(&self, der: &CompiledModule, path: &str) -> io::Result<()> {
         use std::io::BufWriter;
 
@@ -814,11 +949,11 @@ impl Compiler {
             .constants
             .iter()
             .map(|c| match c {
-                ConstantValue::Nil => bytecode::SerializedConstant::Nil,
-                ConstantValue::Bool(b) => bytecode::SerializedConstant::Bool(*b),
-                ConstantValue::Int(v) => bytecode::SerializedConstant::Int(*v),
-                ConstantValue::Float(v) => bytecode::SerializedConstant::Float(*v),
-                ConstantValue::String(s) => bytecode::SerializedConstant::String(s.clone()),
+                ConstantValue::Nil => bytecode::SerializedConstant::nil(),
+                ConstantValue::Bool(b) => bytecode::SerializedConstant::bool(*b),
+                ConstantValue::Int(v) => bytecode::SerializedConstant::int(*v),
+                ConstantValue::Float(v) => bytecode::SerializedConstant::float(*v),
+                ConstantValue::String(s) => bytecode::SerializedConstant::string(s),
             })
             .collect();
 
@@ -882,6 +1017,22 @@ impl Compiler {
             })
             .collect();
 
-        bytecode::write_vxobj(&mut f, &constants, &func_refs, &struct_map)
+        // Write v3 format if TypeIR is present
+        if !der.type_ir_data.is_empty() {
+            let mut bytecode_buf = Vec::new();
+            bytecode::write_vxobj(&mut bytecode_buf, &constants, &func_refs, &struct_map)?;
+            let target = if der.target_triple.is_empty() {
+                "x86_64-unknown-linux-gnu"
+            } else {
+                &der.target_triple
+            };
+            bytecode::write_vxobj_v3(
+                &mut f, target,
+                &der.type_ir_data, &bytecode_buf,
+                &[], &[], &[],
+            )
+        } else {
+            bytecode::write_vxobj(&mut f, &constants, &func_refs, &struct_map)
+        }
     }
 }

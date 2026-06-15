@@ -5,7 +5,7 @@
 // 在 Cargo 项目中通过 `mod memory_safety;` 引入
 // 也可以直接复制到任何需要内存安全管理的 VX VM 项目中
 
-use super::{VM, Value, CallFrame};
+use super::{VM, Value};
 
 // ==================== 分配记录 ====================
 
@@ -88,10 +88,10 @@ impl VM {
             }
             Ok(true)
         } else {
-            return self.runtime_error(&format!(
+            self.runtime_error(&format!(
                 "Dangling pointer: allocation {} does not exist (use-after-free)",
                 alloc_id
-            ));
+            ))
         }
     }
 
@@ -141,23 +141,18 @@ impl VM {
                     alloc_id
                 ));
             }
-            // 执行释放：递增代数，标记为非存活
-            if let Some(rec) = self.alloc_registry.get_mut(&alloc_id) {
-                rec.generation += 1;
-                rec.alive = false;
-            }
-            // 从当前帧的所有权列表中移除
-            if !self.frames.is_empty() {
-                let owned = &mut self.current_frame_mut().owned_allocs;
-                owned.retain(|&id| id != alloc_id);
-            }
-            Ok(())
         } else {
             return self.runtime_error(&format!(
                 "Double-free: allocation {} does not exist",
                 alloc_id
             ));
         }
+        self.alloc_registry.remove(&alloc_id);
+        if !self.frames.is_empty() {
+            let owned = &mut self.current_frame_mut().owned_allocs;
+            owned.retain(|&id| id != alloc_id);
+        }
+        Ok(())
     }
 
     // -------------------- 帧清理 / 析构 --------------------
@@ -165,12 +160,9 @@ impl VM {
     /// 清理指定调用帧的所有堆分配（作用域退出时调用）
     /// 
     /// 递增所有分配的代数并标记为非存活
-    pub(crate) fn cleanup_frame_allocs(&mut self, frame: &CallFrame) {
-        for alloc_id in &frame.owned_allocs {
-            if let Some(rec) = self.alloc_registry.get_mut(alloc_id) {
-                rec.generation += 1;
-                rec.alive = false;
-            }
+    pub(crate) fn cleanup_frame_allocs(&mut self, owned_allocs: &[u64]) {
+        for alloc_id in owned_allocs {
+            self.alloc_registry.remove(alloc_id);
         }
     }
 }

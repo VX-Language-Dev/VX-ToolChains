@@ -202,7 +202,7 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
     // 3. 创建临时解压目录
     let temp_dir = PathBuf::from(format!(
         ".vpm_temp_{}",
-        std::process::id()
+        process::id()
     ));
     if temp_dir.exists() {
         fs::remove_dir_all(&temp_dir)?;

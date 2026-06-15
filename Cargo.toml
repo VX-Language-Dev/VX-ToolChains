@@ -39,9 +39,39 @@ crate-type = ["lib"]
 [dependencies]
 tower-lsp = "0.20"
 lsp-types = "0.95"
-serde_json = "1.0"
 tokio = { version = "1", features = ["full", "io-util"] }
 dashmap = "5"
+target-lexicon = "0.12"
+
+# VXOBJ v3 section compression
+lz4_flex = "0.11"
+
+# ========== Cranelift Code-Gen Backend ==========
+# Feature-gated: enable via `cargo build --features aot`
+# Required for: vxlinker --mode aot (native machine code)
+#
+# 目标平台要求:
+#   - cranelift-native: 自动检测宿主 CPU (x86_64 / aarch64)
+#   - cranelift-codegen "all-arch": 支持交叉编译到其他架构
+#   - cranelift-object: 生成 ELF/Mach-O/PE 对象文件
+#
+# 兼容性限制:
+#   - AOT 模式需要 Rust nightly 工具链自动向量化时可使用
+#   - 交叉编译需要目标平台的 cranelift ISA 支持
+#   - 32 位目标 (i686, armv7) 理论上支持但未测试
+#
+cranelift-codegen = { version = "0.110", optional = true, features = ["all-arch"] }
+cranelift-frontend = { version = "0.110", optional = true }
+cranelift-module = { version = "0.110", optional = true }
+cranelift-object = { version = "0.110", optional = true }
+cranelift-native = { version = "0.110", optional = true }
+
+[features]
+default = []
+# AOT: compile VXOBJ TypeIR to native machine code via Cranelift
+aot = ["cranelift-codegen", "cranelift-frontend", "cranelift-module", "cranelift-object", "cranelift-native"]
+# JIT: runtime compilation (reserved for future use)
+jit = []
 
 [dev-dependencies]
 tempfile = "3.0"

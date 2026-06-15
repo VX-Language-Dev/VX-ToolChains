@@ -41,10 +41,6 @@ impl VxLspBackend {
             source,
             tokens: result.tokens,
             ast: result.ast,
-            syntax_errors: Vec::new(),
-            ownership_errors: Vec::new(),
-            parse_ok: true,
-            ownership_ok: true,
         };
         self.state.documents.insert(uri.clone(), doc_state);
 

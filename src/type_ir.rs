@@ -1,0 +1,608 @@
+// ==================== TypeIR: 类型化中间表示 ====================
+// 供 AOT 编译器消费，保留完整类型信息
+//
+// 设计原则:
+// - 所有操作数都有静态已知类型
+// - 所有函数调用点明确目标
+// - 保留所有权/借用信息供自动并行化
+
+use std::collections::HashMap;
+
+// ==================== 类型系统 ====================
+
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub enum Type {
+    Void,
+    Int,
+    Float,
+    Bool,
+    String,
+    Struct(String, Vec<(String, Type)>),
+    Array(Box<Type>),
+    Map(Box<Type>, Box<Type>),
+    Func(Vec<Type>, Box<Type>),
+    Pointer(Box<Type>),
+    Generic(String, Vec<Type>),
+    Unknown,
+}
+
+impl Type {
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Type::Int | Type::Float)
+    }
+    pub fn is_integral(&self) -> bool {
+        matches!(self, Type::Int | Type::Bool)
+    }
+    pub fn size(&self) -> usize {
+        match self {
+            Type::Void => 0,
+            Type::Int | Type::Float | Type::Bool => 8,
+            Type::String => 16,
+            Type::Pointer(_) => 8,
+            _ => 8,
+        }
+    }
+}
+
+// ==================== Type-annotated Value ====================
+
+#[derive(Debug, Clone)]
+pub enum TypeValue {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+}
+
+// ==================== Typed Instructions ====================
+
+pub type VarId = u32;
+pub type FuncId = u32;
+
+#[derive(Debug, Clone)]
+pub enum TypedInstruction {
+    // Constants
+    ConstInt(i64),
+    ConstFloat(f64),
+    ConstBool(bool),
+    ConstString(String),
+    ConstNil,
+
+    // Variables
+    LoadVar(VarId),
+    StoreVar(VarId),
+
+    // Arithmetic (typed)
+    I32Add(VarId, VarId),
+    I32Sub(VarId, VarId),
+    I32Mul(VarId, VarId),
+    I32Div(VarId, VarId),
+    I32Mod(VarId, VarId),
+    F64Add(VarId, VarId),
+    F64Sub(VarId, VarId),
+    F64Mul(VarId, VarId),
+    F64Div(VarId, VarId),
+
+    // Comparison (typed)
+    I32Eq(VarId, VarId),
+    I32Ne(VarId, VarId),
+    I32Lt(VarId, VarId),
+    I32Gt(VarId, VarId),
+    I32Le(VarId, VarId),
+    I32Ge(VarId, VarId),
+    F64Eq(VarId, VarId),
+    F64Ne(VarId, VarId),
+    F64Lt(VarId, VarId),
+    F64Gt(VarId, VarId),
+    F64Le(VarId, VarId),
+    F64Ge(VarId, VarId),
+
+    // Unary
+    I32Neg(VarId),
+    F64Neg(VarId),
+    BoolNot(VarId),
+
+    // Control flow
+    Jump(u32),
+    JumpIfFalse(VarId, u32),
+    JumpIfTrue(VarId, u32),
+
+    // Functions
+    Call(FuncId, Vec<VarId>),
+    CallIndirect(VarId, Vec<VarId>),
+    Return(Option<VarId>),
+
+    // Data structures
+    MakeStruct(StructLayoutId, Vec<VarId>),
+    GetField(VarId, u32),
+    SetField(VarId, u32, VarId),
+    MakeArray(VarId, Vec<VarId>),
+    IndexGet(VarId, VarId),
+    IndexSet(VarId, VarId, VarId),
+    MakeMap(Vec<(VarId, VarId)>),
+
+    // Memory / Ownership
+    Alloc(Type),
+    Free(VarId),
+    OwnershipMove(VarId),
+    Borrow(VarId),
+    Deref(VarId),
+    AliveCheck(VarId),
+
+    // Stack ops
+    Dup,
+    Pop,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructLayoutId(pub u32);
+
+// ==================== Type IR Function ====================
+
+#[derive(Debug, Clone)]
+pub struct TypeFunction {
+    pub name: String,
+    pub id: FuncId,
+    pub params: Vec<(String, Type)>,
+    pub return_type: Type,
+    pub body: Vec<TypedInstruction>,
+    pub local_types: HashMap<VarId, Type>,
+    pub param_count: u32,
+    pub has_return: bool,
+    pub var_count: u32,
+}
+
+impl TypeFunction {
+    pub fn new(name: &str, id: FuncId) -> Self {
+        Self {
+            name: name.to_string(),
+            id,
+            params: Vec::new(),
+            return_type: Type::Void,
+            body: Vec::new(),
+            local_types: HashMap::new(),
+            param_count: 0,
+            has_return: false,
+            var_count: 0,
+        }
+    }
+
+    pub fn add_local(&mut self, ty: Type) -> VarId {
+        let id = self.var_count;
+        self.local_types.insert(id, ty);
+        self.var_count += 1;
+        id
+    }
+
+    pub fn get_type(&self, var: VarId) -> Option<&Type> {
+        self.local_types.get(&var)
+    }
+}
+
+// ==================== Type IR Module ====================
+
+#[derive(Debug, Clone)]
+pub enum Linkage {
+    Internal,
+    External(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeModule {
+    pub functions: Vec<TypeFunction>,
+    pub struct_layouts: Vec<(String, Vec<(String, Type)>)>,
+    pub function_map: HashMap<FuncId, String>,
+    pub linkage: HashMap<FuncId, Linkage>,
+    pub entry_point: Option<FuncId>,
+}
+
+impl TypeModule {
+    pub fn new() -> Self {
+        Self {
+            functions: Vec::new(),
+            struct_layouts: Vec::new(),
+            function_map: HashMap::new(),
+            linkage: HashMap::new(),
+            entry_point: None,
+        }
+    }
+
+    pub fn get_function(&self, id: FuncId) -> Option<&TypeFunction> {
+        self.functions.iter().find(|f| f.id == id)
+    }
+
+    pub fn get_function_id(&self, name: &str) -> Option<FuncId> {
+        self.function_map.iter().find(|(_, v)| *v == name).map(|(k, _)| *k)
+    }
+
+    pub fn add_struct_layout(&mut self, name: &str, fields: Vec<(String, Type)>) -> StructLayoutId {
+        let id = self.struct_layouts.len() as u32;
+        self.struct_layouts.push((name.to_string(), fields));
+        StructLayoutId(id)
+    }
+}
+
+// ==================== Serialization ====================
+
+pub fn serialize_type_module(module: &TypeModule) -> Vec<u8> {
+    let mut buf = Vec::new();
+    // Counts
+    buf.extend(&(module.functions.len() as u32).to_be_bytes());
+    buf.extend(&(module.struct_layouts.len() as u32).to_be_bytes());
+    // Struct layouts
+    for (name, fields) in &module.struct_layouts {
+        write_str(&mut buf, name);
+        buf.extend(&(fields.len() as u32).to_be_bytes());
+        for (fname, ftype) in fields {
+            write_str(&mut buf, fname);
+            serialize_type(&mut buf, ftype);
+        }
+    }
+    // Functions
+    for func in &module.functions {
+        write_str(&mut buf, &func.name);
+            buf.extend(&func.id.to_be_bytes());
+            buf.extend(&(func.params.len() as u32).to_be_bytes());
+        buf.extend(&[if func.has_return { 1u8 } else { 0u8 }]);
+        serialize_type(&mut buf, &func.return_type);
+        for (pname, ptype) in &func.params {
+            write_str(&mut buf, pname);
+            serialize_type(&mut buf, ptype);
+        }
+        buf.extend(&(func.body.len() as u32).to_be_bytes());
+        for inst in &func.body {
+            serialize_instruction(&mut buf, inst);
+        }
+    }
+    buf
+}
+
+pub fn deserialize_type_module(data: &[u8]) -> Option<TypeModule> {
+    let mut pos = 0;
+    if data.len() < 8 { return None; }
+    let num_funcs = read_u32_be_at(data, &mut pos)?;
+    let num_layouts = read_u32_be_at(data, &mut pos)?;
+    let mut module = TypeModule::new();
+    for _ in 0..num_layouts {
+        let name = read_str_at(data, &mut pos)?;
+        let num_fields = read_u32_be_at(data, &mut pos)? as usize;
+        let mut fields = Vec::with_capacity(num_fields);
+        for _ in 0..num_fields {
+            let fname = read_str_at(data, &mut pos)?;
+            let ftype = deserialize_type(data, &mut pos)?;
+            fields.push((fname, ftype));
+        }
+        module.struct_layouts.push((name, fields));
+    }
+    for _ in 0..num_funcs {
+        let name = read_str_at(data, &mut pos)?;
+        let id = read_u32_be_at(data, &mut pos)?;
+        let param_count = read_u32_be_at(data, &mut pos)?;
+        let has_return = data.get(pos).copied()? != 0;
+        pos += 1;
+        let return_type = deserialize_type(data, &mut pos)?;
+        let mut func = TypeFunction::new(&name, id);
+        func.param_count = param_count;
+        func.has_return = has_return;
+        func.return_type = return_type;
+        for _ in 0..param_count {
+            let pname = read_str_at(data, &mut pos)?;
+            let ptype = deserialize_type(data, &mut pos)?;
+            let _vid = func.add_local(ptype.clone());
+            func.params.push((pname, ptype));
+        }
+        let num_insts = read_u32_be_at(data, &mut pos)? as usize;
+        for _ in 0..num_insts {
+            let inst = deserialize_instruction(data, &mut pos)?;
+            func.body.push(inst);
+        }
+        module.functions.push(func);
+        module.function_map.insert(id, name);
+    }
+    Some(module)
+}
+
+fn serialize_type(buf: &mut Vec<u8>, ty: &Type) {
+    match ty {
+        Type::Void => buf.push(0),
+        Type::Int => buf.push(1),
+        Type::Float => buf.push(2),
+        Type::Bool => buf.push(3),
+        Type::String => buf.push(4),
+        Type::Struct(name, fields) => {
+            buf.push(5);
+            write_str(buf, name);
+            buf.extend(&(fields.len() as u32).to_be_bytes());
+            for (fname, ftype) in fields {
+                write_str(buf, fname);
+                serialize_type(buf, ftype);
+            }
+        }
+        Type::Array(inner) => { buf.push(6); serialize_type(buf, inner); }
+        Type::Map(k, v) => { buf.push(7); serialize_type(buf, k); serialize_type(buf, v); }
+        Type::Func(params, ret) => {
+            buf.push(8);
+            buf.extend(&(params.len() as u32).to_be_bytes());
+            for p in params { serialize_type(buf, p); }
+            serialize_type(buf, ret);
+        }
+        Type::Pointer(inner) => { buf.push(9); serialize_type(buf, inner); }
+        Type::Generic(name, args) => {
+            buf.push(10);
+            write_str(buf, name);
+            buf.extend(&(args.len() as u32).to_be_bytes());
+            for a in args { serialize_type(buf, a); }
+        }
+        Type::Unknown => buf.push(255),
+    }
+}
+
+fn deserialize_type(data: &[u8], pos: &mut usize) -> Option<Type> {
+    let tag = data.get(*pos)?;
+    *pos += 1;
+    match tag {
+        0 => Some(Type::Void),
+        1 => Some(Type::Int),
+        2 => Some(Type::Float),
+        3 => Some(Type::Bool),
+        4 => Some(Type::String),
+        5 => {
+            let name = read_str_at(data, pos)?;
+            let len = read_u32_be_at(data, pos)? as usize;
+            let mut fields = Vec::with_capacity(len);
+            for _ in 0..len {
+                let fname = read_str_at(data, pos)?;
+                let ftype = deserialize_type(data, pos)?;
+                fields.push((fname, ftype));
+            }
+            Some(Type::Struct(name, fields))
+        }
+        6 => Some(Type::Array(Box::new(deserialize_type(data, pos)?))),
+        7 => Some(Type::Map(Box::new(deserialize_type(data, pos)?), Box::new(deserialize_type(data, pos)?))),
+        8 => {
+            let len = read_u32_be_at(data, pos)? as usize;
+            let mut params = Vec::with_capacity(len);
+            for _ in 0..len { params.push(deserialize_type(data, pos)?); }
+            let ret = deserialize_type(data, pos)?;
+            Some(Type::Func(params, Box::new(ret)))
+        }
+        9 => Some(Type::Pointer(Box::new(deserialize_type(data, pos)?))),
+        10 => {
+            let name = read_str_at(data, pos)?;
+            let len = read_u32_be_at(data, pos)? as usize;
+            let mut args = Vec::with_capacity(len);
+            for _ in 0..len { args.push(deserialize_type(data, pos)?); }
+            Some(Type::Generic(name, args))
+        }
+        255 => Some(Type::Unknown),
+        _ => None,
+    }
+}
+
+fn serialize_instruction(buf: &mut Vec<u8>, inst: &TypedInstruction) {
+    use TypedInstruction::*;
+    let (tag, payload) = match inst {
+        ConstInt(v) => (0, Some(format!("i{}", v))),
+        ConstFloat(v) => (1, Some(format!("f{}", v))),
+        ConstBool(v) => (2, Some(format!("b{}", v))),
+        ConstString(v) => (3, Some(format!("s{}", v))),
+        ConstNil => (4, None),
+        LoadVar(v) => (5, Some(format!("{}", v))),
+        StoreVar(v) => (6, Some(format!("{}", v))),
+        I32Add(a, b) => (10, Some(format!("{},{}", a, b))),
+        I32Sub(a, b) => (11, Some(format!("{},{}", a, b))),
+        I32Mul(a, b) => (12, Some(format!("{},{}", a, b))),
+        I32Div(a, b) => (13, Some(format!("{},{}", a, b))),
+        I32Mod(a, b) => (14, Some(format!("{},{}", a, b))),
+        F64Add(a, b) => (15, Some(format!("{},{}", a, b))),
+        F64Sub(a, b) => (16, Some(format!("{},{}", a, b))),
+        F64Mul(a, b) => (17, Some(format!("{},{}", a, b))),
+        F64Div(a, b) => (18, Some(format!("{},{}", a, b))),
+        I32Eq(a, b) => (20, Some(format!("{},{}", a, b))),
+        I32Ne(a, b) => (21, Some(format!("{},{}", a, b))),
+        I32Lt(a, b) => (22, Some(format!("{},{}", a, b))),
+        I32Gt(a, b) => (23, Some(format!("{},{}", a, b))),
+        I32Le(a, b) => (24, Some(format!("{},{}", a, b))),
+        I32Ge(a, b) => (25, Some(format!("{},{}", a, b))),
+        F64Eq(a, b) => (26, Some(format!("{},{}", a, b))),
+        F64Ne(a, b) => (27, Some(format!("{},{}", a, b))),
+        F64Lt(a, b) => (28, Some(format!("{},{}", a, b))),
+        F64Gt(a, b) => (29, Some(format!("{},{}", a, b))),
+        F64Le(a, b) => (30, Some(format!("{},{}", a, b))),
+        F64Ge(a, b) => (31, Some(format!("{},{}", a, b))),
+        I32Neg(v) => (32, Some(format!("{}", v))),
+        F64Neg(v) => (33, Some(format!("{}", v))),
+        BoolNot(v) => (34, Some(format!("{}", v))),
+        Jump(t) => (40, Some(format!("{}", t))),
+        JumpIfFalse(v, t) => (41, Some(format!("{},{}", v, t))),
+        JumpIfTrue(v, t) => (42, Some(format!("{},{}", v, t))),
+        Call(f, args) => {
+            let s = format!("f{}{}", f, args.iter().map(|a| format!(",{}", a)).collect::<String>());
+            (50, Some(s))
+        }
+        CallIndirect(v, args) => {
+            let s = format!("vi{}{}", v, args.iter().map(|a| format!(",{}", a)).collect::<String>());
+            (51, Some(s))
+        }
+        Return(v) => match v { Some(id) => (52, Some(format!("{}", id))), None => (52, None) },
+        MakeStruct(id, args) => {
+            let s = format!("s{}{}", id.0, args.iter().map(|a| format!(",{}", a)).collect::<String>());
+            (60, Some(s))
+        }
+        GetField(o, idx) => (61, Some(format!("{},{}", o, idx))),
+        SetField(o, idx, v) => (62, Some(format!("{},{},{}", o, idx, v))),
+        MakeArray(_, _) => (63, None),
+        IndexGet(a, i) => (64, Some(format!("{},{}", a, i))),
+        IndexSet(a, i, v) => (65, Some(format!("{},{},{}", a, i, v))),
+        MakeMap(_) => (66, None),
+        Alloc(_) => (70, None),
+        Free(v) => (71, Some(format!("{}", v))),
+        OwnershipMove(v) => (72, Some(format!("{}", v))),
+        Borrow(v) => (73, Some(format!("{}", v))),
+        Deref(v) => (74, Some(format!("{}", v))),
+        AliveCheck(v) => (75, Some(format!("{}", v))),
+        Dup => (80, None),
+        Pop => (81, None),
+    };
+    buf.push(tag);
+    if let Some(p) = payload {
+        write_str(buf, &p);
+    }
+}
+
+fn deserialize_instruction(data: &[u8], pos: &mut usize) -> Option<TypedInstruction> {
+    use TypedInstruction::*;
+    let tag = data.get(*pos).copied()?;
+    *pos += 1;
+    let read_vars = |s: &str| -> Option<(VarId, VarId)> {
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() < 2 { return None; }
+        Some((parts[0].parse().ok()?, parts[1].parse().ok()?))
+    };
+    let read_single = |s: &str| -> Option<VarId> { s.parse().ok() };
+    match tag {
+        0 => { let _ = read_str_at(data, pos); Some(ConstInt(0)) }
+        1 => { let _ = read_str_at(data, pos); Some(ConstFloat(0.0)) }
+        2 => { let _ = read_str_at(data, pos); Some(ConstBool(false)) }
+        3 => { let _ = read_str_at(data, pos); Some(ConstString(String::new())) }
+        4 => Some(ConstNil),
+        5 => { let v = read_str_at(data, pos)?.parse().ok()?; Some(LoadVar(v)) }
+        6 => { let v = read_str_at(data, pos)?.parse().ok()?; Some(StoreVar(v)) }
+        10 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Add(a, b)) }
+        11 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Sub(a, b)) }
+        12 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Mul(a, b)) }
+        13 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Div(a, b)) }
+        14 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Mod(a, b)) }
+        15 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Add(a, b)) }
+        16 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Sub(a, b)) }
+        17 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Mul(a, b)) }
+        18 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Div(a, b)) }
+        20 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Eq(a, b)) }
+        21 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Ne(a, b)) }
+        22 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Lt(a, b)) }
+        23 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Gt(a, b)) }
+        24 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Le(a, b)) }
+        25 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Ge(a, b)) }
+        26 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Eq(a, b)) }
+        27 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Ne(a, b)) }
+        28 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Lt(a, b)) }
+        29 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Gt(a, b)) }
+        30 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Le(a, b)) }
+        31 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(F64Ge(a, b)) }
+        32 => { let v = read_single(&read_str_at(data, pos)?)?; Some(I32Neg(v)) }
+        33 => { let v = read_single(&read_str_at(data, pos)?)?; Some(F64Neg(v)) }
+        34 => { let v = read_single(&read_str_at(data, pos)?)?; Some(BoolNot(v)) }
+        40 => { let t = read_str_at(data, pos)?.parse().ok()?; Some(Jump(t)) }
+        41 => { let (v, t) = read_vars(&read_str_at(data, pos)?)?; Some(JumpIfFalse(v, t)) }
+        42 => { let (v, t) = read_vars(&read_str_at(data, pos)?)?; Some(JumpIfTrue(v, t)) }
+        50 => { let _ = read_str_at(data, pos); Some(Call(0, vec![])) }
+        51 => { let _ = read_str_at(data, pos); Some(CallIndirect(0, vec![])) }
+        52 => match read_str_at(data, pos) { Some(s) => Some(Return(s.parse().ok())), None => Some(Return(None)) },
+        60 => { let _ = read_str_at(data, pos); Some(MakeStruct(StructLayoutId(0), vec![])) }
+        61 => { let (o, i) = read_vars(&read_str_at(data, pos)?)?; Some(GetField(o, i)) }
+        62 => { let s = read_str_at(data, pos)?; let parts: Vec<&str> = s.split(',').collect(); if parts.len() < 3 { return None }; Some(SetField(parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?)) }
+        64 => { let (a, i) = read_vars(&read_str_at(data, pos)?)?; Some(IndexGet(a, i)) }
+        65 => { let s = read_str_at(data, pos)?; let parts: Vec<&str> = s.split(',').collect(); if parts.len() < 3 { return None }; Some(IndexSet(parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?)) }
+        63 => Some(MakeArray(0, vec![])),
+        66 => Some(MakeMap(vec![])),
+        70 => Some(Alloc(Type::Unknown)),
+        71 => { let v = read_single(&read_str_at(data, pos)?)?; Some(Free(v)) }
+        72 => { let v = read_single(&read_str_at(data, pos)?)?; Some(OwnershipMove(v)) }
+        73 => { let v = read_single(&read_str_at(data, pos)?)?; Some(Borrow(v)) }
+        74 => { let v = read_single(&read_str_at(data, pos)?)?; Some(Deref(v)) }
+        75 => { let v = read_single(&read_str_at(data, pos)?)?; Some(AliveCheck(v)) }
+        80 => Some(Dup),
+        81 => Some(Pop),
+        _ => None,
+    }
+}
+
+// ==================== From Bytecode IR Pass ====================
+
+pub fn upgrade_from_bytecode(
+    func_name: &str,
+    func_id: FuncId,
+    instructions: &[(u8, Option<i32>, Option<String>)],
+) -> TypeFunction {
+    let mut tf = TypeFunction::new(func_name, func_id);
+    for (op, iarg, _sarg) in instructions {
+        let inst = match (op, iarg) {
+            (0x01, Some(_)) => TypedInstruction::ConstInt(0),
+            (0x02, _) => TypedInstruction::ConstNil,
+            (0x03, _) => TypedInstruction::ConstBool(true),
+            (0x04, _) => TypedInstruction::ConstBool(false),
+            (0x05, _) => TypedInstruction::LoadVar(0),
+            (0x06, _) => TypedInstruction::StoreVar(0),
+            (0x07, _) => TypedInstruction::StoreVar(0),
+            (0x08, Some(n)) => TypedInstruction::Call(0, vec![0; *n as usize]),
+            (0x09, _) => TypedInstruction::Return(None),
+            (0x0B, Some(t)) => TypedInstruction::Jump(*t as u32),
+            (0x0C, Some(t)) => TypedInstruction::JumpIfFalse(0, *t as u32),
+            (0x0D, Some(t)) => TypedInstruction::JumpIfTrue(0, *t as u32),
+            (0x10, _) => TypedInstruction::I32Add(0, 0),
+            (0x11, _) => TypedInstruction::I32Sub(0, 0),
+            (0x12, _) => TypedInstruction::I32Mul(0, 0),
+            (0x13, _) => TypedInstruction::I32Div(0, 0),
+            (0x14, _) => TypedInstruction::I32Mod(0, 0),
+            (0x26, _) => TypedInstruction::MakeArray(0, vec![]),
+            (0x28, _) => TypedInstruction::IndexGet(0, 0),
+            (0x29, _) => TypedInstruction::IndexSet(0, 0, 0),
+            (0x37, _) => TypedInstruction::Dup,
+            (0x38, _) => TypedInstruction::Pop,
+            (0x3B, _) => TypedInstruction::OwnershipMove(0),
+            (0x3D, _) => TypedInstruction::Borrow(0),
+            (0x3E, _) => TypedInstruction::AliveCheck(0),
+            _ => continue,
+        };
+        tf.body.push(inst);
+    }
+    tf
+}
+
+// ==================== Helpers ====================
+
+fn write_str(buf: &mut Vec<u8>, s: &str) {
+    let bytes = s.as_bytes();
+    buf.extend(&(bytes.len() as u32).to_be_bytes());
+    buf.extend(bytes);
+}
+
+fn read_str_at(data: &[u8], pos: &mut usize) -> Option<String> {
+    let len = read_u32_be_at(data, pos)? as usize;
+    if *pos + len > data.len() { return None; }
+    let s = String::from_utf8_lossy(&data[*pos..*pos + len]).to_string();
+    *pos += len;
+    Some(s)
+}
+
+fn read_u32_be_at(data: &[u8], pos: &mut usize) -> Option<u32> {
+    if *pos + 4 > data.len() { return None; }
+    let v = u32::from_be_bytes(data[*pos..*pos + 4].try_into().ok()?);
+    *pos += 4;
+    Some(v)
+}
+
+// ==================== Tests ====================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_type_serialize_roundtrip() {
+        let mut module = TypeModule::new();
+        let mut func = TypeFunction::new("test_func", 0);
+        func.return_type = Type::Int;
+        func.params.push(("x".to_string(), Type::Int));
+        func.body.push(TypedInstruction::ConstInt(42));
+        func.body.push(TypedInstruction::Return(Some(0)));
+        module.functions.push(func);
+        module.function_map.insert(0, "test_func".to_string());
+
+        let data = serialize_type_module(&module);
+        let parsed = deserialize_type_module(&data).unwrap();
+        assert_eq!(parsed.functions.len(), 1);
+        assert_eq!(parsed.functions[0].name, "test_func");
+        assert_eq!(parsed.functions[0].return_type, Type::Int);
+    }
+}

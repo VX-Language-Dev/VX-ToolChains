@@ -32,6 +32,10 @@ pub struct VM {
     pub(crate) builtins: HashMap<String, fn(&mut [Value]) -> Value>,
     pub(crate) alloc_registry: HashMap<u64, AllocRecord>,
     pub(crate) next_alloc_id: u64,
+    /// 命令行参数，供 SysArgv 指令使用
+    pub argv: Vec<String>,
+    /// 已移动 (moved) 的变量槽位集合，用于运行时纵深防御
+    pub(crate) moved_vars: HashSet<String>,
     // Top-of-Stack caching for performance
     tos: [Value; 3],
     tos_depth: usize,
@@ -57,6 +61,8 @@ impl VM {
             builtins: HashMap::new(),
             alloc_registry: HashMap::new(),
             next_alloc_id: 1,
+            argv: Vec::new(),
+            moved_vars: HashSet::new(),
             tos: [Value::Nil, Value::Nil, Value::Nil],
             tos_depth: 0,
             // Debugging support
@@ -133,13 +139,23 @@ impl VM {
         // 加载常量池
         self.module.constants.reserve(parsed.constants.len());
         for c in &parsed.constants {
-            self.module.constants.push(match c {
-                crate::bytecode::SerializedConstant::Nil => Value::Nil,
-                crate::bytecode::SerializedConstant::Bool(b) => Value::Bool(*b),
-                crate::bytecode::SerializedConstant::Int(i) => Value::Int(*i),
-                crate::bytecode::SerializedConstant::Float(f) => Value::Float(*f),
-                crate::bytecode::SerializedConstant::String(s) => Value::String(s.clone()),
-            });
+            let val = match c.tag {
+                0 => Value::Nil,
+                1 => {
+                    let mut buf = [0u8; 8];
+                    buf.copy_from_slice(&c.data[..8.min(c.data.len())]);
+                    Value::Int(i64::from_be_bytes(buf))
+                }
+                2 => {
+                    let mut buf = [0u8; 8];
+                    buf.copy_from_slice(&c.data[..8.min(c.data.len())]);
+                    Value::Float(f64::from_be_bytes(buf))
+                }
+                3 => Value::String(String::from_utf8_lossy(&c.data).to_string()),
+                4 => Value::Bool(c.data.first().copied().unwrap_or(0) != 0),
+                _ => Value::Nil,
+            };
+            self.module.constants.push(val);
         }
 
         // 加载函数
@@ -264,11 +280,11 @@ impl VM {
         
         for i in start_idx..end_idx {
             let from_top = total_len - 1 - i;
-            if (from_top as usize) < self.tos_depth {
-                let tos_idx = self.tos_depth - 1 - from_top as usize;
+            if (from_top) < self.tos_depth {
+                let tos_idx = self.tos_depth - 1 - from_top;
                 result.push(std::mem::replace(&mut self.tos[tos_idx], Value::Nil));
             } else {
-                let stack_idx = from_top as usize - self.tos_depth;
+                let stack_idx = from_top - self.tos_depth;
                 if stack_idx < self.stack.len() {
                     result.push(self.stack.remove(stack_idx));
                 }
@@ -293,8 +309,8 @@ impl VM {
     }
 
     /// 创建运行时错误 Result。调用方需使用 `return self.runtime_error(...)` 提前返回。
+    /// 注意：此方法不打印任何内容，由最外层调用者统一负责错误输出。
     pub(crate) fn runtime_error<T>(&self, msg: &str) -> Result<T, String> {
-        eprintln!("[Runtime Error] {}", msg);
         Err(msg.to_string())
     }
 
@@ -308,7 +324,6 @@ impl VM {
                 args.len()
             ));
         }
-        // Flush TOS to stack before call
         while self.tos_depth > 0 {
             self.tos_depth -= 1;
             self.stack.push(std::mem::replace(&mut self.tos[self.tos_depth], Value::Nil));
@@ -317,12 +332,11 @@ impl VM {
             fn_idx,
             pc: 0,
             stack_base: self.stack.len(),
-            tos_base: 0,
-            locals: HashMap::new(),
+            locals: vec![Value::Nil; fun.num_params as usize],
             owned_allocs: Vec::new(),
         };
         for (i, arg) in args.iter().enumerate() {
-            frame.locals.insert(fun.param_names[i].clone(), arg.clone());
+            frame.locals[i] = arg.clone();
         }
         self.frames.push(frame);
         Ok(())
@@ -414,8 +428,8 @@ impl VM {
     fn print_locals(&self) {
         let frame = self.current_frame();
         println!("Local variables:");
-        for (name, value) in &frame.locals {
-            println!("  {} = {:?}", name, value);
+        for (i, value) in frame.locals.iter().enumerate() {
+            println!("  [{}] {:?}", i, value);
         }
     }
 

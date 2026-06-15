@@ -8,7 +8,7 @@ use crate::value::Value;
 pub struct Instruction {
     pub op: OpCode,
     pub iarg: Option<i32>,
-    pub sarg: Option<String>,
+    pub sarg: Option<Box<str>>,
 }
 
 impl Instruction {
@@ -30,7 +30,7 @@ impl Instruction {
         Self {
             op,
             iarg: None,
-            sarg: Some(arg),
+            sarg: Some(arg.into_boxed_str()),
         }
     }
 }
@@ -62,7 +62,7 @@ pub struct CallFrame {
     pub fn_idx: usize,
     pub pc: usize,
     pub stack_base: usize,
-    pub tos_base: usize,
-    pub locals: HashMap<String, Value>,
+    /// 局部变量槽位数组 - 编译器阶段已分配槽位索引
+    pub locals: Vec<Value>,
     pub owned_allocs: Vec<u64>,
 }

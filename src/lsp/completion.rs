@@ -2,8 +2,8 @@
 // 提供关键字、符号（函数/变量/类型）和成员（结构体字段/类方法）补全
 
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionOptions, CompletionResponse,
-    CompletionTriggerKind, InsertTextFormat, Position, TextDocumentPositionParams,
+    CompletionItem, CompletionItemKind, CompletionResponse,
+    CompletionTriggerKind, InsertTextFormat, Position,
 };
 use vx_vm::parser::{Expr, Stmt};
 use vx_vm::token::{KEYWORDS, Token, TokenType};
@@ -14,8 +14,6 @@ pub struct SymbolInfo {
     pub name: String,
     pub kind: SymbolKind,
     pub detail: Option<String>,
-    pub line: usize,
-    pub col: usize,
 }
 
 /// 符号分类
@@ -59,81 +57,67 @@ pub fn collect_symbols(ast: &[Stmt]) -> Vec<SymbolInfo> {
 
 fn collect_from_expr(e: &Expr, symbols: &mut Vec<SymbolInfo>) {
     match e {
-        Expr::FuncDecl(name, params, ret_type, body, line, col) => {
+        Expr::FuncDecl(name, params, ret_type, body, _line, _col) => {
             let detail = format_func_signature(name, params, ret_type);
             symbols.push(SymbolInfo {
                 name: name.clone(),
                 kind: SymbolKind::Function,
                 detail: Some(detail),
-                line: *line,
-                col: *col,
             });
             for stmt in body {
                 collect_from_expr(stmt, symbols);
             }
         }
-        Expr::StructDecl(name, fields, methods, line, col) => {
+        Expr::StructDecl(name, fields, methods, _line, _col) => {
             let detail = format_struct_detail(name, fields);
             symbols.push(SymbolInfo {
                 name: name.clone(),
                 kind: SymbolKind::Struct,
                 detail: Some(detail),
-                line: *line,
-                col: *col,
             });
             for m in methods {
                 collect_from_expr(m, symbols);
             }
         }
-        Expr::ClassDecl(name, fields, methods, parent, interfaces, line, col) => {
+        Expr::ClassDecl(name, _fields, methods, parent, interfaces, _line, _col) => {
             let detail = format_class_detail(name, parent, interfaces);
             symbols.push(SymbolInfo {
                 name: name.clone(),
                 kind: SymbolKind::Class,
                 detail: Some(detail),
-                line: *line,
-                col: *col,
             });
             for m in methods {
                 collect_from_expr(m, symbols);
             }
         }
-        Expr::EnumDecl(name, variants, line, col) => {
+        Expr::EnumDecl(name, variants, _line, _col) => {
             let detail = format_enum_detail(name, variants);
             symbols.push(SymbolInfo {
                 name: name.clone(),
                 kind: SymbolKind::Enum,
                 detail: Some(detail),
-                line: *line,
-                col: *col,
             });
         }
-        Expr::UnionDecl(name, fields, line, col) => {
+        Expr::UnionDecl(name, _fields, _line, _col) => {
             symbols.push(SymbolInfo {
                 name: name.clone(),
                 kind: SymbolKind::Union,
                 detail: Some(format!("union {}", name)),
-                line: *line,
-                col: *col,
             });
         }
-        Expr::VarDecl(name, _type_ann, value, _is_mut, line, col) => {
+        Expr::VarDecl(name, _type_ann, value, _is_mut, _line, _col) => {
             symbols.push(SymbolInfo {
                 name: name.clone(),
                 kind: SymbolKind::Variable,
                 detail: None,
-                line: *line,
-                col: *col,
             });
             collect_from_expr(value.as_ref(), symbols);
         }
-        Expr::ForStmt(var, iter, body, line, col) => {
+        Expr::ForStmt(var, iter, body, _line, _col) => {
             symbols.push(SymbolInfo {
                 name: var.clone(),
                 kind: SymbolKind::LoopVar,
                 detail: None,
-                line: *line,
-                col: *col,
             });
             collect_from_expr(iter, symbols);
             for stmt in body {
@@ -169,8 +153,6 @@ fn collect_from_expr(e: &Expr, symbols: &mut Vec<SymbolInfo>) {
                     name: a.clone(),
                     kind: SymbolKind::TypeAlias,
                     detail: Some(format!("import {} as {}", module, a)),
-                    line: 0,
-                    col: 0,
                 });
             }
         }
@@ -245,18 +227,14 @@ pub fn find_type_members(ast: &[Stmt], type_name: &str) -> Vec<SymbolInfo> {
                         name: fname.clone(),
                         kind: SymbolKind::Variable,
                         detail: Some(format!("{}: {}", fname, ftype)),
-                        line: 0,
-                        col: 0,
                     });
                 }
                 for m in methods {
-                    if let Expr::FuncDecl(fname, params, ret, _, l, c) = m.as_ref() {
+                    if let Expr::FuncDecl(fname, params, ret, _, _l, _c) = m.as_ref() {
                         members.push(SymbolInfo {
                             name: fname.clone(),
                             kind: SymbolKind::Function,
                             detail: Some(format_func_signature(fname, params, ret)),
-                            line: *l,
-                            col: *c,
                         });
                     }
                 }
@@ -271,18 +249,14 @@ pub fn find_type_members(ast: &[Stmt], type_name: &str) -> Vec<SymbolInfo> {
                         name: fname.clone(),
                         kind: SymbolKind::Variable,
                         detail: Some(format!("{}: {} [{}]", fname, ftype, vis)),
-                        line: 0,
-                        col: 0,
                     });
                 }
                 for m in methods {
-                    if let Expr::FuncDecl(fname, params, ret, _, l, c) = m.as_ref() {
+                    if let Expr::FuncDecl(fname, params, ret, _, _l, _c) = m.as_ref() {
                         members.push(SymbolInfo {
                             name: fname.clone(),
                             kind: SymbolKind::Function,
                             detail: Some(format_func_signature(fname, params, ret)),
-                            line: *l,
-                            col: *c,
                         });
                     }
                 }

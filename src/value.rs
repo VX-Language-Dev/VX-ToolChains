@@ -99,15 +99,13 @@ impl Value {
         match self {
             Value::Nil => "nil".to_string(),
             Value::Int(i) => i.to_string(),
-            Value::Float(f) => {
-                let s = f.to_string();
-                if let Some(_dot_pos) = s.find('.') {
-                    let last_nonzero = s.trim_end_matches('0').trim_end_matches('.').len();
-                    s[..last_nonzero].to_string()
-                } else {
-                    s
-                }
+        Value::Float(f) => {
+            let mut s = f.to_string();
+            if s.contains('.') {
+                s = s.trim_end_matches('0').trim_end_matches('.').to_string();
             }
+            s
+        }
             Value::Bool(b) => {
                 if *b {
                     "true".to_string()

@@ -70,11 +70,11 @@ fn vx_error_to_diagnostic(err: &VXError) -> Diagnostic {
     Diagnostic {
         range: Range {
             start: Position {
-                line: (err.line.saturating_sub(1)) as u32,
-                character: (err.col.saturating_sub(1)) as u32,
+                line: err.line.saturating_sub(1) as u32,
+                character: err.col.saturating_sub(1) as u32,
             },
             end: Position {
-                line: (err.line.saturating_sub(1)) as u32,
+                line: err.line.saturating_sub(1) as u32,
                 character: err.col as u32,
             },
         },

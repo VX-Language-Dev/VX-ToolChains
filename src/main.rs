@@ -23,6 +23,7 @@ fn main() {
         let bytecode = &file_data[stub_size..stub_size + (payload_size as usize)];
 
         let mut vm = VM::new();
+        vm.argv = env::args().collect();
         match vm.load_module(bytecode) {
             Ok(_) => match vm.run() {
                 Ok(_) => {

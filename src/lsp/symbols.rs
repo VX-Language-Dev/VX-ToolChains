@@ -3,7 +3,7 @@
 // 工作区符号：在所有打开的文档中搜索符号
 
 use tower_lsp::lsp_types::{
-    DocumentSymbol, DocumentSymbolResponse, Position, Range, SymbolInformation, SymbolKind,
+    DocumentSymbol, Position, Range, SymbolInformation, SymbolKind,
     Url, WorkspaceSymbolParams,
 };
 use vx_vm::parser::Expr;
@@ -22,8 +22,8 @@ pub fn document_symbols(ast: &[Stmt]) -> Vec<DocumentSymbol> {
 
 fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
     match stmt {
-        Expr::FuncDecl(name, params, ret_type, body, line, col) => {
-            let detail = format_func_signature(name, params, ret_type);
+        Expr::FuncDecl(name, params, ret, body, line, col) => {
+            let _detail = format_func_signature(name, params, ret);
             let mut children = Vec::new();
             for s in body {
                 if let Some(child) = build_document_symbol(s) {
@@ -34,9 +34,10 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
             let col0 = (*col as u32).saturating_sub(1);
             Some(DocumentSymbol {
                 name: name.clone(),
-                detail: Some(detail),
+                detail: Some(_detail),
                 kind: SymbolKind::FUNCTION,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 range: Range {
                     start: Position {
@@ -82,6 +83,7 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                 detail: Some(format!("struct {}", name)),
                 kind: SymbolKind::STRUCT,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 range: Range {
                     start: Position {
@@ -127,6 +129,7 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                 detail: Some(format!("class {}", name)),
                 kind: SymbolKind::CLASS,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 range: Range {
                     start: Position {
@@ -165,6 +168,7 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                     detail: Some(format!("= {}", val)),
                     kind: SymbolKind::ENUM_MEMBER,
                     tags: None,
+                    #[allow(deprecated)]
                     deprecated: None,
                     range: Range {
                         start: Position {
@@ -196,6 +200,7 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                 detail: Some(format!("enum {}", name)),
                 kind: SymbolKind::ENUM,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 range: Range {
                     start: Position {
@@ -236,6 +241,7 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                 detail: Some(format!("union {}", name)),
                 kind: SymbolKind::ENUM,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 range: Range {
                     start: Position {
@@ -282,6 +288,7 @@ fn make_var_symbol(name: &str, type_ann: Option<&str>, line: usize, col: usize) 
         detail: type_ann.map(|t| t.to_string()),
         kind: SymbolKind::VARIABLE,
         tags: None,
+        #[allow(deprecated)]
         deprecated: None,
         range: Range {
             start: Position {
@@ -292,8 +299,7 @@ fn make_var_symbol(name: &str, type_ann: Option<&str>, line: usize, col: usize) 
                 line: line0,
                 character: col0 + name.chars().count() as u32,
             },
-        },
-        selection_range: Range {
+        }, selection_range: Range {
             start: Position {
                 line: line0,
                 character: col0,
@@ -302,9 +308,7 @@ fn make_var_symbol(name: &str, type_ann: Option<&str>, line: usize, col: usize) 
                 line: line0,
                 character: col0 + name.chars().count() as u32,
             },
-        },
-        children: None,
-    }
+        }, children: None, }
 }
 
 fn format_func_signature(name: &str, params: &[(String, String)], ret: &Option<String>) -> String {
@@ -341,13 +345,14 @@ fn collect_symbol_info(
     }
     match stmt {
         Expr::FuncDecl(name, params, ret, body, line, col) => {
-            let detail = format_func_signature(name, params, ret);
+            let _detail = format_func_signature(name, params, ret);
             let line0 = (*line as u32).saturating_sub(1);
             let col0 = (*col as u32).saturating_sub(1);
             out.push(SymbolInformation {
                 name: name.clone(),
                 kind: SymbolKind::FUNCTION,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 location: tower_lsp::lsp_types::Location {
                     uri: uri.clone(),
@@ -376,6 +381,7 @@ fn collect_symbol_info(
                 name: name.clone(),
                 kind: SymbolKind::STRUCT,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 location: tower_lsp::lsp_types::Location {
                     uri: uri.clone(),
@@ -404,6 +410,7 @@ fn collect_symbol_info(
                 name: name.clone(),
                 kind: SymbolKind::CLASS,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 location: tower_lsp::lsp_types::Location {
                     uri: uri.clone(),
@@ -432,6 +439,7 @@ fn collect_symbol_info(
                 name: name.clone(),
                 kind: SymbolKind::ENUM,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 location: tower_lsp::lsp_types::Location {
                     uri: uri.clone(),
@@ -456,6 +464,7 @@ fn collect_symbol_info(
                 name: name.clone(),
                 kind: SymbolKind::ENUM,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 location: tower_lsp::lsp_types::Location {
                     uri: uri.clone(),
@@ -480,6 +489,7 @@ fn collect_symbol_info(
                 name: name.clone(),
                 kind: SymbolKind::VARIABLE,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 location: tower_lsp::lsp_types::Location {
                     uri: uri.clone(),
@@ -504,6 +514,7 @@ fn collect_symbol_info(
                 name: var.clone(),
                 kind: SymbolKind::VARIABLE,
                 tags: None,
+                #[allow(deprecated)]
                 deprecated: None,
                 location: tower_lsp::lsp_types::Location {
                     uri: uri.clone(),

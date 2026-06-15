@@ -37,12 +37,14 @@ fn parse_simple_kv(content: &str, delimiter: char) -> HashMap<String, String> {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: vxcompiler <input.vx> [-o output.vxobj] [--dump-bytecode]");
+        eprintln!("Usage: vxcompiler <input.vx> [-o output.vxobj] [--dump-bytecode] [--dump-sections] [--target triple]");
         process::exit(1);
     }
     let input = &args[1];
     let mut output = String::new();
     let mut dump_bytecode = false;
+    let mut dump_sections = false;
+    let mut target_triple = String::new();
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -58,6 +60,14 @@ fn main() {
             "--dump-bytecode" => {
                 dump_bytecode = true;
                 i += 1;
+            }
+            "--dump-sections" => {
+                dump_sections = true;
+                i += 1;
+            }
+            "--target" if i + 1 < args.len() => {
+                target_triple = args[i + 1].clone();
+                i += 2;
             }
             _ => {
                 eprintln!("Unknown argument: {}", args[i]);
@@ -120,8 +130,17 @@ fn main() {
     }
 
     let mut comp = Compiler::new(vxmodel);
-    let der = comp.compile(&ast);
-    
+    let mut der = match comp.compile(&ast) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+    };
+    if !target_triple.is_empty() {
+        der.target_triple = target_triple;
+    }
+
     if dump_bytecode {
         println!("=== Constants ===");
         for (i, c) in der.constants.iter().enumerate() {
@@ -135,9 +154,30 @@ fn main() {
             }
         }
     }
-    
+
+    if dump_sections {
+        // Write to temp buffer first to get v3 section data
+        let mut buf = Vec::new();
+        let constants: Vec<vx_vm::bytecode::SerializedConstant> = der
+            .constants.iter()
+            .map(|c| match c {
+                crate::compiler_bytecode::ConstantValue::Nil => vx_vm::bytecode::SerializedConstant::nil(),
+                crate::compiler_bytecode::ConstantValue::Bool(b) => vx_vm::bytecode::SerializedConstant::bool(*b),
+                crate::compiler_bytecode::ConstantValue::Int(v) => vx_vm::bytecode::SerializedConstant::int(*v),
+                crate::compiler_bytecode::ConstantValue::Float(v) => vx_vm::bytecode::SerializedConstant::float(*v),
+                crate::compiler_bytecode::ConstantValue::String(s) => vx_vm::bytecode::SerializedConstant::string(s),
+            })
+            .collect();
+        let target = if der.target_triple.is_empty() { "x86_64-unknown-linux-gnu" } else { &der.target_triple };
+        let mut bytecode_buf = Vec::new();
+        vx_vm::bytecode::write_vxobj(&mut bytecode_buf, &constants, &[], &HashMap::new()).unwrap();
+        vx_vm::bytecode::write_vxobj_v3(&mut buf, target, &der.type_ir_data, &bytecode_buf, &[], &[], &[]).unwrap();
+        vx_vm::bytecode::dump_section_stats(&buf);
+        process::exit(0);
+    }
+
     match comp.save(&der, &output) {
-        Ok(_) => println!("Compiled: {}", output),
+        Ok(_) => println!("Compiled: {} (VXOBJ v3)", output),
         Err(e) => {
             eprintln!("保存失败: {}", e);
             process::exit(1);

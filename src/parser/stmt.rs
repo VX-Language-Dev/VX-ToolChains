@@ -29,6 +29,7 @@ impl Parser {
                 Ok(Expr::ContinueStmt(t.line, t.col))
             }
             TokenType::Free => self.parse_free_stmt(),
+            TokenType::VarT => self.parse_var_decl_inferred(),
             _ => {
                 let e = self.parse_expression()?;
                 Ok(Expr::ExprStmt(Box::new(e.clone()), e_line(&e), e_col(&e)))
@@ -188,6 +189,18 @@ impl Parser {
             l,
             c,
         ))
+    }
+
+    fn parse_var_decl_inferred(&mut self) -> Result<Stmt, VXError> {
+        let t = self.advance(); // consume 'var'
+        let nm = self.expect(TokenType::Identifier, None)?.value;
+        let mut v = Expr::NilLiteral(t.line, t.col);
+        if self.current().kind == TokenType::Assign {
+            self.advance();
+            v = self.parse_expression()?;
+        }
+        let (l, c) = (t.line, t.col);
+        Ok(Expr::VarDecl(nm, None, Box::new(v), false, l, c))
     }
 
     fn parse_func_decl(&mut self) -> Result<Stmt, VXError> {

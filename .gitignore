@@ -1,8 +1,5 @@
 # Rust
-target/
-*.pdb
-*.exe
-*.obj
+target
 
 # IDE
 .vscode/
@@ -21,10 +18,16 @@ Thumbs.db
 *.vx
 *.out
 vxmodel
-
+vxmod.toml
+*.vack
+*.json
 # Logs
 logs/
 
 # Qodana
 qodana.yaml
 *.toml
+package
+*.zip
+test_fib190_out
+test_debugger
