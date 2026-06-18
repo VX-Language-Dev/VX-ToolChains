@@ -34,11 +34,8 @@ pub struct VM {
     pub(crate) next_alloc_id: u64,
     /// 命令行参数，供 SysArgv 指令使用
     pub argv: Vec<String>,
-    /// 已移动 (moved) 的变量槽位集合，用于运行时纵深防御
+    /// 移动 (moved) 后的变量槽位集合，用于运行时纵深防御
     pub(crate) moved_vars: HashSet<String>,
-    // Top-of-Stack caching for performance
-    tos: [Value; 3],
-    tos_depth: usize,
     // Debugging support
     pub debug_hook: Option<Box<dyn Fn(&VM) -> DebugAction>>,
     pub breakpoints: HashSet<usize>,
@@ -63,8 +60,6 @@ impl VM {
             next_alloc_id: 1,
             argv: Vec::new(),
             moved_vars: HashSet::new(),
-            tos: [Value::Nil, Value::Nil, Value::Nil],
-            tos_depth: 0,
             // Debugging support
             debug_hook: None,
             breakpoints: HashSet::new(),
@@ -197,32 +192,17 @@ impl VM {
     }
 
     pub(crate) fn push(&mut self, v: Value) {
-        if self.tos_depth < 3 {
-            self.tos[self.tos_depth] = v;
-            self.tos_depth += 1;
-        } else {
-            self.stack.push(std::mem::replace(&mut self.tos[2], v.clone()));
-            self.tos[2] = v;
-        }
+        self.stack.push(v);
     }
 
     pub(crate) fn pop(&mut self) -> Value {
-        if self.tos_depth > 0 {
-            self.tos_depth -= 1;
-            std::mem::replace(&mut self.tos[self.tos_depth], Value::Nil)
-        } else if let Some(v) = self.stack.pop() {
-            v
-        } else {
-            Value::Nil
-        }
+        self.stack.pop().unwrap_or(Value::Nil)
     }
 
     pub(crate) fn peek(&self, offset: usize) -> Option<&Value> {
-        let tos_idx = self.tos_depth as isize - 1 - offset as isize;
-        if tos_idx >= 0 && (tos_idx as usize) < 3 {
-            Some(&self.tos[tos_idx as usize])
-        } else if self.stack.len() > offset - self.tos_depth {
-            Some(&self.stack[self.stack.len() - 1 - (offset - self.tos_depth)])
+        let len = self.stack.len();
+        if offset < len {
+            Some(&self.stack[len - 1 - offset])
         } else {
             None
         }
@@ -263,37 +243,24 @@ impl VM {
     }
 
     pub(crate) fn stack_len(&self) -> usize {
-        self.stack.len() + self.tos_depth
+        self.stack.len()
     }
 
+    /// 从栈底索引 `range.start..range.end` 区间弹出元素。
+    ///
+    /// `range.start` / `range.end` 以"从栈底开始的索引"计：0 表示栈底，
+    /// `stack_len() - 1` 表示栈顶。返回顺序为**栈顶到栈底**（即弹出顺序），
+    /// 调用者如需栈底到栈顶顺序应自行 `reverse()`。
+    ///
+    /// 与原始实现相比，本版本使用 `Vec::drain` 一次性移除区间，避免 `Vec::remove`
+    /// 的 O(n²) 行为。
     pub(crate) fn drain_stack(&mut self, range: std::ops::Range<usize>) -> Vec<Value> {
         let total_len = self.stack_len();
-        let start_idx = range.start;
-        let end_idx = range.end;
-        
-        if start_idx >= total_len || end_idx > total_len || start_idx > end_idx {
+        if range.start >= total_len || range.end > total_len || range.start >= range.end {
             return Vec::new();
         }
-        
-        let num_elements = end_idx - start_idx;
-        let mut result = Vec::with_capacity(num_elements);
-        
-        for i in start_idx..end_idx {
-            let from_top = total_len - 1 - i;
-            if (from_top) < self.tos_depth {
-                let tos_idx = self.tos_depth - 1 - from_top;
-                result.push(std::mem::replace(&mut self.tos[tos_idx], Value::Nil));
-            } else {
-                let stack_idx = from_top - self.tos_depth;
-                if stack_idx < self.stack.len() {
-                    result.push(self.stack.remove(stack_idx));
-                }
-            }
-        }
-        
-        let tos_drained = num_elements.min(self.tos_depth);
-        self.tos_depth = self.tos_depth.saturating_sub(tos_drained);
-        
+        // drain 返回栈底到栈顶顺序，reverse 后变为栈顶到栈底（弹出顺序）
+        let mut result: Vec<Value> = self.stack.drain(range).collect();
         result.reverse();
         result
     }
@@ -324,10 +291,7 @@ impl VM {
                 args.len()
             ));
         }
-        while self.tos_depth > 0 {
-            self.tos_depth -= 1;
-            self.stack.push(std::mem::replace(&mut self.tos[self.tos_depth], Value::Nil));
-        }
+        // 单一 Vec 栈后无需 flush TOS 缓存
         let mut frame = CallFrame {
             fn_idx,
             pc: 0,

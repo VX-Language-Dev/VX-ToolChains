@@ -191,10 +191,18 @@ pub const KEYWORDS: &[( &str, TokenType)] = &[
 ];
 
 // ==================== 词法分析器 ====================
+//
+// 设计：Lexer 按 Unicode 字符迭代。`chars` 是源字符串的迭代器，
+// `pos` 始终指向下一个待消费字符在源字符串中的字节偏移（由 `chars`
+// 产生），`line` / `col` 按字符计数（1-based）。这样中文 / CJK 等
+// 多字节字符以及单字节 ASCII 都能被正确解析。
+
 pub struct Lexer {
     source: String,
+    /// 下一个待消费字符在 `source` 中的字节偏移。
     pos: usize,
     line: usize,
+    /// 当前字符的列号（1-based）。换行后重置为 1。
     col: usize,
     pub tokens: Vec<Token>,
     indent_stack: Vec<usize>,
@@ -212,18 +220,23 @@ impl Lexer {
         }
     }
 
+    /// 返回从 `pos` 起第 `offset` 个字符的拷贝，不会越界。
+    /// 对于超出末尾的情况返回 `'\0'`，与旧的字节语义保持一致。
     fn peek(&self, offset: usize) -> char {
-        self.source
-            .as_bytes()
-            .get(self.pos + offset)
-            .copied()
-            .map(|b| b as char)
+        self.source[self.pos..]
+            .chars()
+            .nth(offset)
             .unwrap_or('\0')
     }
 
+    /// 消费一个字符并返回它，同时更新 `pos`（字节偏移）、`line`、`col`。
     fn advance(&mut self) -> char {
         let c = self.peek(0);
-        self.pos += 1;
+        if c == '\0' {
+            return c;
+        }
+        // 移动 pos 到当前字符之后
+        self.pos += c.len_utf8();
         if c == '\n' {
             self.line += 1;
             self.col = 1;

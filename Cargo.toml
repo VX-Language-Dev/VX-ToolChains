@@ -45,6 +45,8 @@ target-lexicon = "0.12"
 
 # VXOBJ v3 section compression
 lz4_flex = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
 
 # ========== Cranelift Code-Gen Backend ==========
 # Feature-gated: enable via `cargo build --features aot`

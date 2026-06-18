@@ -1,6 +1,10 @@
 // VX Package Manager (vpm) v1.0
 // 管理 VX 语言的第三方包（.vack 格式，即重命名的 7z 压缩包）
 // 支持的实现语言：Python, TS, JS, Java, Rust, Go, C, C++, CXX
+//
+// v1.1 新增: `vpm build` 构建器命令
+//   基于 vxsetting.toml 配置, 实现 VX 多文件项目自动化构建流程,
+//   单文件项目无缝回退至 ipt (vxcompiler) 编译。
 
 use std::collections::HashMap;
 use std::env;
@@ -8,12 +12,17 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
+use std::sync::OnceLock;
+
+use vx_vm::builder::VxBuilder;
+use vx_vm::VxSettings;
 
 // ==================== 常量 ====================
 const REPO_URL: &str = "https://gitee.com/vx-language-dev/vx_packages/";
 const VXMOD_FILE: &str = "vxmod.toml";
 const PACKAGE_DIR: &str = "package";
 const INFO_FILE: &str = "info.toml";
+const VXSETTING_FILE: &str = "vxsetting.toml";
 
 const SUPPORTED_LANGUAGES: &[&str] = &[
     "python", "ts", "js", "java", "rust", "go", "c", "cpp",
@@ -63,6 +72,27 @@ impl std::fmt::Display for VpmError {
     }
 }
 
+// 手动实现 Clone：std::io::Error 没有实现 Clone，因此不能在 VpmError 上派生。
+impl Clone for VpmError {
+    fn clone(&self) -> Self {
+        match self {
+            VpmError::Io(e) => VpmError::Io(io::Error::new(e.kind(), e.to_string())),
+            VpmError::MissingArg(s) => VpmError::MissingArg(s.clone()),
+            VpmError::FileNotFound(s) => VpmError::FileNotFound(s.clone()),
+            VpmError::InvalidVack(s) => VpmError::InvalidVack(s.clone()),
+            VpmError::PackageExists(s) => VpmError::PackageExists(s.clone()),
+            VpmError::PackageNotFound(s) => VpmError::PackageNotFound(s.clone()),
+            VpmError::SevenZipNotFound => VpmError::SevenZipNotFound,
+            VpmError::ExtractionFailed(s) => VpmError::ExtractionFailed(s.clone()),
+            VpmError::UnsupportedLanguage(s) => VpmError::UnsupportedLanguage(s.clone()),
+            VpmError::ToolchainMismatch { expected, got } => VpmError::ToolchainMismatch {
+                expected: expected.clone(),
+                got: got.clone(),
+            },
+        }
+    }
+}
+
 impl From<io::Error> for VpmError {
     fn from(e: io::Error) -> Self {
         VpmError::Io(e)
@@ -71,25 +101,35 @@ impl From<io::Error> for VpmError {
 
 // ==================== 辅助函数 ====================
 
-/// 检查 7z 是否可用
+/// 缓存 7z 探测结果：第一次执行子进程探测，之后直接返回缓存值。
+static SEVEN_Z_CHECK: OnceLock<Result<(), VpmError>> = OnceLock::new();
+/// 缓存检测到的 7z 可执行文件名（"7zz" 或 "7z"）。
+static SEVEN_Z_CMD: OnceLock<String> = OnceLock::new();
+
+/// 检查 7z 是否可用（仅在第一次调用时执行子进程探测，后续直接返回缓存结果）
 fn check_7z() -> Result<(), VpmError> {
-    match Command::new("7z").arg("--help").output() {
+    let cached = SEVEN_Z_CHECK.get_or_init(|| match Command::new("7z").arg("--help").output() {
         Ok(_) => Ok(()),
         Err(_) => match Command::new("7zz").arg("--help").output() {
             Ok(_) => Ok(()),
             Err(_) => Err(VpmError::SevenZipNotFound),
         },
-    }
+    });
+    cached.clone()
 }
 
-/// 获取 7z 可执行文件名
+/// 获取 7z 可执行文件名（仅在第一次调用时执行子进程探测，后续直接返回缓存结果）
 fn get_7z_cmd() -> &'static str {
-    // 先检测 7zz（新版），再回退到 7z
-    if Command::new("7zz").arg("--help").output().is_ok() {
-        "7zz"
-    } else {
-        "7z"
-    }
+    SEVEN_Z_CMD
+        .get_or_init(|| {
+            // 先检测 7zz（新版），再回退到 7z
+            if Command::new("7zz").arg("--help").output().is_ok() {
+                "7zz".to_string()
+            } else {
+                "7z".to_string()
+            }
+        })
+        .as_str()
 }
 
 /// 规范化语言名称（统一小写别名）
@@ -166,6 +206,7 @@ fn cmd_help() {
     println!("  vpm help                  显示此帮助信息");
     println!("  vpm install <包文件.vack>  从本地 .vack 文件安装包");
     println!("  vpm rm <包名>              卸载指定包");
+    println!("  vpm build [入口.vx]        基于 vxsetting.toml 构建项目");
     println!();
     println!("官方包仓库: {}", REPO_URL);
     println!();
@@ -174,9 +215,17 @@ fn cmd_help() {
     println!("  安装包将解压到当前工作区的 package/<包名>/ 目录下。");
     println!("  支持的语言: {}", SUPPORTED_LANGUAGES.join(", "));
     println!();
+    println!("vpm build 构建路径:");
+    println!("  多文件项目 (vxsetting.toml 含 [bin]/[vxlib]/[lib]/[[module]]):");
+    println!("    构建器解析 module 依赖 → 调用 vxcompiler 编译各源 → 调用 vxlinker 链接");
+    println!("  单文件项目 (仅 [libraries]/[vxset]):");
+    println!("    无缝回退至 vxcompiler (ipt) 直接编译入口源文件");
+    println!();
     println!("示例:");
     println!("  vpm install ./my-lib.vack");
     println!("  vpm rm my-lib");
+    println!("  vpm build                 # 自动判断多/单文件路径");
+    println!("  vpm build src/main.vx     # 单文件模式指定入口");
 }
 
 /// 安装包：从 .vack 文件解压到 package/<包名>/ 并更新 vxmod.tmol
@@ -230,6 +279,12 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
     }
 
     println!("[VPM] 解压完成，正在验证包结构...");
+
+    // 4.5 安全性：拒绝路径穿越条目（绝对路径、..、隐藏目录）
+    if let Err(e) = validate_no_path_traversal(&temp_dir) {
+        let _ = fs::remove_dir_all(&temp_dir);
+        return Err(e);
+    }
 
     // 5. 查找 info.toml（可能在根目录或子目录中）
     let info_path = find_info_toml(&temp_dir)?;
@@ -342,18 +397,101 @@ fn find_info_toml(base: &Path) -> Result<PathBuf, VpmError> {
     )))
 }
 
-/// 递归复制目录内容
+/// 校验解压后的所有路径都位于 `base` 之内。
+///
+/// 7z / tar 等工具在解压恶意压缩包时可能写入 `..`、`/`、绝对路径
+/// 等条目，绕过临时目录。本函数递归遍历 `base`，对每个条目计算
+/// `canonicalize` 后的真实路径，并断言其以 `base` 起始且不等于
+/// `base` 本身（仅对条目本身检查）。
+fn validate_no_path_traversal(base: &Path) -> Result<(), VpmError> {
+    let base_canon = fs::canonicalize(base).map_err(|e| {
+        VpmError::InvalidVack(format!("无法规范化临时目录: {}", e))
+    })?;
+    validate_no_path_traversal_inner(&base_canon, &base_canon)
+}
+
+fn validate_no_path_traversal_inner(
+    base_canon: &Path,
+    dir: &Path,
+) -> Result<(), VpmError> {
+    for entry in fs::read_dir(dir).map_err(|e| {
+        VpmError::InvalidVack(format!("读取目录失败: {}", e))
+    })? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+        // 显式拒绝以 `.` 开头的条目（隐藏文件 / 父目录引用）
+        if name_str == "." || name_str == ".." || name_str.starts_with('/')
+            || (cfg!(windows) && (name_str.contains(':') || name_str.starts_with('\\')))
+        {
+            return Err(VpmError::InvalidVack(format!(
+                "包内含有非法路径条目: {:?}",
+                file_name
+            )));
+        }
+        let entry_path = entry.path();
+        let canon = match fs::canonicalize(&entry_path) {
+            Ok(p) => p,
+            Err(_) => continue, // 已损坏，跳过
+        };
+        if !canon.starts_with(base_canon) {
+            return Err(VpmError::InvalidVack(format!(
+                "检测到路径穿越: {:?} 试图逃出临时目录",
+                file_name
+            )));
+        }
+        let ft = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if ft.is_dir() {
+            validate_no_path_traversal_inner(base_canon, &canon)?;
+        }
+    }
+    Ok(())
+}
+
+/// 递归复制目录内容（防御性版本：拒绝目标逃出 `dst`）
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), io::Error> {
     if !dst.exists() {
         fs::create_dir_all(dst)?;
     }
+    let dst_canon = fs::canonicalize(dst).unwrap_or_else(|_| dst.to_path_buf());
     for entry in fs::read_dir(src)? {
         let entry = entry?;
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+        if name_str == "." || name_str == ".." {
+            continue;
+        }
+        let dest = dst.join(&file_name);
         let ty = entry.file_type()?;
-        let dest = dst.join(entry.file_name());
         if ty.is_dir() {
             copy_dir_all(&entry.path(), &dest)?;
         } else if ty.is_file() {
+            // 再次规范化以拦截源条目本身的逃逸
+            if let Ok(src_canon) = fs::canonicalize(entry.path()) {
+                if !src_canon.starts_with(fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf())) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("拒绝复制逃出源目录的文件: {:?}", file_name),
+                    ));
+                }
+            }
+            // 防御性：目标必须在 dst 之内
+            if let Some(parent) = dest.parent() {
+                if let Ok(p) = fs::canonicalize(parent) {
+                    if !p.starts_with(&dst_canon) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!("拒绝复制逃出目标目录的文件: {:?}", file_name),
+                        ));
+                    }
+                }
+            }
             fs::copy(entry.path(), &dest)?;
         }
     }
@@ -488,6 +626,66 @@ fn remove_from_vxmod(workspace_root: &Path, package_name: &str) -> Result<(), Vp
 
 // ==================== 主入口 ====================
 
+/// `vpm build` 构建器命令: 基于 vxsetting.toml 自动化构建
+///
+/// 路径区分:
+///   - 多文件项目 (vxsetting.toml 含 [bin]/[vxlib]/[lib]/[[module]]):
+///       构建器读取配置 → 调用 vpm 包查询解析 module 依赖 →
+///       调用 vxcompiler 编译各源 → 调用 vxlinker 链接产物
+///   - 单文件项目 (仅 [libraries]/[vxset]):
+///       无缝回退至 ipt (vxcompiler) 直接编译入口源文件
+fn cmd_build(args: &[String]) -> Result<(), VpmError> {
+    // 入口文件 (可选): vpm build [entry.vx]
+    let single_entry = if args.is_empty() {
+        None
+    } else {
+        Some(args[0].clone())
+    };
+
+    // 查找 vxsetting.toml (当前目录或指定路径)
+    let setting_path = if let Some(ref entry) = single_entry {
+        // 若指定入口, 在其所在目录查找 vxsetting.toml
+        let p = Path::new(entry);
+        let dir = p.parent().unwrap_or(Path::new("."));
+        dir.join(VXSETTING_FILE)
+    } else {
+        // 默认当前目录
+        PathBuf::from(VXSETTING_FILE)
+    };
+
+    // 废弃文件检测
+    let dir = setting_path.parent().unwrap_or(Path::new("."));
+    let vxmodel_path = dir.join("vxmodel");
+    let vxmodel_toml_path = dir.join("vxmodel.toml");
+    if vxmodel_path.exists() || vxmodel_toml_path.exists() {
+        eprintln!("[VX 废弃警告] 检测到旧版配置文件 vxmodel / vxmodel.toml。");
+        eprintln!("  该配置格式已废弃，请迁移至 vxsetting.toml。");
+        return Err(VpmError::MissingArg(
+            "请迁移 vxmodel → vxsetting.toml 后重试".to_string(),
+        ));
+    }
+
+    if !setting_path.exists() {
+        return Err(VpmError::FileNotFound(format!(
+            "缺少 {} 文件: {}",
+            VXSETTING_FILE,
+            setting_path.display()
+        )));
+    }
+
+    println!("[VPM] 加载配置: {}", setting_path.display());
+    let settings = VxSettings::from_file(setting_path.to_str().unwrap())
+        .map_err(|e| VpmError::InvalidVack(format!("解析 vxsetting.toml 失败: {}", e)))?;
+
+    let builder = VxBuilder::new(settings).with_single_entry(single_entry.clone());
+    builder.build().map_err(|e| {
+        VpmError::InvalidVack(format!("构建失败: {}", e))
+    })?;
+
+    println!("[VPM] 构建完成");
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -523,9 +721,18 @@ fn main() {
                 cmd_rm(&args[2])
             }
         }
+        "build" | "b" => {
+            // vpm build [entry.vx]
+            let build_args: Vec<String> = if args.len() > 2 {
+                args[2..].to_vec()
+            } else {
+                Vec::new()
+            };
+            cmd_build(&build_args)
+        }
         _ => {
             eprintln!("[VPM 错误] 未知命令: '{}'", cmd);
-            eprintln!("可用命令: help, install, rm");
+            eprintln!("可用命令: help, install, rm, build");
             process::exit(1);
         }
     };

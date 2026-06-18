@@ -26,7 +26,7 @@ pub enum KnownType {
 }
 
 pub struct Compiler {
-    vxmodel: HashMap<String, String>,
+    settings: vx_vm::VxSettings,
     constants: Vec<ConstantValue>,
     instructions: Vec<Instruction>,
     functions: Vec<BytecodeFunction>,
@@ -36,12 +36,23 @@ pub struct Compiler {
     var_slots: HashMap<String, u32>,
     next_slot: u32,
     stack_types: Vec<KnownType>,
+    /// 优化等级 (0-20), 由 CLI --opt-level 或 vxsetting.toml [vxset].o 传入
+    ///
+    /// 默认 0 以便保持向后兼容 (旧调用方未指定时退化为 0, 与历史行为一致);
+    /// 高层 CLI 与 vpm 构建器会通过 `with_options` 显式传入实际等级。
+    pub opt_level: u8,
+    /// 死代码警告开关: 为 true 时编译器对未使用变量/函数发出警告
+    pub warn_dead_code: bool,
+    /// 死代码错误开关: 为 true 时死代码诊断升级为编译错误
+    pub error_dead_code: bool,
 }
 
 impl Compiler {
-    pub fn new(vxmodel: HashMap<String, String>) -> Self {
+    /// 默认构造: 优化等级 0, 不发出死代码诊断。
+    /// 保持向后兼容 — 所有现有 `Compiler::new(settings)` 调用不受影响。
+    pub fn new(settings: vx_vm::VxSettings) -> Self {
         Self {
-            vxmodel,
+            settings,
             constants: Vec::new(),
             instructions: Vec::new(),
             functions: Vec::new(),
@@ -51,7 +62,26 @@ impl Compiler {
             var_slots: HashMap::new(),
             next_slot: 0,
             stack_types: Vec::new(),
+            opt_level: 0,
+            warn_dead_code: false,
+            error_dead_code: false,
         }
+    }
+
+    /// 链式配置: 设置优化等级与死代码诊断策略。
+    ///
+    /// 供 vxcompiler CLI 与 vpm VxBuilder 在拿到 `--opt-level` / `--warn-dead-code` /
+    /// `--error-dead-code` 后显式注入, 避免 `Compiler::new` 签名变动影响其他构造路径。
+    pub fn with_options(
+        mut self,
+        opt_level: u8,
+        warn_dead_code: bool,
+        error_dead_code: bool,
+    ) -> Self {
+        self.opt_level = opt_level;
+        self.warn_dead_code = warn_dead_code;
+        self.error_dead_code = error_dead_code;
+        self
     }
 
     fn allocate_slot(&mut self, name: &str) -> u32 {
@@ -761,7 +791,7 @@ impl Compiler {
                 Expr::EnumDecl(_, _, _, _) => {}
                 Expr::UnionDecl(_, _, _, _) => {}
                 Expr::ImportStmt(name, alias, _dirs, _, _) => {
-                    let lib_path = self.vxmodel.get(name).cloned();
+                    let lib_path = self.settings.library_path(name);
                     self.emit(
                         OpCode::Import,
                         BytecodeArg::ImportTuple(name.clone(), alias.clone(), lib_path),

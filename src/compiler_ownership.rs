@@ -17,6 +17,7 @@ pub struct OwnershipChecker {
     heap_vars: std::collections::HashSet<String>,
     borrows: HashMap<String, String>,
     pub errors: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 impl OwnershipChecker {
@@ -27,6 +28,7 @@ impl OwnershipChecker {
             heap_vars: std::collections::HashSet::new(),
             borrows: HashMap::new(),
             errors: Vec::new(),
+            warnings: Vec::new(),
         }
     }
     pub fn push_scope(&mut self) {
@@ -39,7 +41,7 @@ impl OwnershipChecker {
         let scope = self.scopes.pop().unwrap();
         for (var, state) in &scope {
             if self.heap_vars.contains(var) && *state == OwnershipState::Owned {
-                self.errors.push(format!(
+                self.warnings.push(format!(
                     "堆变量 '{}' 在作用域结束时未被显式释放（可能内存泄漏），请调用 free({})",
                     var, var
                 ));
@@ -182,7 +184,7 @@ impl OwnershipChecker {
                 if self.get_state(name) == Some(OwnershipState::Owned)
                     && self.heap_vars.contains(name)
                 {
-                    self.errors.push(format!(
+                    self.warnings.push(format!(
                         "变量 '{}' 持有堆所有权，赋值前请先释放（内存泄漏风险）",
                         name
                     ));
@@ -214,7 +216,7 @@ impl OwnershipChecker {
                 if self.get_state(name) == Some(OwnershipState::Owned)
                     && self.heap_vars.contains(name)
                 {
-                    self.errors.push(format!(
+                    self.warnings.push(format!(
                         "变量 '{}' 持有堆所有权，覆盖赋值将导致内存泄漏",
                         name
                     ));
@@ -227,10 +229,10 @@ impl OwnershipChecker {
     }
     pub fn check_ast(&mut self, ast: &[crate::parser::Stmt]) {
         for stmt in ast {
-            self._check_stmt(stmt);
+            self.check_stmt(stmt);
         }
     }
-    fn _check_stmt(&mut self, s: &crate::parser::Stmt) {
+    fn check_stmt(&mut self, s: &crate::parser::Stmt) {
         match s {
             Expr::VarDecl(name, _, value, _, line, col) => match value.as_ref() {
                 Expr::NewzExpr(_, _, _, _, _) => self.declare_var(name, true),
@@ -269,7 +271,7 @@ impl OwnershipChecker {
             Expr::FreeStmt(target, line, col) => {
                 if let Expr::Identifier(name, _, _) = target.as_ref() {
                     if !self.heap_vars.contains(name.as_str()) {
-                        self.errors
+                        self.warnings
                             .push(format!("变量 '{}' 不是堆指针，无法释放", name));
                     } else if self.check_free(name, *line, *col) {
                         self.do_free(name);
@@ -292,41 +294,41 @@ impl OwnershipChecker {
             }
             Expr::IfStmt(cond, body, elifs, else_body, _, _) => {
                 self.push_scope();
-                self._check_expr(cond);
+                self.check_expr(cond);
                 for stmt in body {
-                    self._check_stmt(stmt);
+                    self.check_stmt(stmt);
                 }
                 self.pop_scope();
                 for (c, b) in elifs {
                     self.push_scope();
-                    self._check_expr(c);
+                    self.check_expr(c);
                     for stmt in b {
-                        self._check_stmt(stmt);
+                        self.check_stmt(stmt);
                     }
                     self.pop_scope();
                 }
                 if let Some(b) = else_body {
                     self.push_scope();
                     for stmt in b {
-                        self._check_stmt(stmt);
+                        self.check_stmt(stmt);
                     }
                     self.pop_scope();
                 }
             }
             Expr::WhileStmt(cond, body, _, _) => {
                 self.push_scope();
-                self._check_expr(cond);
+                self.check_expr(cond);
                 for stmt in body {
-                    self._check_stmt(stmt);
+                    self.check_stmt(stmt);
                 }
                 self.pop_scope();
             }
             Expr::ForStmt(var, iter, body, _, _) => {
                 self.push_scope();
                 self.declare_var(var, false);
-                self._check_expr(iter);
+                self.check_expr(iter);
                 for stmt in body {
-                    self._check_stmt(stmt);
+                    self.check_stmt(stmt);
                 }
                 self.pop_scope();
             }
@@ -336,7 +338,7 @@ impl OwnershipChecker {
                     self.declare_var(p, false);
                 }
                 for stmt in body {
-                    self._check_stmt(stmt);
+                    self.check_stmt(stmt);
                 }
                 self.pop_scope();
             }
@@ -346,7 +348,7 @@ impl OwnershipChecker {
                         if self.get_state(src) == Some(OwnershipState::Owned)
                             && self.heap_vars.contains(src)
                         {
-                            self.errors.push(format!(
+                            self.warnings.push(format!(
                                 "返回堆变量 '{}' 会转移所有权，调用者需负责释放",
                                 src
                             ));
@@ -360,17 +362,17 @@ impl OwnershipChecker {
             _ => {}
         }
     }
-    fn _check_expr(&mut self, e: &Expr) {
+    fn check_expr(&mut self, e: &Expr) {
         match e {
             Expr::Identifier(name, l, c) => {
                 self.check_use(name, *l, *c);
             }
             Expr::BinaryOp(_, left, right, _, _) => {
-                self._check_expr(left);
-                self._check_expr(right);
+                self.check_expr(left);
+                self.check_expr(right);
             }
             Expr::UnaryOp(_, operand, _, _) => {
-                self._check_expr(operand);
+                self.check_expr(operand);
             }
             Expr::CallExpr(_, args, _, _) => {
                 for a in args {
@@ -380,11 +382,11 @@ impl OwnershipChecker {
                 }
             }
             Expr::PropertyAccess(obj, _, _, _) => {
-                self._check_expr(obj);
+                self.check_expr(obj);
             }
             Expr::IndexAccess(obj, index, _, _) => {
-                self._check_expr(obj);
-                self._check_expr(index);
+                self.check_expr(obj);
+                self.check_expr(index);
             }
             Expr::Deref(op, _, _) => {
                 if let Expr::Identifier(name, l, c) = op.as_ref() {

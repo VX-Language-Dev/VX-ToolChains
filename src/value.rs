@@ -95,6 +95,7 @@ impl Value {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to_string(&self) -> String {
         match self {
             Value::Nil => "nil".to_string(),
@@ -140,5 +141,11 @@ impl Value {
                 format!("{}*({}:{})", class_name, alloc_id, generation)
             }
         }
+    }
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
     }
 }

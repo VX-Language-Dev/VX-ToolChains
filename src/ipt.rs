@@ -19,21 +19,6 @@ use vx_vm::compiler_ownership::OwnershipChecker;
 use compiler_core::Compiler;
 
 // ==================== 主程序 ====================
-/// 解析简单的 key:value / key=value 配置文件，跳过空行、`#` 注释和 `[section]`
-fn parse_simple_kv(content: &str, delimiter: char) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once(delimiter) {
-            map.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
-        }
-    }
-    map
-}
-
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -45,6 +30,10 @@ fn main() {
     let mut dump_bytecode = false;
     let mut dump_sections = false;
     let mut target_triple = String::new();
+    // 优化等级 (由 vpm 构建器透传, 编译核心暂作记录)
+    let mut opt_level: u8 = 20;
+    let mut warn_dead_code = false;
+    let mut error_dead_code = false;
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -69,12 +58,42 @@ fn main() {
                 target_triple = args[i + 1].clone();
                 i += 2;
             }
+            "--opt-level" if i + 1 < args.len() => {
+                opt_level = args[i + 1].parse().unwrap_or(20);
+                i += 2;
+            }
+            "--warn-dead-code" => {
+                warn_dead_code = true;
+                i += 1;
+            }
+            "--error-dead-code" => {
+                error_dead_code = true;
+                i += 1;
+            }
             _ => {
                 eprintln!("Unknown argument: {}", args[i]);
                 process::exit(1);
             }
         }
     }
+    // 预留: opt_level / warn_dead_code / error_dead_code 供编译核心后续接入优化与诊断通路
+    //
+    // 优先级: CLI 参数 > VX_OPT_LEVEL 等环境变量 > 编译核心默认值 (0 / false / false)
+    // 这使得 vpm VxBuilder 在不修改 CLI 的情况下, 也能通过环境变量把构建器侧的
+    // [vxset] 优化/死代码策略注入到编译器实例, 避免 vxcompiler 内部丢失配置。
+    let env_opt = env::var("VX_OPT_LEVEL")
+        .ok()
+        .and_then(|s| s.parse::<u8>().ok());
+    let env_warn_dc = env::var("VX_WARN_DEAD_CODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let env_error_dc = env::var("VX_ERROR_DEAD_CODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let final_opt_level = env_opt.unwrap_or(opt_level);
+    let final_warn_dc = env_warn_dc || warn_dead_code;
+    let final_error_dc = env_error_dc || error_dead_code;
+    // final_* 在下面构造 Compiler 时通过 with_options 注入
     if output.is_empty() {
         output = input.replacen(".vx", ".vxobj", 1);
     }
@@ -83,14 +102,30 @@ fn main() {
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_string_lossy().to_string()))
         .unwrap_or_default();
+
+    let vxsetting_path = Path::new(&source_dir).join("vxsetting.toml");
     let vxmodel_path = Path::new(&source_dir).join("vxmodel");
-    if !fs::metadata(&vxmodel_path).is_ok() {
-        eprintln!("VX Error: 缺少 vxmodel 文件: {}", vxmodel_path.display());
+    let vxmodel_toml_path = Path::new(&source_dir).join("vxmodel.toml");
+
+    if vxmodel_path.exists() || vxmodel_toml_path.exists() {
+        eprintln!("[VX 废弃警告] 检测到旧版配置文件 vxmodel / vxmodel.toml。");
+        eprintln!("  该配置格式已废弃，请迁移至 vxsetting.toml。");
+        eprintln!("  参考格式：");
+        eprintln!("    [libraries]");
+        eprintln!("    stdlib = \"/path/to/stdlib\"");
         process::exit(1);
     }
-    let vxmodel = fs::read_to_string(&vxmodel_path)
-        .map(|c| parse_simple_kv(&c, ':'))
-        .unwrap_or_default();
+
+    if !vxsetting_path.exists() {
+        eprintln!("VX Error: 缺少 vxsetting.toml 文件: {}", vxsetting_path.display());
+        process::exit(1);
+    }
+
+    let settings = vx_vm::VxSettings::from_file(vxsetting_path.to_str().unwrap())
+        .unwrap_or_else(|e| {
+            eprintln!("VX Error: 解析 vxsetting.toml 失败: {}", e);
+            process::exit(1);
+        });
 
     let src = match fs::read_to_string(input) {
         Err(e) => {
@@ -129,7 +164,7 @@ fn main() {
         process::exit(1);
     }
 
-    let mut comp = Compiler::new(vxmodel);
+    let mut comp = Compiler::new(settings).with_options(final_opt_level, final_warn_dc, final_error_dc);
     let mut der = match comp.compile(&ast) {
         Ok(d) => d,
         Err(e) => {

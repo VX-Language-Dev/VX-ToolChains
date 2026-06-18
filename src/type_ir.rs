@@ -461,10 +461,28 @@ fn deserialize_instruction(data: &[u8], pos: &mut usize) -> Option<TypedInstruct
     };
     let read_single = |s: &str| -> Option<VarId> { s.parse().ok() };
     match tag {
-        0 => { let _ = read_str_at(data, pos); Some(ConstInt(0)) }
-        1 => { let _ = read_str_at(data, pos); Some(ConstFloat(0.0)) }
-        2 => { let _ = read_str_at(data, pos); Some(ConstBool(false)) }
-        3 => { let _ = read_str_at(data, pos); Some(ConstString(String::new())) }
+        // 常量：序列化时附加前缀 i/f/b/s 用于区分类型
+        0 => {
+            let s = read_str_at(data, pos)?;
+            let raw = s.strip_prefix('i').unwrap_or(&s);
+            Some(ConstInt(raw.parse().ok()?))
+        }
+        1 => {
+            let s = read_str_at(data, pos)?;
+            let raw = s.strip_prefix('f').unwrap_or(&s);
+            Some(ConstFloat(raw.parse().ok()?))
+        }
+        2 => {
+            let s = read_str_at(data, pos)?;
+            let raw = s.strip_prefix('b').unwrap_or(&s);
+            Some(ConstBool(raw.parse().ok()?))
+        }
+        3 => {
+            let s = read_str_at(data, pos)?;
+            // 去掉前缀 's'，剩余部分即为字符串内容
+            let stripped = s.strip_prefix('s').unwrap_or(&s);
+            Some(ConstString(stripped.to_string()))
+        }
         4 => Some(ConstNil),
         5 => { let v = read_str_at(data, pos)?.parse().ok()?; Some(LoadVar(v)) }
         6 => { let v = read_str_at(data, pos)?.parse().ok()?; Some(StoreVar(v)) }
@@ -495,15 +513,42 @@ fn deserialize_instruction(data: &[u8], pos: &mut usize) -> Option<TypedInstruct
         40 => { let t = read_str_at(data, pos)?.parse().ok()?; Some(Jump(t)) }
         41 => { let (v, t) = read_vars(&read_str_at(data, pos)?)?; Some(JumpIfFalse(v, t)) }
         42 => { let (v, t) = read_vars(&read_str_at(data, pos)?)?; Some(JumpIfTrue(v, t)) }
-        50 => { let _ = read_str_at(data, pos); Some(Call(0, vec![])) }
-        51 => { let _ = read_str_at(data, pos); Some(CallIndirect(0, vec![])) }
+        50 => {
+            // 格式: "f<func>,<arg0>,<arg1>,..." （func 后跟逗号分隔的变量 id 列表）
+            let s = read_str_at(data, pos)?;
+            let stripped = s.strip_prefix('f').unwrap_or(&s);
+            let mut parts = stripped.split(',');
+            let f: VarId = parts.next()?.parse().ok()?;
+            let args: Vec<VarId> = parts.map(|p| p.parse().ok()).collect::<Option<_>>()?;
+            Some(Call(f, args))
+        }
+        51 => {
+            // 格式: "vi<indirect>,<arg0>,<arg1>,..."
+            let s = read_str_at(data, pos)?;
+            let stripped = s.strip_prefix("vi").unwrap_or(&s);
+            let mut parts = stripped.split(',');
+            let f: VarId = parts.next()?.parse().ok()?;
+            let args: Vec<VarId> = parts.map(|p| p.parse().ok()).collect::<Option<_>>()?;
+            Some(CallIndirect(f, args))
+        }
         52 => match read_str_at(data, pos) { Some(s) => Some(Return(s.parse().ok())), None => Some(Return(None)) },
-        60 => { let _ = read_str_at(data, pos); Some(MakeStruct(StructLayoutId(0), vec![])) }
+        60 => {
+            // 格式: "s<id>,<arg0>,<arg1>,..."
+            let s = read_str_at(data, pos)?;
+            let stripped = s.strip_prefix('s').unwrap_or(&s);
+            let mut parts = stripped.split(',');
+            let id: u32 = parts.next()?.parse().ok()?;
+            let args: Vec<VarId> = parts.map(|p| p.parse().ok()).collect::<Option<_>>()?;
+            Some(MakeStruct(StructLayoutId(id), args))
+        }
         61 => { let (o, i) = read_vars(&read_str_at(data, pos)?)?; Some(GetField(o, i)) }
         62 => { let s = read_str_at(data, pos)?; let parts: Vec<&str> = s.split(',').collect(); if parts.len() < 3 { return None }; Some(SetField(parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?)) }
         64 => { let (a, i) = read_vars(&read_str_at(data, pos)?)?; Some(IndexGet(a, i)) }
         65 => { let s = read_str_at(data, pos)?; let parts: Vec<&str> = s.split(',').collect(); if parts.len() < 3 { return None }; Some(IndexSet(parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?)) }
-        63 => Some(MakeArray(0, vec![])),
+        63 => {
+            // 序列化时无负载；默认为 0 个元素
+            Some(MakeArray(0, vec![]))
+        }
         66 => Some(MakeMap(vec![])),
         70 => Some(Alloc(Type::Unknown)),
         71 => { let v = read_single(&read_str_at(data, pos)?)?; Some(Free(v)) }

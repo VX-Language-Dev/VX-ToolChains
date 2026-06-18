@@ -17,8 +17,9 @@ Thumbs.db
 *.vxobj
 *.vx
 *.out
-vxmodel
+!vxsetting.toml
 vxmod.toml
+!vxmod.toml
 *.vack
 *.json
 # Logs

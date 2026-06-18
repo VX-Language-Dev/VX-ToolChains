@@ -55,7 +55,10 @@ pub fn run_diagnostics(_uri: &Url, source: &str) -> DiagnosticResult {
     let mut checker = OwnershipChecker::new(source);
     checker.check_ast(&ast);
     for err in &checker.errors {
-        diagnostics.extend(ownership_error_to_diagnostic(err));
+        diagnostics.extend(ownership_error_to_diagnostic(err, DiagnosticSeverity::ERROR));
+    }
+    for warn in &checker.warnings {
+        diagnostics.extend(ownership_error_to_diagnostic(warn, DiagnosticSeverity::WARNING));
     }
 
     DiagnosticResult {
@@ -102,7 +105,7 @@ fn extract_line_from_ownership_error(err: &str) -> Option<usize> {
 }
 
 /// 转换所有权错误字符串为 LSP Diagnostic（可能含有多行）
-fn ownership_error_to_diagnostic(err: &str) -> Vec<Diagnostic> {
+fn ownership_error_to_diagnostic(err: &str, severity: DiagnosticSeverity) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let message = err.to_string();
 
@@ -125,7 +128,7 @@ fn ownership_error_to_diagnostic(err: &str) -> Vec<Diagnostic> {
                 character: u32::MAX,
             },
         },
-        severity: Some(DiagnosticSeverity::WARNING),
+        severity: Some(severity),
         message: clean_msg,
         source: Some("vx-ownership".to_string()),
         ..Default::default()

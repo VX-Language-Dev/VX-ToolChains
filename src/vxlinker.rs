@@ -291,6 +291,8 @@ fn main() {
     let mut stub_file = DEFAULT_STUB.to_string();
     let mut mode = LinkMode::Interpret;
     let mut dump = false;
+    // 优化等级 (由 vpm 构建器透传, 链接核心暂作记录)
+    let mut opt_level: u8 = 20;
 
     let mut i = 2;
     while i < args.len() {
@@ -316,6 +318,14 @@ fn main() {
                 dump = true;
                 i += 1;
             }
+            "--opt-level" if i + 1 < args.len() => {
+                opt_level = args[i + 1].parse().unwrap_or(20);
+                i += 2;
+            }
+            // 死代码诊断标志由编译器处理, 链接器忽略
+            "--warn-dead-code" | "--error-dead-code" => {
+                i += 1;
+            }
             _ => {
                 eprintln!("Unknown arg: {}", args[i]);
                 print_usage(&args[0]);
@@ -323,6 +333,8 @@ fn main() {
             }
         }
     }
+    // 预留: opt_level 供链接核心后续接入优化通路
+    let _ = opt_level;
 
     if output_file.is_empty() {
         let path = Path::new(&input_file);
