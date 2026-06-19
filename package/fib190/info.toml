@@ -1,6 +1,0 @@
-name = "fib190"
-version = "1.0.0"
-author = "VX Language Team"
-description = "斐波那契数列前190项计算模块，支持快速倍增法 O(log n) 和惰性迭代器"
-toolchain = "1.0.0"
-language = "ts"
