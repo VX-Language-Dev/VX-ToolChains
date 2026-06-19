@@ -28,7 +28,7 @@ impl Parser {
                 let t = self.advance();
                 Ok(Expr::ContinueStmt(t.line, t.col))
             }
-            TokenType::Free => self.parse_free_stmt(),
+            // Free 已裁减 → mem::free(ptr) 标准库函数调用, 作为普通函数调用处理
             TokenType::VarT => self.parse_var_decl_inferred(),
             _ => {
                 let e = self.parse_expression()?;
@@ -68,14 +68,12 @@ impl Parser {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
         let n = self.expect(TokenType::Identifier, None)?.value;
+        // 冒号继承语法: class Dog : Animal, Canine { ... }
+        // 冒号后跟父类名，逗号分隔接口列表
         let (mut p, mut ii) = (None, vec![]);
-        if self.current().kind == TokenType::Extends {
-            self.advance();
+        if self.current().kind == TokenType::Colon {
+            self.advance(); // 跳过冒号
             p = Some(self.expect(TokenType::Identifier, None)?.value);
-        }
-        if self.current().kind == TokenType::Implements {
-            self.advance();
-            ii.push(self.expect(TokenType::Identifier, None)?.value);
             while self.current().kind == TokenType::Comma {
                 self.advance();
                 ii.push(self.expect(TokenType::Identifier, None)?.value);
@@ -91,21 +89,8 @@ impl Parser {
             if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
                 break;
             }
-            let mut acc = "public".to_string();
-            match self.current().kind {
-                TokenType::Public => {
-                    self.advance();
-                }
-                TokenType::Private => {
-                    self.advance();
-                    acc = "private".into();
-                }
-                TokenType::Protected => {
-                    self.advance();
-                    acc = "protected".into();
-                }
-                _ => {}
-            }
+            // 访问修饰符已裁减 → 默认 public, 不解析 private/protected 关键字
+            let acc = "public".to_string();
             if self.current().kind == TokenType::Func {
                 m.push(Box::new(self.parse_func_decl()?));
             } else {
@@ -284,26 +269,24 @@ impl Parser {
         Ok(Expr::ReturnStmt(v, l, c))
     }
 
-    fn parse_free_stmt(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let target = self.parse_expression()?;
-        Ok(Expr::FreeStmt(Box::new(target), l, c))
-    }
+    // parse_free_stmt 已裁减 → 标准库 mem::free(ptr) 函数调用
 
     fn parse_import_stmt(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
         let nm = self.expect(TokenType::Identifier, None)?.value;
-        let (mut al, mut di) = (None, None);
-        while self.match_kind(&[TokenType::As, TokenType::Dirs]) {
-            if self.current().kind == TokenType::As {
-                self.advance();
-                al = Some(self.expect(TokenType::Identifier, None)?.value);
-            } else {
-                self.advance();
-                di = Some(self.expect(TokenType::String, None)?.value);
-            }
+        let mut al = None;
+        // dirs 已裁减 → import 支持可变路径列表:
+        //   import("a","b") as mod  → 多路径导入
+        let mut di = vec![];
+        // 移除 dirs 关键字检查, 仅保留 as 别名
+        if self.current().kind == TokenType::As {
+            self.advance();
+            al = Some(self.expect(TokenType::Identifier, None)?.value);
+        }
+        // 如果导入名后跟有字符串字面量，收集为路径列表（旧 dirs 替代）
+        while self.current().kind == TokenType::String {
+            di.push(self.advance().value);
         }
         Ok(Expr::ImportStmt(nm, al, di, l, c))
     }

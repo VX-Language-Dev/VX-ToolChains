@@ -120,13 +120,17 @@ impl VM {
     /// 
     /// 检测以下安全性问题：
     /// - double-free（重复释放）
-    /// - 代数不匹配
+    /// - 代数不匹配（野指针检测）
     /// - 释放不存在的分配
     /// 
     /// 成功释放后：
-    /// - 递增代数（generation）
-    /// - 标记为非存活
+    /// - 将分配记录从注册表中移除（后续 validate_pointer 返回"不存在"错误，等价于 use-after-free 检测）
     /// - 从当前帧的所有权列表中移除
+    /// 
+    /// 注意：与文档注释中描述的"递增代数"不同，当前实现直接移除记录。
+    /// 这是因为原始记录被 remove 后，validate_pointer 中的 get() 会返回 None，
+    /// 效果上等价于检测到悬垂指针。若未来需要保留已释放记录用于调试，
+    /// 可改为标记 alive=false 并递增 generation。
     pub(crate) fn free_allocation(&mut self, alloc_id: u64, generation: u32) -> Result<(), String> {
         if let Some(rec) = self.alloc_registry.get(&alloc_id) {
             if !rec.alive {
@@ -159,7 +163,7 @@ impl VM {
 
     /// 清理指定调用帧的所有堆分配（作用域退出时调用）
     /// 
-    /// 递增所有分配的代数并标记为非存活
+    /// 直接移除分配记录（与 free_allocation 行为一致）
     pub(crate) fn cleanup_frame_allocs(&mut self, owned_allocs: &[u64]) {
         for alloc_id in owned_allocs {
             self.alloc_registry.remove(alloc_id);

@@ -149,7 +149,10 @@ impl VM {
                 let b = self.pop();
                 let a = self.pop();
                 let result = match (&a, &b) {
-                    (Value::Int(ai), Value::Int(bi)) => Value::Int(ai + bi),
+                    (Value::Int(ai), Value::Int(bi)) => match ai.checked_add(*bi) {
+                        Some(v) => Value::Int(v),
+                        None => return DispatchResult::Error("Integer overflow: BinaryAdd".into()),
+                    },
                     (Value::Float(af), Value::Float(bf)) => Value::Float(af + bf),
                     (Value::String(as_), Value::String(bs)) => {
                         Value::String(format!("{}{}", as_, bs))
@@ -165,7 +168,10 @@ impl VM {
                 let b = self.pop();
                 let a = self.pop();
                 let result = match (&a, &b) {
-                    (Value::Int(ai), Value::Int(bi)) => Value::Int(ai - bi),
+                    (Value::Int(ai), Value::Int(bi)) => match ai.checked_sub(*bi) {
+                        Some(v) => Value::Int(v),
+                        None => return DispatchResult::Error("Integer overflow: BinarySub".into()),
+                    },
                     (Value::Float(af), Value::Float(bf)) => Value::Float(af - bf),
                     _ => return DispatchResult::Error("Type mismatch in -".into()),
                 };
@@ -175,7 +181,10 @@ impl VM {
                 let b = self.pop();
                 let a = self.pop();
                 let result = match (&a, &b) {
-                    (Value::Int(ai), Value::Int(bi)) => Value::Int(ai * bi),
+                    (Value::Int(ai), Value::Int(bi)) => match ai.checked_mul(*bi) {
+                        Some(v) => Value::Int(v),
+                        None => return DispatchResult::Error("Integer overflow: BinaryMul".into()),
+                    },
                     (Value::Float(af), Value::Float(bf)) => Value::Float(af * bf),
                     _ => return DispatchResult::Error("Type mismatch in *".into()),
                 };
@@ -185,7 +194,10 @@ impl VM {
                 let b = self.pop();
                 let a = self.pop();
                 let result = match (&a, &b) {
-                    (Value::Int(ai), Value::Int(bi)) if *bi != 0 => Value::Int(ai / bi),
+                    (Value::Int(ai), Value::Int(bi)) if *bi != 0 => match ai.checked_div(*bi) {
+                        Some(v) => Value::Int(v),
+                        None => return DispatchResult::Error("Integer overflow: BinaryDiv".into()),
+                    },
                     (Value::Float(af), Value::Float(bf)) if *bf != 0.0 => Value::Float(af / bf),
                     _ => return DispatchResult::Error("Type mismatch in /".into()),
                 };
@@ -291,7 +303,10 @@ impl VM {
             OpCode::AddInt => {
                 let b = self.pop_int();
                 let a = self.pop_int();
-                self.push_int(a + b);
+                match a.checked_add(b) {
+                    Some(v) => self.push_int(v),
+                    None => return DispatchResult::Error("Integer overflow: AddInt".into()),
+                }
             }
             OpCode::AddFloat => {
                 let b = self.pop_float();
@@ -301,7 +316,10 @@ impl VM {
             OpCode::SubInt => {
                 let b = self.pop_int();
                 let a = self.pop_int();
-                self.push_int(a - b);
+                match a.checked_sub(b) {
+                    Some(v) => self.push_int(v),
+                    None => return DispatchResult::Error("Integer underflow: SubInt".into()),
+                }
             }
             OpCode::SubFloat => {
                 let b = self.pop_float();
@@ -311,7 +329,10 @@ impl VM {
             OpCode::MulInt => {
                 let b = self.pop_int();
                 let a = self.pop_int();
-                self.push_int(a * b);
+                match a.checked_mul(b) {
+                    Some(v) => self.push_int(v),
+                    None => return DispatchResult::Error("Integer overflow: MulInt".into()),
+                }
             }
             OpCode::MulFloat => {
                 let b = self.pop_float();
@@ -322,7 +343,10 @@ impl VM {
                 let b = self.pop_int();
                 let a = self.pop_int();
                 if b != 0 {
-                    self.push_int(a / b);
+                    match a.checked_div(b) {
+                        Some(v) => self.push_int(v),
+                        None => return DispatchResult::Error("Integer overflow: DivInt".into()),
+                    }
                 } else {
                     return DispatchResult::Error("Division by zero".into());
                 }
@@ -340,7 +364,10 @@ impl VM {
                 let b = self.pop_int();
                 let a = self.pop_int();
                 if b != 0 {
-                    self.push_int(a % b);
+                    match a.checked_rem(b) {
+                        Some(v) => self.push_int(v),
+                        None => return DispatchResult::Error("Integer overflow: ModInt".into()),
+                    }
                 } else {
                     return DispatchResult::Error("Modulo by zero".into());
                 }
@@ -373,13 +400,22 @@ impl VM {
         match op {
             OpCode::And => { let b = self.pop_bool(); let a = self.pop_bool(); self.push_bool(a && b); }
             OpCode::Or => { let b = self.pop_bool(); let a = self.pop_bool(); self.push_bool(a || b); }
-            OpCode::NegInt => { let a = self.pop_int(); self.push_int(-a); }
+            OpCode::NegInt => {
+                let a = self.pop_int();
+                match a.checked_neg() {
+                    Some(v) => self.push_int(v),
+                    None => return DispatchResult::Error("Integer overflow: NegInt".into()),
+                }
+            }
             OpCode::NegFloat => { let a = self.pop_float(); self.push_float(-a); }
             OpCode::Not => { let a = self.pop_bool(); self.push_bool(!a); }
             OpCode::UnaryNeg => {
                 let a = self.pop();
                 let result = match a {
-                    Value::Int(i) => Value::Int(-i),
+                    Value::Int(i) => match i.checked_neg() {
+                        Some(v) => Value::Int(v),
+                        None => return DispatchResult::Error("Integer overflow: UnaryNeg".into()),
+                    },
                     Value::Float(f) => Value::Float(-f),
                     _ => return DispatchResult::Error("Type mismatch in unary -".into()),
                 };

@@ -180,7 +180,8 @@ impl OwnershipChecker {
     }
     pub fn check_assign(&mut self, name: &str, value: &Expr, line: usize, col: usize) {
         match value {
-            Expr::NewzExpr(_, _, _, _, _) => {
+            // NewzExpr 已裁减 → NewExpr 统一处理堆分配语义
+            Expr::NewExpr(_, _, _, _, _) => {
                 if self.get_state(name) == Some(OwnershipState::Owned)
                     && self.heap_vars.contains(name)
                 {
@@ -235,7 +236,8 @@ impl OwnershipChecker {
     fn check_stmt(&mut self, s: &crate::parser::Stmt) {
         match s {
             Expr::VarDecl(name, _, value, _, line, col) => match value.as_ref() {
-                Expr::NewzExpr(_, _, _, _, _) => self.declare_var(name, true),
+                // NewzExpr 已裁减 → NewExpr 统一处理堆分配
+                Expr::NewExpr(_, _, _, _, _) => self.declare_var(name, true),
                 Expr::Identifier(src, _, _) => {
                     if self.get_state(src) == Some(OwnershipState::Owned)
                         && self.heap_vars.contains(src)
@@ -268,25 +270,7 @@ impl OwnershipChecker {
                     self.check_assign(name, value, *line, *col);
                 }
             }
-            Expr::FreeStmt(target, line, col) => {
-                if let Expr::Identifier(name, _, _) = target.as_ref() {
-                    if !self.heap_vars.contains(name.as_str()) {
-                        self.warnings
-                            .push(format!("变量 '{}' 不是堆指针，无法释放", name));
-                    } else if self.check_free(name, *line, *col) {
-                        self.do_free(name);
-                    }
-                } else if let Expr::Deref(op, _, _) = target.as_ref() {
-                    if let Expr::Identifier(name, _, _) = op.as_ref() {
-                        if self.check_free(name, *line, *col) {
-                            self.do_free(name);
-                        }
-                    }
-                } else {
-                    self.errors
-                        .push("free 只能应用于堆指针标识符或解引用".to_string());
-                }
-            }
+            // FreeStmt 已裁减 → 标准库 mem::free(ptr) 函数调用, 编译器不在此做静态检查
             Expr::ExprStmt(expr, line, col) => {
                 if let Expr::Identifier(name, _, _) = expr.as_ref() {
                     self.check_use(name, *line, *col);

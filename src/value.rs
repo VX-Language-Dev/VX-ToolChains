@@ -146,6 +146,47 @@ impl Value {
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
+        match self {
+            Value::Nil => write!(f, "nil"),
+            Value::Int(i) => write!(f, "{}", i),
+            Value::Float(fl) => {
+                let mut s = fl.to_string();
+                if s.contains('.') {
+                    s = s.trim_end_matches('0').trim_end_matches('.').to_string();
+                }
+                write!(f, "{}", s)
+            }
+            Value::Bool(b) => {
+                if *b { write!(f, "true") } else { write!(f, "false") }
+            }
+            Value::String(s) => write!(f, "{}", s),
+            Value::Array(arr) => {
+                write!(f, "[")?;
+                for (i, v) in arr.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+            Value::Map(map) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in map.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}: {}", k, v)?;
+                }
+                write!(f, "}}")
+            }
+            Value::Instance { class_name, fields } => {
+                write!(f, "{}(", class_name)?;
+                for (i, (k, v)) in fields.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}={}", k, v)?;
+                }
+                write!(f, ")")
+            }
+            Value::Pointer { class_name, alloc_id, generation } => {
+                write!(f, "{}*({}:{})", class_name, alloc_id, generation)
+            }
+        }
     }
 }

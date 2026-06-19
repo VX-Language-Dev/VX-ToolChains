@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::OnceLock;
 
 // ==================== 错误处理 ====================
 #[derive(Debug)]
@@ -56,6 +57,7 @@ macro_rules! vx_error {
 // ==================== Token 类型 ====================
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
+    // 控制流
     If,
     Elif,
     Else,
@@ -63,13 +65,17 @@ pub enum TokenType {
     While,
     Break,
     Continue,
+    // 函数
     Func,
     Return,
+    // 所有权
     Move,
+    // 字面量
     Int,
     Float,
     String,
     Identifier,
+    // 运算符
     Plus,
     Minus,
     Star,
@@ -91,6 +97,11 @@ pub enum TokenType {
     PowerAssign,
     Ampersand,
     Arrow,
+    // 逻辑运算符 (仅 && || ! 符号形式, 不再有关键字 and/or/not)
+    And,
+    Or,
+    Not,
+    // 分隔符
     LParen,
     RParen,
     LBracket,
@@ -105,37 +116,28 @@ pub enum TokenType {
     Indent,
     Dedent,
     EOF,
+    // 布尔/零值
     True,
     False,
     Nil,
-    And,
-    Or,
-    Not,
+    // 迭代/导入
     In,
     Import,
     As,
-    Dirs,
+    // 原生标量类型 (硬件基础类型, 必留)
     IntT,
     FloatT,
     DoubleT,
-    StringT,
     VarT,
     BoolT,
     VoidT,
+    // 复合类型声明
     Struct,
     Class,
     Enum,
     Union,
-    Vector,
+    // 内存分配/构造
     New,
-    Newz,
-    Free,
-    This,
-    Public,
-    Private,
-    Protected,
-    Extends,
-    Implements,
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +149,7 @@ pub struct Token {
 }
 
 pub const KEYWORDS: &[( &str, TokenType)] = &[
+    // 22 核心骨架关键字 (底层 OpCode 绑定, 永久保留)
     ("if", TokenType::If),
     ("else", TokenType::Else),
     ("elif", TokenType::Elif),
@@ -159,36 +162,45 @@ pub const KEYWORDS: &[( &str, TokenType)] = &[
     ("true", TokenType::True),
     ("false", TokenType::False),
     ("nil", TokenType::Nil),
-    ("and", TokenType::And),
-    ("or", TokenType::Or),
-    ("not", TokenType::Not),
     ("in", TokenType::In),
     ("import", TokenType::Import),
     ("as", TokenType::As),
-    ("dirs", TokenType::Dirs),
-    ("int", TokenType::IntT),
-    ("float", TokenType::FloatT),
-    ("double", TokenType::DoubleT),
-    ("string", TokenType::StringT),
     ("var", TokenType::VarT),
-    ("bool", TokenType::BoolT),
-    ("void", TokenType::VoidT),
     ("struct", TokenType::Struct),
     ("class", TokenType::Class),
     ("enum", TokenType::Enum),
     ("union", TokenType::Union),
-    ("vector", TokenType::Vector),
     ("new", TokenType::New),
-    ("newz", TokenType::Newz),
-    ("free", TokenType::Free),
     ("move", TokenType::Move),
-    ("this", TokenType::This),
-    ("public", TokenType::Public),
-    ("private", TokenType::Private),
-    ("protected", TokenType::Protected),
-    ("extends", TokenType::Extends),
-    ("implements", TokenType::Implements),
+    // 5 原生标量类型 (硬件基础类型, 保留)
+    ("int", TokenType::IntT),
+    ("float", TokenType::FloatT),
+    ("double", TokenType::DoubleT),
+    ("bool", TokenType::BoolT),
+    ("void", TokenType::VoidT),
+    // --- 以下关键字已裁减 (移至标准库/注解/语法糖) ---
+    // string  → std::String, 字符串字面量自动展开
+    // vector  → std::Vec<T>, 数组字面量自动展开
+    // and/or/not → && / || / ! 符号运算符
+    // public/private/protected → #[pub] / #[priv] 注解
+    // extends/implements → 冒号语法 class A : Parent, Trait
+    // dirs   → import("a","b") as mod 可变参数导入
+    // this   → 解析器自动替换为当前实例局部变量
+    // newz   → mem::zeroed<T>() 标准库函数
+    // free   → mem::free(ptr) 标准库函数
 ];
+
+/// 编译期初始化一次的关键字哈希表，O(1) 查找替代 O(n) 线性扫描。
+fn keyword_map() -> &'static HashMap<&'static str, TokenType> {
+    static KW_MAP: OnceLock<HashMap<&str, TokenType>> = OnceLock::new();
+    KW_MAP.get_or_init(|| {
+        let mut m = HashMap::with_capacity(KEYWORDS.len());
+        for (k, v) in KEYWORDS {
+            m.insert(*k, *v);
+        }
+        m
+    })
+}
 
 // ==================== 词法分析器 ====================
 //
@@ -332,10 +344,9 @@ impl Lexer {
         {
             val.push(self.advance());
         }
-        let kind = KEYWORDS
-            .iter()
-            .find(|(k, _)| *k == val)
-            .map(|(_, t)| t.clone())
+        let kind = keyword_map()
+            .get(val.as_str())
+            .copied()
             .unwrap_or(TokenType::Identifier);
         Token {
             kind,
@@ -583,50 +594,47 @@ impl Lexer {
                 continue;
             }
 
-            let m: HashMap<char, TokenType> = [
-                ('+', TokenType::Plus),
-                ('-', TokenType::Minus),
-                ('*', TokenType::Star),
-                ('/', TokenType::Slash),
-                ('%', TokenType::Percent),
-                ('^', TokenType::Power),
-                ('<', TokenType::Lt),
-                ('>', TokenType::Gt),
-                ('=', TokenType::Assign),
-                ('!', TokenType::Not),
-                ('&', TokenType::Ampersand),
-                ('(', TokenType::LParen),
-                (')', TokenType::RParen),
-                ('[', TokenType::LBracket),
-                (']', TokenType::RBracket),
-                ('{', TokenType::LBrace),
-                ('}', TokenType::RBrace),
-                (':', TokenType::Colon),
-                (';', TokenType::Semicolon),
-                (',', TokenType::Comma),
-                ('.', TokenType::Dot),
-            ]
-            .iter()
-            .copied()
-            .collect();
-            if let Some(kind) = m.get(&c) {
-                self.advance();
-                self.tokens.push(Token {
-                    kind: kind.clone(),
-                    value: c.to_string(),
-                    line: sl,
-                    col: sc,
-                });
-                continue;
-            }
-            if c != '\0' {
-                vx_error!(
-                    format!("非法字符: {}", c),
-                    self.line,
-                    self.col,
-                    &self.source
-                );
-            }
+            // 使用 match 语句替代 HashMap，避免每次调用时的哈希表构造开销
+            let kind = match c {
+                '+' => TokenType::Plus,
+                '-' => TokenType::Minus,
+                '*' => TokenType::Star,
+                '/' => TokenType::Slash,
+                '%' => TokenType::Percent,
+                '^' => TokenType::Power,
+                '<' => TokenType::Lt,
+                '>' => TokenType::Gt,
+                '=' => TokenType::Assign,
+                '!' => TokenType::Not,
+                '&' => TokenType::Ampersand,
+                '(' => TokenType::LParen,
+                ')' => TokenType::RParen,
+                '[' => TokenType::LBracket,
+                ']' => TokenType::RBracket,
+                '{' => TokenType::LBrace,
+                '}' => TokenType::RBrace,
+                ':' => TokenType::Colon,
+                ';' => TokenType::Semicolon,
+                ',' => TokenType::Comma,
+                '.' => TokenType::Dot,
+                _ => {
+                    // 不在单字符符号表中，作为非法字符报错
+                    vx_error!(
+                        format!("非法字符: {}", c),
+                        self.line,
+                        self.col,
+                        &self.source
+                    );
+                }
+            };
+            self.advance();
+            self.tokens.push(Token {
+                kind,
+                value: c.to_string(),
+                line: sl,
+                col: sc,
+            });
+            continue;
         }
         while self.indent_stack.len() > 1 {
             self.indent_stack.pop();

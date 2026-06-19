@@ -66,11 +66,18 @@ impl VM {
                 continue;
             }
 
+            // 只使用不可变借用获取帧信息，一次性提取指令元数据
             let fn_idx = self.frames.last().unwrap().fn_idx;
             let pc = self.frames.last().unwrap().pc;
+            // 在内部作用域中读取指令并释放 self.module 的引用
             let (op, iarg, sarg_owned) = {
                 let inst_ref = &self.module.functions[fn_idx].instructions[pc];
-                (inst_ref.op, inst_ref.iarg, inst_ref.sarg.clone())
+                (
+                    inst_ref.op,
+                    inst_ref.iarg,
+                    // 将 sarg 克隆为自有字符串，避免后续 &mut self 冲突
+                    inst_ref.sarg.as_ref().map(|s| s.to_string()),
+                )
             };
             let sarg = sarg_owned.as_deref();
             self.frames.last_mut().unwrap().pc += 1;

@@ -8,15 +8,12 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-// 子模块：仅保留编译器实现相关的私有模块
-// token/parser/compiler_ownership/opcode 已迁移到 vx_vm 库中共享给 LSP 等其他目标
-mod compiler_bytecode;
-mod compiler_core;
+// token/parser/compiler_ownership/opcode/compiler 已迁移到 vx_vm 库中共享给 LSP 等其他目标
 
 use vx_vm::token::Lexer;
 use vx_vm::parser::Parser;
 use vx_vm::compiler_ownership::OwnershipChecker;
-use compiler_core::Compiler;
+use vx_vm::compiler_core::Compiler;
 
 // ==================== 主程序 ====================
 fn main() {
@@ -196,11 +193,11 @@ fn main() {
         let constants: Vec<vx_vm::bytecode::SerializedConstant> = der
             .constants.iter()
             .map(|c| match c {
-                crate::compiler_bytecode::ConstantValue::Nil => vx_vm::bytecode::SerializedConstant::nil(),
-                crate::compiler_bytecode::ConstantValue::Bool(b) => vx_vm::bytecode::SerializedConstant::bool(*b),
-                crate::compiler_bytecode::ConstantValue::Int(v) => vx_vm::bytecode::SerializedConstant::int(*v),
-                crate::compiler_bytecode::ConstantValue::Float(v) => vx_vm::bytecode::SerializedConstant::float(*v),
-                crate::compiler_bytecode::ConstantValue::String(s) => vx_vm::bytecode::SerializedConstant::string(s),
+                vx_vm::compiler_bytecode::ConstantValue::Nil => vx_vm::bytecode::SerializedConstant::nil(),
+                vx_vm::compiler_bytecode::ConstantValue::Bool(b) => vx_vm::bytecode::SerializedConstant::bool(*b),
+                vx_vm::compiler_bytecode::ConstantValue::Int(v) => vx_vm::bytecode::SerializedConstant::int(*v),
+                vx_vm::compiler_bytecode::ConstantValue::Float(v) => vx_vm::bytecode::SerializedConstant::float(*v),
+                vx_vm::compiler_bytecode::ConstantValue::String(s) => vx_vm::bytecode::SerializedConstant::string(s),
             })
             .collect();
         let target = if der.target_triple.is_empty() { "x86_64-unknown-linux-gnu" } else { &der.target_triple };
@@ -219,5 +216,6 @@ fn main() {
         }
     }
     println!("已内置 VPM 系统接口：sys_argv / os_system / file_read / file_write / file_exists");
-    println!("已启用内存安全模式：newz(堆分配) / free(显式释放) / move(所有权转移) / &(借用检查)");
+    println!("已启用内存安全模式：new(堆分配) / move(所有权转移) / &(借用检查)");
+    println!("关键字精简: 27 核心关键字, string/vector 入库, free/newz 标准化, and/or/not→&&/||/!");
 }

@@ -12,6 +12,10 @@ mod memory_safety;
 pub mod bytecode;
 pub mod type_ir;
 
+// 编译器模块：供 vxcompiler CLI、LSP、构建器、集成测试共享使用
+pub mod compiler_bytecode;
+pub mod compiler_core;
+
 // AOT 后端: Feature-gated Cranelift 原生代码生成
 // 启用: cargo build --features aot
 #[cfg(feature = "aot")]
@@ -35,3 +39,5 @@ pub use memory_safety::AllocRecord;
 pub use vxsetting::VxSettings;
 pub use builder::{VxBuilder, BuildError};
 pub use cache::BuildCache;
+pub use compiler_bytecode::{BytecodeArg, Instruction as CompilerInstruction, BytecodeFunction, ConstantValue, CompiledModule};
+pub use compiler_core::Compiler;

@@ -80,26 +80,15 @@ fn is_keyword_token(kind: &TokenType) -> bool {
             | TokenType::Return
             | TokenType::Import
             | TokenType::As
-            | TokenType::Dirs
             | TokenType::Struct
             | TokenType::Class
             | TokenType::Enum
             | TokenType::Union
-            | TokenType::Vector
             | TokenType::New
-            | TokenType::Newz
-            | TokenType::Free
             | TokenType::Move
-            | TokenType::This
-            | TokenType::Public
-            | TokenType::Private
-            | TokenType::Protected
-            | TokenType::Extends
-            | TokenType::Implements
             | TokenType::IntT
             | TokenType::FloatT
             | TokenType::DoubleT
-            | TokenType::StringT
             | TokenType::VarT
             | TokenType::BoolT
             | TokenType::VoidT
@@ -124,38 +113,33 @@ fn keyword_hover(kind: &TokenType) -> Option<Hover> {
         TokenType::Continue => ("continue", "**continue 跳过当前循环**"),
         TokenType::Func => ("func", "**func 函数声明**\n\n```vx\nfunc name(param: type) -> ret:\n    body\n```"),
         TokenType::Return => ("return", "**return 函数返回**"),
-        TokenType::Import => ("import", "**import 导入模块**\n\n```vx\nimport module dirs \"path\"\n```"),
+        TokenType::Import => ("import", "**import 导入模块**\n\n```vx\nimport module as alias\nimport(\"p1\",\"p2\") as mod\n```"),
         TokenType::As => ("as", "**as 模块别名**"),
-        TokenType::Dirs => ("dirs", "**dirs 模块搜索路径**"),
         TokenType::Struct => ("struct", "**struct 结构体**\n\n```vx\nstruct Name:\n    field: type\n```"),
-        TokenType::Class => ("class", "**class 类**\n\n```vx\nclass Name extends Base:\n    method():\n        body\n```"),
+        TokenType::Class => ("class", "**class 类** (冒号继承语法)\n\n```vx\nclass Name : Parent, Trait:\n    field: type\n```"),
         TokenType::Enum => ("enum", "**enum 枚举**\n\n```vx\nenum Name:\n    Variant = 0\n```"),
         TokenType::Union => ("union", "**union 联合类型**"),
-        TokenType::Vector => ("vector", "**vector 向量类型**"),
         TokenType::New => ("new", "**new 创建实例（栈）**"),
-        TokenType::Newz => ("newz", "**newz 堆分配（所有权）**\n\n分配堆内存，返回指针，遵循所有权规则"),
-        TokenType::Free => ("free", "**free 释放堆内存**\n\n```vx\nfree(pointer)\n```"),
         TokenType::Move => ("move", "**move 所有权转移**\n\n```vx\nx = move y  # x 取得 y 的所有权\n```"),
-        TokenType::This => ("this", "**this 当前实例引用**"),
-        TokenType::Public => ("public", "**public 公开访问修饰符**"),
-        TokenType::Private => ("private", "**private 私有访问修饰符**"),
-        TokenType::Protected => ("protected", "**protected 受保护访问修饰符**"),
-        TokenType::Extends => ("extends", "**extends 类继承**"),
-        TokenType::Implements => ("implements", "**implements 接口实现**"),
         TokenType::IntT => ("int", "**int 整数类型**\n\n64位有符号整数"),
         TokenType::FloatT => ("float", "**float 单精度浮点**"),
         TokenType::DoubleT => ("double", "**double 双精度浮点**"),
-        TokenType::StringT => ("string", "**string 字符串类型**"),
         TokenType::VarT => ("var", "**var 动态类型**"),
         TokenType::BoolT => ("bool", "**bool 布尔类型**"),
         TokenType::VoidT => ("void", "**void 空类型**"),
-        TokenType::And => ("and", "**and 逻辑与**"),
-        TokenType::Or => ("or", "**or 逻辑或**"),
-        TokenType::Not => ("not", "**not 逻辑非**"),
+        TokenType::And => ("&&", "**&& 逻辑与** (关键字 and 已裁减)"),
+        TokenType::Or => ("||", "**|| 逻辑或** (关键字 or 已裁减)"),
+        TokenType::Not => ("!", "**! 逻辑非** (关键字 not 已裁减)"),
         TokenType::In => ("in", "**in 属于（for-in 循环）**"),
         TokenType::True => ("true", "**true 布尔值真**"),
         TokenType::False => ("false", "**false 布尔值假**"),
         TokenType::Nil => ("nil", "**nil 空值**"),
+        // 以下关键字已裁减:
+        //   string → std::String (标准库)  |  vector → std::Vec<T> (标准库)
+        //   public/private/protected → #[pub]/#[priv] 注解
+        //   extends/implements → 冒号语法 class A : Parent, Trait
+        //   dirs → import("a","b") 可变参数  |  newz → mem::zeroed<T>()  |  free → mem::free(ptr)
+        //   this → 解析器语法糖 (自动替换为实例变量)
         _ => return None,
     };
     let _ = kw; // suppress unused warning

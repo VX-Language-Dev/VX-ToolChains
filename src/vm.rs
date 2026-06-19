@@ -137,13 +137,25 @@ impl VM {
             let val = match c.tag {
                 0 => Value::Nil,
                 1 => {
+                    if c.data.len() < 8 {
+                        return Err(format!(
+                            "Constant tag=Int but data too short ({} bytes, need 8)",
+                            c.data.len()
+                        ));
+                    }
                     let mut buf = [0u8; 8];
-                    buf.copy_from_slice(&c.data[..8.min(c.data.len())]);
+                    buf.copy_from_slice(&c.data[..8]);
                     Value::Int(i64::from_be_bytes(buf))
                 }
                 2 => {
+                    if c.data.len() < 8 {
+                        return Err(format!(
+                            "Constant tag=Float but data too short ({} bytes, need 8)",
+                            c.data.len()
+                        ));
+                    }
                     let mut buf = [0u8; 8];
-                    buf.copy_from_slice(&c.data[..8.min(c.data.len())]);
+                    buf.copy_from_slice(&c.data[..8]);
                     Value::Float(f64::from_be_bytes(buf))
                 }
                 3 => Value::String(String::from_utf8_lossy(&c.data).to_string()),
@@ -265,7 +277,7 @@ impl VM {
         result
     }
     pub fn current_frame(&self) -> &CallFrame {
-        &self.frames[self.frames.len() - 1]
+        self.frames.last().expect("VM invariant: no call frames on stack")
     }
     pub(crate) fn current_frame_mut(&mut self) -> &mut CallFrame {
         let idx = self.frames.len() - 1;

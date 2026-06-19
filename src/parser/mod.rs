@@ -10,6 +10,18 @@ mod stmt;
 pub use ast::{Expr, Stmt, get_src_line};
 
 use crate::token::{Token, TokenType, VXError};
+use std::sync::OnceLock;
+
+/// 返回 EOF 哨兵 Token 的静态引用，避免空 tokens 时 panic
+fn eof_sentinel() -> &'static Token {
+    static EOF: OnceLock<Token> = OnceLock::new();
+    EOF.get_or_init(|| Token {
+        kind: TokenType::EOF,
+        value: String::new(),
+        line: 0,
+        col: 0,
+    })
+}
 
 // ==================== 语法分析器 ====================
 pub struct Parser {
@@ -28,15 +40,11 @@ impl Parser {
     }
 
     fn current(&self) -> &Token {
-        self.tokens
-            .get(self.pos)
-            .unwrap_or(self.tokens.last().unwrap())
+        self.tokens.get(self.pos).unwrap_or(eof_sentinel())
     }
 
     fn peek(&self, o: usize) -> &Token {
-        self.tokens
-            .get(self.pos + o)
-            .unwrap_or(self.tokens.last().unwrap())
+        self.tokens.get(self.pos + o).unwrap_or(eof_sentinel())
     }
 
     fn advance(&mut self) -> Token {

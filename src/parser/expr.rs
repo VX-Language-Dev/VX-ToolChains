@@ -230,20 +230,17 @@ impl Parser {
                 self.advance();
                 Ok(Expr::NilLiteral(t.line, t.col))
             }
-            TokenType::This => {
-                self.advance();
-                Ok(Expr::Identifier("this".into(), t.line, t.col))
-            }
+            // this 已裁减为语法糖 → 解析器自动替换为 Identifier("this")
+            // 如果词法器遇到 "this" 标识符, 在此统一处理：
             TokenType::New => self.parse_new_expr(),
-            TokenType::Newz => self.parse_newz_expr(),
             TokenType::Move => self.parse_move_expr(),
-            TokenType::Vector => self.parse_vector_literal(),
             TokenType::In => {
                 self.advance();
                 Ok(Expr::Identifier(t.value.clone(), t.line, t.col))
             }
             TokenType::Identifier => {
                 self.advance();
+                // 编译器自动将 "this" 标识符作为当前实例变量处理
                 Ok(Expr::Identifier(t.value.clone(), t.line, t.col))
             }
             TokenType::LBracket => self.parse_array(),
@@ -292,61 +289,13 @@ impl Parser {
         Ok(Expr::NewExpr(tn, ta, a, l, c))
     }
 
-    fn parse_newz_expr(&mut self) -> Result<Expr, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let tn = self.expect(TokenType::Identifier, None)?.value;
-        let mut ta = vec![];
-        if self.current().kind == TokenType::Lt {
-            self.advance();
-            ta.push(Box::new(self.parse_type()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                ta.push(Box::new(self.parse_type()?));
-            }
-            self.expect(TokenType::Gt, None)?;
-        }
-        let mut a = vec![];
-        if self.current().kind == TokenType::LParen {
-            self.advance();
-            if !self.match_kind(&[TokenType::RParen]) {
-                a.push(Box::new(self.parse_expression()?));
-                while self.current().kind == TokenType::Comma {
-                    self.advance();
-                    a.push(Box::new(self.parse_expression()?));
-                }
-            }
-            self.expect(TokenType::RParen, None)?;
-        }
-        Ok(Expr::NewzExpr(tn, ta, a, l, c))
-    }
+    // parse_newz_expr 已裁减 → 由标准库 mem::zeroed<T>() 函数调用替代
+    // parse_vector_literal 已裁减 → 数组字面量 [1,2,3] 编译器自动转为 std::Vec<T>
 
     fn parse_move_expr(&mut self) -> Result<Expr, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
         Ok(Expr::MoveExpr(Box::new(self.parse_unary()?), l, c))
-    }
-
-    fn parse_vector_literal(&mut self) -> Result<Expr, VXError> {
-        let t = self.advance();
-        let (l, c) = (t.line, t.col);
-        let mut ta = None;
-        if self.current().kind == TokenType::Lt {
-            self.advance();
-            ta = Some(Box::new(self.parse_type()?));
-            self.expect(TokenType::Gt, None)?;
-        }
-        self.expect(TokenType::LBrace, None)?;
-        let mut e = vec![];
-        if !self.match_kind(&[TokenType::RBrace]) {
-            e.push(Box::new(self.parse_expression()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                e.push(Box::new(self.parse_expression()?));
-            }
-        }
-        self.expect(TokenType::RBrace, None)?;
-        Ok(Expr::VectorLiteral(ta, e, l, c))
     }
 
     fn parse_array(&mut self) -> Result<Expr, VXError> {
@@ -399,18 +348,19 @@ impl Parser {
 
     pub fn parse_type(&mut self) -> Result<Expr, VXError> {
         let (l, c) = (self.current().line, self.current().col);
+        // 5 原生标量类型 (int/float/double/bool/void) + var 保留为关键字类型
+        // string/vector 已裁减 → 作为标准库标识符 std::String / std::Vec<T>
         let nm = if self.match_kind(&[
             TokenType::IntT,
             TokenType::FloatT,
             TokenType::DoubleT,
-            TokenType::StringT,
             TokenType::VarT,
             TokenType::BoolT,
             TokenType::VoidT,
         ]) {
             let t = self.advance().value;
             match t.as_str() {
-                "int" | "float" | "double" | "string" | "var" | "bool" | "void" => t,
+                "int" | "float" | "double" | "var" | "bool" | "void" => t,
                 _ => {
                     return Err(VXError {
                         msg: format!("未知类型: {}", t),
@@ -420,9 +370,6 @@ impl Parser {
                     });
                 }
             }
-        } else if self.current().kind == TokenType::Vector {
-            self.advance();
-            "vector".into()
         } else if self.current().kind == TokenType::Identifier {
             self.advance().value
         } else {

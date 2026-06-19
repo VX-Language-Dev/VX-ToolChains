@@ -325,7 +325,8 @@ fn find_type_before_dot(tokens: &[Token], line: usize, col: usize) -> Option<Str
         if t.kind == TokenType::Identifier {
             return Some(t.value.clone());
         }
-        if t.kind == TokenType::This {
+        // this 关键字已裁减为语法糖 → 标识符 "this" 统一处理
+        if t.value == "this" {
             return Some("this".to_string());
         }
         // 如果遇到 ( 或 [ 等封闭符号，跳过到其对应的开放符号

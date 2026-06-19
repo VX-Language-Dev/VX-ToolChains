@@ -1195,3 +1195,154 @@ fn test_multiple_functions_with_return() {
     };
     assert_eq!(run_test(module).unwrap(), Value::Int(42));
 }
+// ======================== 整数溢出测试 ========================
+
+#[test]
+fn test_int_overflow_add_returns_error() {
+    let module = make_module(
+        "__main__",
+        vec![
+            Instruction::with_iarg(OpCode::LoadConst, 0),
+            Instruction::with_iarg(OpCode::LoadConst, 1),
+            Instruction::new(OpCode::AddInt),
+            Instruction::new(OpCode::Return),
+        ],
+        vec![Value::Int(i64::MAX), Value::Int(1)],
+    );
+    assert!(run_test(module).is_err());
+}
+
+#[test]
+fn test_int_overflow_sub_returns_error() {
+    let module = make_module(
+        "__main__",
+        vec![
+            Instruction::with_iarg(OpCode::LoadConst, 0),
+            Instruction::with_iarg(OpCode::LoadConst, 1),
+            Instruction::new(OpCode::SubInt),
+            Instruction::new(OpCode::Return),
+        ],
+        vec![Value::Int(i64::MIN), Value::Int(1)],
+    );
+    assert!(run_test(module).is_err());
+}
+
+#[test]
+fn test_int_overflow_mul_returns_error() {
+    let module = make_module(
+        "__main__",
+        vec![
+            Instruction::with_iarg(OpCode::LoadConst, 0),
+            Instruction::with_iarg(OpCode::LoadConst, 1),
+            Instruction::new(OpCode::MulInt),
+            Instruction::new(OpCode::Return),
+        ],
+        vec![Value::Int(i64::MAX), Value::Int(2)],
+    );
+    assert!(run_test(module).is_err());
+}
+
+#[test]
+fn test_binary_add_int_overflow_returns_error() {
+    let module = make_module(
+        "__main__",
+        vec![
+            Instruction::with_iarg(OpCode::LoadConst, 0),
+            Instruction::with_iarg(OpCode::LoadConst, 1),
+            Instruction::new(OpCode::BinaryAdd),
+            Instruction::new(OpCode::Return),
+        ],
+        vec![Value::Int(i64::MAX), Value::Int(1)],
+    );
+    assert!(run_test(module).is_err());
+}
+
+#[test]
+fn test_binary_sub_int_overflow_returns_error() {
+    let module = make_module(
+        "__main__",
+        vec![
+            Instruction::with_iarg(OpCode::LoadConst, 0),
+            Instruction::with_iarg(OpCode::LoadConst, 1),
+            Instruction::new(OpCode::BinarySub),
+            Instruction::new(OpCode::Return),
+        ],
+        vec![Value::Int(i64::MIN), Value::Int(1)],
+    );
+    assert!(run_test(module).is_err());
+}
+
+#[test]
+fn test_binary_mul_int_overflow_returns_error() {
+    let module = make_module(
+        "__main__",
+        vec![
+            Instruction::with_iarg(OpCode::LoadConst, 0),
+            Instruction::with_iarg(OpCode::LoadConst, 1),
+            Instruction::new(OpCode::BinaryMul),
+            Instruction::new(OpCode::Return),
+        ],
+        vec![Value::Int(i64::MAX), Value::Int(2)],
+    );
+    assert!(run_test(module).is_err());
+}
+
+// ======================== 使用后释放 (use-after-free) 检测测试 ========================
+
+#[test]
+fn test_use_after_free_detected() {
+    let mut struct_defs = HashMap::new();
+    struct_defs.insert("Obj".to_string(), vec!["x".to_string()]);
+
+    let module = Module {
+        constants: vec![Value::String("Obj".to_string()), Value::Int(42)],
+        functions: vec![Function {
+            name: "__main__".to_string(),
+            instructions: vec![
+                Instruction::with_iarg(OpCode::LoadConst, 0),
+                Instruction::with_iarg(OpCode::LoadConst, 1),
+                Instruction::with_iarg(OpCode::Newz, 1),
+                Instruction::new(OpCode::Dup),
+                Instruction::new(OpCode::Free),
+                Instruction::new(OpCode::Deref),
+                Instruction::new(OpCode::Return),
+            ],
+            constants: vec![],
+            num_params: 0,
+            has_return: true,
+            param_names: vec![],
+        }],
+        function_map: HashMap::from([("__main__".to_string(), 0)]),
+        struct_defs,
+    };
+    assert!(run_test(module).is_err());
+}
+
+#[test]
+fn test_double_free_pointer_detected() {
+    let mut struct_defs = HashMap::new();
+    struct_defs.insert("Data".to_string(), vec!["value".to_string()]);
+
+    let module = Module {
+        constants: vec![Value::String("Data".to_string()), Value::Int(100)],
+        functions: vec![Function {
+            name: "__main__".to_string(),
+            instructions: vec![
+                Instruction::with_iarg(OpCode::LoadConst, 0),
+                Instruction::with_iarg(OpCode::LoadConst, 1),
+                Instruction::with_iarg(OpCode::Newz, 1),
+                Instruction::new(OpCode::Dup),
+                Instruction::new(OpCode::Free),
+                Instruction::new(OpCode::Free),
+                Instruction::new(OpCode::Return),
+            ],
+            constants: vec![],
+            num_params: 0,
+            has_return: true,
+            param_names: vec![],
+        }],
+        function_map: HashMap::from([("__main__".to_string(), 0)]),
+        struct_defs,
+    };
+    assert!(run_test(module).is_err());
+}

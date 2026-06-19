@@ -1,5 +1,7 @@
 // ==================== 编译器字节码格式 ====================
 
+use crate::{OpCode, Instruction as VmInstruction};
+
 #[derive(Debug, Clone)]
 pub enum BytecodeArg {
     None,
@@ -30,15 +32,15 @@ impl BytecodeArg {
 
 #[derive(Debug, Clone)]
 pub struct Instruction {
-    pub op: vx_vm::OpCode,
+    pub op: OpCode,
     pub arg: BytecodeArg,
 }
 
 impl Instruction {
     #[allow(dead_code)]
-    pub fn to_vm_instruction(&self) -> vx_vm::Instruction {
+    pub fn to_vm_instruction(&self) -> VmInstruction {
         let (iarg, sarg) = self.arg.to_vm_args();
-        let mut inst = vx_vm::Instruction::new(self.op);
+        let mut inst = VmInstruction::new(self.op);
         inst.iarg = iarg;
         inst.sarg = sarg.map(|s| s.into_boxed_str());
         inst

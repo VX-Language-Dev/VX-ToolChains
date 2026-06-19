@@ -4,16 +4,396 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 
-use vx_vm::parser::{Expr, Stmt};
-use vx_vm::OpCode;
-use vx_vm::type_ir::{self, Type, TypeModule, TypeFunction, TypedInstruction, FuncId};
+use crate::parser::{Expr, Stmt};
+use crate::OpCode;
+use crate::type_ir::{self, Type, TypeModule, TypeFunction, TypedInstruction, FuncId, StructLayoutId};
 use crate::compiler_bytecode::{BytecodeArg, Instruction, BytecodeFunction, ConstantValue, CompiledModule};
-use vx_vm::bytecode;
+use crate::bytecode;
 
 pub struct LoopInfo {
     pub start: usize,
     pub break_jumps: Vec<usize>,
     pub continue_jumps: Vec<usize>,
+}
+
+/// TypeIR 栈模拟器：在生成 TypeIR 时追踪字节码栈，
+/// 将栈位置映射为正确的 VarId（TypeIR 中的指令索引）。
+struct TypeIRSimulator {
+    body: Vec<TypedInstruction>,
+    slot_to_var: HashMap<u32, u32>,
+    stack: Vec<u32>,
+}
+
+impl TypeIRSimulator {
+    fn new() -> Self {
+        Self {
+            body: Vec::new(),
+            slot_to_var: HashMap::new(),
+            stack: Vec::new(),
+        }
+    }
+
+    /// 发射一条 TypeIR 指令，返回其在 body 中的索引（即 VarId）
+    fn emit(&mut self, inst: TypedInstruction) -> u32 {
+        self.body.push(inst);
+        (self.body.len() - 1) as u32
+    }
+
+    fn push_val(&mut self, var_id: u32) {
+        self.stack.push(var_id);
+    }
+
+    fn pop_val(&mut self) -> u32 {
+        self.stack.pop().unwrap_or(0)
+    }
+
+    fn _peek_val(&self) -> Option<u32> {
+        self.stack.last().copied()
+    }
+
+    fn get_slot_var(&mut self, slot: u32) -> u32 {
+        let next = self.body.len() as u32;
+        *self.slot_to_var.entry(slot).or_insert(next)
+    }
+
+    fn set_slot_var(&mut self, slot: u32, var_id: u32) {
+        self.slot_to_var.insert(slot, var_id);
+    }
+
+    fn translate_inst(&mut self, inst: &Instruction, constants: &[ConstantValue]) {
+        use TypedInstruction::*;
+        match inst.op {
+            OpCode::LoadConst => {
+                let cv = match inst.arg {
+                    BytecodeArg::Int(idx) => constants.get(idx as usize),
+                    _ => None,
+                };
+                let typed = match cv {
+                    Some(ConstantValue::Int(v)) => ConstInt(*v),
+                    Some(ConstantValue::Float(v)) => ConstFloat(*v),
+                    Some(ConstantValue::Bool(v)) => ConstBool(*v),
+                    Some(ConstantValue::String(s)) => ConstString(s.clone()),
+                    _ => ConstNil,
+                };
+                let vid = self.emit(typed);
+                self.push_val(vid);
+            }
+            OpCode::LoadNil => {
+                let vid = self.emit(ConstNil);
+                self.push_val(vid);
+            }
+            OpCode::LoadTrue => {
+                let vid = self.emit(ConstBool(true));
+                self.push_val(vid);
+            }
+            OpCode::LoadFalse => {
+                let vid = self.emit(ConstBool(false));
+                self.push_val(vid);
+            }
+            OpCode::LoadVar => {
+                let slot = match inst.arg { BytecodeArg::Int(s) => s as u32, _ => 0 };
+                let vid = self.get_slot_var(slot);
+                self.emit(LoadVar(vid));
+                self.push_val(vid);
+            }
+            OpCode::StoreVar | OpCode::DefineVar => {
+                let slot = match inst.arg { BytecodeArg::Int(s) => s as u32, _ => 0 };
+                let vid = self.pop_val();
+                self.set_slot_var(slot, vid);
+                self.emit(StoreVar(vid));
+            }
+            OpCode::Dup => {
+                if let Some(&v) = self.stack.last() {
+                    self.emit(Dup);
+                    self.push_val(v);
+                } else {
+                    self.emit(Dup);
+                }
+            }
+            OpCode::Pop => {
+                self.pop_val();
+                self.emit(Pop);
+            }
+            OpCode::Jump => {
+                let t = match inst.arg { BytecodeArg::Int(v) => v as u32, _ => 0 };
+                self.emit(Jump(t));
+            }
+            OpCode::JumpIfFalse => {
+                let vid = self.pop_val();
+                let t = match inst.arg { BytecodeArg::Int(v) => v as u32, _ => 0 };
+                self.emit(JumpIfFalse(vid, t));
+            }
+            OpCode::JumpIfTrue => {
+                let vid = self.pop_val();
+                let t = match inst.arg { BytecodeArg::Int(v) => v as u32, _ => 0 };
+                self.emit(JumpIfTrue(vid, t));
+            }
+            OpCode::AddInt | OpCode::BinaryAdd => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Add(a, b));
+                self.push_val(vid);
+            }
+            OpCode::SubInt | OpCode::BinarySub => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Sub(a, b));
+                self.push_val(vid);
+            }
+            OpCode::MulInt | OpCode::BinaryMul => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Mul(a, b));
+                self.push_val(vid);
+            }
+            OpCode::DivInt | OpCode::BinaryDiv => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Div(a, b));
+                self.push_val(vid);
+            }
+            OpCode::ModInt | OpCode::BinaryMod => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Mod(a, b));
+                self.push_val(vid);
+            }
+            OpCode::AddFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Add(a, b));
+                self.push_val(vid);
+            }
+            OpCode::SubFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Sub(a, b));
+                self.push_val(vid);
+            }
+            OpCode::MulFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Mul(a, b));
+                self.push_val(vid);
+            }
+            OpCode::DivFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Div(a, b));
+                self.push_val(vid);
+            }
+            OpCode::EqInt | OpCode::BinaryEq => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Eq(a, b));
+                self.push_val(vid);
+            }
+            OpCode::BinaryNe => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Ne(a, b));
+                self.push_val(vid);
+            }
+            OpCode::LtInt | OpCode::BinaryLt => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Lt(a, b));
+                self.push_val(vid);
+            }
+            OpCode::GtInt | OpCode::BinaryGt => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Gt(a, b));
+                self.push_val(vid);
+            }
+            OpCode::LeInt | OpCode::BinaryLe => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Le(a, b));
+                self.push_val(vid);
+            }
+            OpCode::GeInt | OpCode::BinaryGe => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Ge(a, b));
+                self.push_val(vid);
+            }
+            OpCode::EqFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Eq(a, b));
+                self.push_val(vid);
+            }
+            OpCode::LtFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Lt(a, b));
+                self.push_val(vid);
+            }
+            OpCode::GtFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Gt(a, b));
+                self.push_val(vid);
+            }
+            OpCode::LeFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Le(a, b));
+                self.push_val(vid);
+            }
+            OpCode::GeFloat => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(F64Ge(a, b));
+                self.push_val(vid);
+            }
+            OpCode::NegInt => {
+                let a = self.pop_val();
+                let vid = self.emit(I32Neg(a));
+                self.push_val(vid);
+            }
+            OpCode::NegFloat => {
+                let a = self.pop_val();
+                let vid = self.emit(F64Neg(a));
+                self.push_val(vid);
+            }
+            OpCode::Not | OpCode::UnaryNot => {
+                let a = self.pop_val();
+                let vid = self.emit(BoolNot(a));
+                self.push_val(vid);
+            }
+            OpCode::And => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Add(a, b)); // 占位
+                self.push_val(vid);
+            }
+            OpCode::Or => {
+                let b = self.pop_val();
+                let a = self.pop_val();
+                let vid = self.emit(I32Add(a, b)); // 占位
+                self.push_val(vid);
+            }
+            OpCode::MakeArray => {
+                let count = match inst.arg { BytecodeArg::Int(n) => n as usize, _ => 0 };
+                let mut elems = Vec::with_capacity(count);
+                for _ in 0..count { elems.push(self.pop_val()); }
+                let vid = self.emit(MakeArray(0, elems));
+                self.push_val(vid);
+            }
+            OpCode::IndexGet => {
+                let idx = self.pop_val();
+                let obj = self.pop_val();
+                let vid = self.emit(IndexGet(obj, idx));
+                self.push_val(vid);
+            }
+            OpCode::IndexSet => {
+                let val = self.pop_val();
+                let idx = self.pop_val();
+                let obj = self.pop_val();
+                self.emit(IndexSet(obj, idx, val));
+                self.push_val(obj);
+            }
+            OpCode::MakeMap => {
+                let count = match inst.arg { BytecodeArg::Int(n) => n as usize, _ => 0 };
+                for _ in 0..count * 2 { self.pop_val(); }
+                let vid = self.emit(MakeMap(vec![]));
+                self.push_val(vid);
+            }
+            OpCode::PropertyGet | OpCode::PointerMember => {
+                let obj = self.pop_val();
+                let vid = self.emit(GetField(obj, 0));
+                self.push_val(vid);
+            }
+            OpCode::PropertySet => {
+                let val = self.pop_val();
+                let obj = self.pop_val();
+                self.emit(SetField(obj, 0, val));
+                self.push_val(obj);
+            }
+            OpCode::OwnershipMove => {
+                if let Some(&v) = self.stack.last() {
+                    self.emit(OwnershipMove(v));
+                } else {
+                    self.emit(OwnershipMove(0));
+                }
+            }
+            OpCode::BorrowCheck => {
+                if let Some(&v) = self.stack.last() {
+                    self.emit(Borrow(v));
+                } else {
+                    self.emit(Borrow(0));
+                }
+            }
+            OpCode::AliveCheck => {
+                if let Some(&v) = self.stack.last() {
+                    self.emit(AliveCheck(v));
+                }
+            }
+            OpCode::Free => {
+                let ptr = self.pop_val();
+                self.emit(Free(ptr));
+            }
+            OpCode::Call => {
+                let num_args = match inst.arg { BytecodeArg::Int(n) => n as usize, _ => 0 };
+                let mut args = Vec::with_capacity(num_args);
+                for _ in 0..num_args { args.push(self.pop_val()); }
+                let _callee = self.pop_val();
+                let vid = self.emit(Call(0, args));
+                self.push_val(vid);
+            }
+            OpCode::Return => {
+                let ret = self.pop_val();
+                self.emit(Return(Some(ret)));
+            }
+            OpCode::AddressOf => {
+                if let Some(&v) = self.stack.last() {
+                    self.push_val(v);
+                }
+            }
+            OpCode::New | OpCode::Newz | OpCode::MakeStruct | OpCode::MakeClass => {
+                // 弹出参数后产生一个新实例 VarId
+                let count = match inst.arg { BytecodeArg::Int(n) => n as usize, _ => 0 };
+                for _ in 0..count { self.pop_val(); }
+                // New/Newz 也会弹出类名字符串
+                if matches!(inst.op, OpCode::New | OpCode::Newz) {
+                    self.pop_val();
+                }
+                let vid = self.emit(MakeStruct(StructLayoutId(0), vec![]));
+                self.push_val(vid);
+            }
+            // 系统调用：忽略 TypeIR 映射（无类型敏感信息）
+            OpCode::SysArgv => {
+                let vid = self.emit(MakeArray(0, vec![]));
+                self.push_val(vid);
+            }
+            OpCode::System => {
+                self.pop_val();
+                let vid = self.emit(ConstInt(0));
+                self.push_val(vid);
+            }
+            OpCode::FileRead => {
+                self.pop_val();
+                let vid = self.emit(ConstString(String::new()));
+                self.push_val(vid);
+            }
+            OpCode::FileWrite => {
+                self.pop_val();
+                self.pop_val();
+                let vid = self.emit(ConstBool(false));
+                self.push_val(vid);
+            }
+            OpCode::FileExists => {
+                self.pop_val();
+                let vid = self.emit(ConstBool(false));
+                self.push_val(vid);
+            }
+            // 忽略 OpCode（无栈效果或仅控制流）
+            OpCode::ScopeDrop | OpCode::Halt | OpCode::Import | OpCode::BinaryPow => {}
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,7 +406,7 @@ pub enum KnownType {
 }
 
 pub struct Compiler {
-    settings: vx_vm::VxSettings,
+    settings: crate::VxSettings,
     constants: Vec<ConstantValue>,
     instructions: Vec<Instruction>,
     functions: Vec<BytecodeFunction>,
@@ -50,7 +430,7 @@ pub struct Compiler {
 impl Compiler {
     /// 默认构造: 优化等级 0, 不发出死代码诊断。
     /// 保持向后兼容 — 所有现有 `Compiler::new(settings)` 调用不受影响。
-    pub fn new(settings: vx_vm::VxSettings) -> Self {
+    pub fn new(settings: crate::VxSettings) -> Self {
         Self {
             settings,
             constants: Vec::new(),
@@ -351,14 +731,9 @@ impl Compiler {
                 }
                 self.emit(OpCode::Call, BytecodeArg::Int(args.len() as i32));
             }
-            Expr::NewzExpr(type_name, _, args, _, _) => {
-                let idx = self.add_const(ConstantValue::String(type_name.clone())) as i32;
-                self.emit(OpCode::LoadConst, BytecodeArg::Int(idx));
-                for a in args {
-                    self.compile_expr(a)?;
-                }
-                self.emit(OpCode::Newz, BytecodeArg::Int(args.len() as i32));
-            }
+            // NewzExpr 已裁减 → 由 NewExpr + zero:true 扩展或 std::mem::zeroed<T>() 替代
+            // 编译器将 newz Foo(args) 展开为 new (Foo) { args..., zero: true } 或调用 zeroed 内建
+            // 运行时不再存在 NewzExpr AST 变体, 此处 match 由穷尽性保证不可达
             Expr::MoveExpr(target, _, _) => {
                 self.compile_expr(target)?;
                 self.emit(OpCode::OwnershipMove, BytecodeArg::None);
@@ -386,7 +761,6 @@ impl Compiler {
             | Expr::UnionDecl(..)
             | Expr::FuncDecl(..)
             | Expr::ImportStmt(..)
-            | Expr::VectorLiteral(..)
             | Expr::TypeExpr(..)
             | Expr::ExprStmt(..)
             | Expr::VarDecl(..)
@@ -396,8 +770,11 @@ impl Compiler {
             | Expr::ForStmt(..)
             | Expr::BreakStmt(..)
             | Expr::ContinueStmt(..)
-            | Expr::ReturnStmt(..)
-            | Expr::FreeStmt(..) => {}
+            | Expr::ReturnStmt(..) => {}
+            // 以下变体已从其 AST/解析层裁减:
+            //   NewzExpr → mem::zeroed<T>() 标准库调用
+            //   FreeStmt → mem::free(ptr) 标准库调用
+            //   VectorLiteral → 数组字面量自动转为 std::Vec<T>
         }
         Ok(())
     }
@@ -683,10 +1060,7 @@ impl Compiler {
                 }
                 self.emit(OpCode::Return, BytecodeArg::None);
             }
-            Expr::FreeStmt(target, _, _) => {
-                self.compile_expr(target)?;
-                self.emit(OpCode::Free, BytecodeArg::None);
-            }
+            // FreeStmt 已裁减 → mem::free(ptr) 标准库函数调用, 由 CallExpr 分支处理
             // 不可达: parse_statement 不会产生其他 Expr 变体作为顶层语句
             _ => {}
         }
@@ -790,11 +1164,21 @@ impl Compiler {
                 }
                 Expr::EnumDecl(_, _, _, _) => {}
                 Expr::UnionDecl(_, _, _, _) => {}
-                Expr::ImportStmt(name, alias, _dirs, _, _) => {
+                Expr::ImportStmt(name, alias, dirs, _, _) => {
                     let lib_path = self.settings.library_path(name);
+                    // dirs 现在为 Vec<String> 多路径列表, 合并为逗号分隔的 Option<String>
+                    let combined_dirs = if dirs.is_empty() {
+                        lib_path.clone()
+                    } else {
+                        let prefix = lib_path.clone().unwrap_or_default();
+                        let paths: Vec<String> = dirs.iter()
+                            .map(|d| format!("{}/{}", prefix, d))
+                            .collect();
+                        Some(paths.join(","))
+                    };
                     self.emit(
                         OpCode::Import,
-                        BytecodeArg::ImportTuple(name.clone(), alias.clone(), lib_path),
+                        BytecodeArg::ImportTuple(name.clone(), alias.clone(), combined_dirs),
                     );
                 }
                 Expr::FuncDecl(fname, params, _, body, _, _) => {
@@ -882,11 +1266,11 @@ impl Compiler {
                 let ptype = self.get_var_type(param_name);
                 tf.params.push((param_name.clone(), self.known_to_type(ptype)));
             }
+            let mut sim = TypeIRSimulator::new();
             for inst in &func.instructions {
-                let typed = self.bytecode_to_typed(inst);
-                tf.body.push(typed);
+                sim.translate_inst(inst, &self.constants);
             }
-            // Infer local types from instructions
+            tf.body = sim.body;
             tf.var_count = tf.body.len() as u32;
             type_mod.functions.push(tf);
             type_mod.function_map.insert(i as FuncId, func.name.clone());
@@ -904,69 +1288,6 @@ impl Compiler {
             KnownType::Bool => Type::Bool,
             KnownType::String => Type::String,
             KnownType::Unknown => Type::Unknown,
-        }
-    }
-
-    fn bytecode_to_typed(&self, inst: &Instruction) -> TypedInstruction {
-        use TypedInstruction::*;
-        match inst.op {
-            OpCode::LoadConst => match inst.arg {
-                BytecodeArg::Int(idx) => {
-                    if let Some(cv) = self.constants.get(idx as usize) {
-                        match cv {
-                            ConstantValue::Int(v) => ConstInt(*v),
-                            ConstantValue::Float(v) => ConstFloat(*v),
-                            ConstantValue::Bool(v) => ConstBool(*v),
-                            ConstantValue::String(s) => ConstString(s.clone()),
-                            ConstantValue::Nil => ConstNil,
-                        }
-                    } else { ConstNil }
-                }
-                _ => ConstNil,
-            },
-            OpCode::LoadNil => ConstNil,
-            OpCode::LoadTrue => ConstBool(true),
-            OpCode::LoadFalse => ConstBool(false),
-            OpCode::LoadVar => LoadVar(0),
-            OpCode::StoreVar | OpCode::DefineVar => StoreVar(0),
-            OpCode::Call => Call(0, vec![]),
-            OpCode::Return => Return(None),
-            OpCode::Jump => match inst.arg { BytecodeArg::Int(t) => Jump(t as u32), _ => Jump(0) },
-            OpCode::JumpIfFalse => match inst.arg { BytecodeArg::Int(t) => JumpIfFalse(0, t as u32), _ => JumpIfFalse(0, 0) },
-            OpCode::JumpIfTrue => match inst.arg { BytecodeArg::Int(t) => JumpIfTrue(0, t as u32), _ => JumpIfTrue(0, 0) },
-            OpCode::AddInt | OpCode::BinaryAdd => I32Add(0, 0),
-            OpCode::SubInt | OpCode::BinarySub => I32Sub(0, 0),
-            OpCode::MulInt | OpCode::BinaryMul => I32Mul(0, 0),
-            OpCode::DivInt | OpCode::BinaryDiv => I32Div(0, 0),
-            OpCode::ModInt | OpCode::BinaryMod => I32Mod(0, 0),
-            OpCode::AddFloat => F64Add(0, 0),
-            OpCode::SubFloat => F64Sub(0, 0),
-            OpCode::MulFloat => F64Mul(0, 0),
-            OpCode::DivFloat => F64Div(0, 0),
-            OpCode::EqInt | OpCode::BinaryEq => I32Eq(0, 0),
-            OpCode::BinaryNe => I32Ne(0, 0),
-            OpCode::LtInt | OpCode::BinaryLt => I32Lt(0, 0),
-            OpCode::GtInt | OpCode::BinaryGt => I32Gt(0, 0),
-            OpCode::LeInt | OpCode::BinaryLe => I32Le(0, 0),
-            OpCode::GeInt | OpCode::BinaryGe => I32Ge(0, 0),
-            OpCode::EqFloat => F64Eq(0, 0),
-            OpCode::LtFloat => F64Lt(0, 0),
-            OpCode::GtFloat => F64Gt(0, 0),
-            OpCode::LeFloat => F64Le(0, 0),
-            OpCode::GeFloat => F64Ge(0, 0),
-            OpCode::NegInt => I32Neg(0),
-            OpCode::NegFloat => F64Neg(0),
-            OpCode::Not | OpCode::UnaryNot => BoolNot(0),
-            OpCode::MakeArray => MakeArray(0, vec![]),
-            OpCode::IndexGet => IndexGet(0, 0),
-            OpCode::IndexSet => IndexSet(0, 0, 0),
-            OpCode::Dup => Dup,
-            OpCode::Pop => Pop,
-            OpCode::OwnershipMove => OwnershipMove(0),
-            OpCode::BorrowCheck => Borrow(0),
-            OpCode::AliveCheck => AliveCheck(0),
-            OpCode::Free => Free(0),
-            _ => ConstNil,
         }
     }
 

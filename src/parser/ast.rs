@@ -46,24 +46,26 @@ pub enum Expr {
     ReturnStmt(Option<Box<Expr>>, usize, usize),
     CallExpr(Box<Expr>, Vec<Box<Expr>>, usize, usize),
     StructDecl(String, Vec<(String, String)>, Vec<Box<Expr>>, usize, usize),
+    // 冒号继承语法: class Dog : Animal, Canine { ... }
     ClassDecl(
         String,
         Vec<(String, String, String)>,
         Vec<Box<Expr>>,
-        Option<String>,
-        Vec<String>,
+        Option<String>,       // 父类 (extends)
+        Vec<String>,          // 接口列表 (implements)
         usize,
         usize,
     ),
     EnumDecl(String, Vec<(String, i64)>, usize, usize),
     UnionDecl(String, Vec<(String, String)>, usize, usize),
-    VectorLiteral(Option<Box<Expr>>, Vec<Box<Expr>>, usize, usize),
+    // VectorLiteral 已裁减 → 数组字面量自动转为 std::Vec<T>
     NewExpr(String, Vec<Box<Expr>>, Vec<Box<Expr>>, usize, usize),
-    NewzExpr(String, Vec<Box<Expr>>, Vec<Box<Expr>>, usize, usize),
-    FreeStmt(Box<Expr>, usize, usize),
+    // NewzExpr 已裁减 → 编译期展开为 NewExpr + zero 标记
+    // FreeStmt 已裁减 → mem::free(ptr) 标准库函数调用
     MoveExpr(Box<Expr>, usize, usize),
     ExprStmt(Box<Expr>, usize, usize),
-    ImportStmt(String, Option<String>, Option<String>, usize, usize),
+    // dirs 已裁减 → ImportStmt 支持可变路径列表
+    ImportStmt(String, Option<String>, Vec<String>, usize, usize),
 }
 
 pub type Stmt = Expr;
@@ -119,10 +121,7 @@ pub fn pos(e: &Expr) -> (usize, usize) {
         Expr::ClassDecl(_, _, _, _, _, l, c) => (*l, *c),
         Expr::EnumDecl(_, _, l, c) => (*l, *c),
         Expr::UnionDecl(_, _, l, c) => (*l, *c),
-        Expr::VectorLiteral(_, _, l, c) => (*l, *c),
         Expr::NewExpr(_, _, _, l, c) => (*l, *c),
-        Expr::NewzExpr(_, _, _, l, c) => (*l, *c),
-        Expr::FreeStmt(_, l, c) => (*l, *c),
         Expr::MoveExpr(_, l, c) => (*l, *c),
         Expr::ExprStmt(_, l, c) => (*l, *c),
         Expr::ImportStmt(_, _, _, l, c) => (*l, *c),
