@@ -1,0 +1,81 @@
+name: 🚀 Release / 发布
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'release-*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 安装 Rust 工具链
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+
+      # ── 构建 ────────────────────────────────────
+      - name: 📦 cargo build — Release（默认）
+        run: cargo build --release
+
+      - name: 📦 cargo build — Release（AOT）
+        run: cargo build --release --features aot
+
+      # ── 打包 ────────────────────────────────────
+      - name: 📦 打包二进制 + 标准库 + 文档
+        run: |
+          TAG="${GITHUB_REF_NAME:-$GITEE_REF_NAME}"
+          VERSION="${TAG#v}"
+          ARCH="linux-x86_64"
+          PKG_DIR="vx-toolchains-${VERSION}"
+          PKG_FILE="VX-ToolChains-${VERSION}-${ARCH}.tar.gz"
+
+          mkdir -p "dist/${PKG_DIR}"
+          for bin in vxcompiler vxlinker vx_runtime vpm vx-lsp vxdbg; do
+            cp "target/release/$bin" "dist/${PKG_DIR}/"
+          done
+
+          cp -r std "dist/${PKG_DIR}/stdlib"
+          cp README.md CHANGELOG.md LICENSE "dist/${PKG_DIR}/"
+
+          cd dist
+          tar czf "${PKG_FILE}" "${PKG_DIR}/"
+          echo "✅ 打包完成: ${PKG_FILE}  ($(du -sh "${PKG_FILE}" | cut -f1))"
+
+      # ── 通过 Gitee API 创建 Release ──────────────
+      - name: 🚀 创建 Release（Gitee API）
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG_NAME:   ${{ github.ref_name }}
+        run: |
+          # 获取仓库完整路径（如 vx-language-dev/vx-tool-chains）
+          GITEE_REPO="${GITHUB_REPOSITORY:-$GITEE_REPOSITORY}"
+
+          # 创建 release
+          curl -s -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases" \
+            -H "Content-Type: application/json" \
+            -d "$(cat <<EOF
+          {
+            "access_token": "${GITEE_TOKEN}",
+            "tag_name": "${TAG_NAME}",
+            "name": "VX-ToolChains ${TAG_NAME}",
+            "body": "$(sed -n "/^## /{p; :a; n; /^## /q; p; ba}" CHANGELOG.md | sed 's/"/\\"/g')",
+            "prerelease": false
+          }
+          EOF
+          )" | jq -r '.id // "创建失败: \(.message // .)"'
+
+          # 上传 artifacts（TODO: Gitee API 不支持直接上传附件到 Release，
+          # 需要额外仓库存储或使用 releases 的 attachments）

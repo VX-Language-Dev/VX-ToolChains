@@ -118,7 +118,12 @@ fn main() {
         process::exit(1);
     }
 
-    let settings = vx_vm::VxSettings::from_file(vxsetting_path.to_str().unwrap())
+    let settings = vx_vm::VxSettings::from_file(
+        vxsetting_path.to_str().unwrap_or_else(|| {
+            eprintln!("VX Error: 配置文件路径包含非 UTF-8 字符");
+            process::exit(1);
+        }),
+    )
         .unwrap_or_else(|e| {
             eprintln!("VX Error: 解析 vxsetting.toml 失败: {}", e);
             process::exit(1);
@@ -202,8 +207,14 @@ fn main() {
             .collect();
         let target = if der.target_triple.is_empty() { "x86_64-unknown-linux-gnu" } else { &der.target_triple };
         let mut bytecode_buf = Vec::new();
-        vx_vm::bytecode::write_vxobj(&mut bytecode_buf, &constants, &[], &HashMap::new()).unwrap();
-        vx_vm::bytecode::write_vxobj_v3(&mut buf, target, &der.type_ir_data, &bytecode_buf, &[], &[], &[]).unwrap();
+        if let Err(e) = vx_vm::bytecode::write_vxobj(&mut bytecode_buf, &constants, &[], &HashMap::new()) {
+            eprintln!("写入字节码失败: {}", e);
+            process::exit(1);
+        }
+        if let Err(e) = vx_vm::bytecode::write_vxobj_v3(&mut buf, target, &der.type_ir_data, &bytecode_buf, &[], &[], &[]) {
+            eprintln!("写入 VXOBJ v3 失败: {}", e);
+            process::exit(1);
+        }
         vx_vm::bytecode::dump_section_stats(&buf);
         process::exit(0);
     }

@@ -44,8 +44,8 @@ impl VM {
                 instance,
             },
         );
-        if !self.frames.is_empty() {
-            self.current_frame_mut().owned_allocs.push(id);
+        if let Some(frame) = self.current_frame_mut() {
+            frame.owned_allocs.push(id);
         }
         id
     }
@@ -152,9 +152,8 @@ impl VM {
             ));
         }
         self.alloc_registry.remove(&alloc_id);
-        if !self.frames.is_empty() {
-            let owned = &mut self.current_frame_mut().owned_allocs;
-            owned.retain(|&id| id != alloc_id);
+        if let Some(frame) = self.current_frame_mut() {
+            frame.owned_allocs.retain(|&id| id != alloc_id);
         }
         Ok(())
     }

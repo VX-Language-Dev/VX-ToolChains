@@ -1,0 +1,117 @@
+name: 🔧 CI / 测试
+on:
+  push:
+    branches:
+      - main
+      - Beta
+  pull_request:
+    branches:
+      - main
+      - Beta
+
+jobs:
+  # ── 代码风格 & 静态分析 ──────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 安装 Rust 工具链
+        run: |
+          rustup set profile minimal
+          rustup install stable
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: vx-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            vx-${{ runner.os }}-cargo-
+
+      - name: 🔍 cargo fmt — 格式检查
+        run: cargo fmt -- --check
+
+      - name: 🔍 cargo clippy — 零警告检查
+        run: cargo clippy -- -D warnings
+
+  # ── 单元测试（默认 + AOT） ──────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 安装 Rust 工具链
+        run: |
+          rustup set profile minimal
+          rustup install stable
+          rustup default stable
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: vx-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            vx-${{ runner.os }}-cargo-
+
+      - name: 🧪 cargo test — 基础
+        run: cargo test --lib
+
+      - name: 🧪 cargo test — 启用 AOT
+        run: cargo test --features aot
+
+  # ── Release 构建验证（不发布） ──────────────────
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 安装 Rust 工具链
+        run: |
+          rustup set profile minimal
+          rustup install stable
+          rustup default stable
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: vx-${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            vx-${{ runner.os }}-cargo-release-
+
+      - name: 📦 cargo build — Release
+        run: cargo build --release
+
+      - name: 📦 cargo build — Release + AOT
+        run: cargo build --release --features aot
+
+      - name: ✅ 验证 6 个二进制产物
+        run: |
+          errors=0
+          for bin in vxcompiler vxlinker vx_runtime vpm vx-lsp vxdbg; do
+            path="target/release/${bin}"
+            if [ -f "$path" ]; then
+              size=$(du -h "$path" | cut -f1)
+              echo "  ✅ ${bin}  (${size})"
+            else
+              echo "  ❌ ${bin}  缺失!"
+              errors=$((errors + 1))
+            fi
+          done
+          [ "$errors" -eq 0 ] || exit 1

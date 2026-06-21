@@ -654,3 +654,121 @@ impl Lexer {
         Ok(self.tokens)
     }
 }
+
+// ==================== Tests ====================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 辅助函数: 取出 token 流中的 kind 序列（忽略 Newline 和 EOF）
+    fn kinds(src: &str) -> Vec<TokenType> {
+        let toks = Lexer::new(src).tokenize().expect("tokenize failed");
+        toks.into_iter()
+            .filter(|t| !matches!(t.kind, TokenType::Newline | TokenType::EOF))
+            .map(|t| t.kind)
+            .collect()
+    }
+
+    #[test]
+    fn test_int_and_float() {
+        assert_eq!(kinds("42 3.14"), vec![TokenType::Int, TokenType::Float]);
+    }
+
+    #[test]
+    fn test_scientific_notation() {
+        // 1.5e3 2E-4 应解析为两个 Float
+        assert_eq!(kinds("1.5e3 2E-4"), vec![TokenType::Float, TokenType::Float]);
+    }
+
+    #[test]
+    fn test_keywords_recognized() {
+        let k = kinds("if else while func return true false nil");
+        assert!(k.contains(&TokenType::If));
+        assert!(k.contains(&TokenType::While));
+        assert!(k.contains(&TokenType::Func));
+        assert!(k.contains(&TokenType::Return));
+        assert!(k.contains(&TokenType::True));
+        assert!(k.contains(&TokenType::False));
+        assert!(k.contains(&TokenType::Nil));
+    }
+
+    #[test]
+    fn test_removed_keyword_string_is_identifier() {
+        // string 关键字已移除为标准库类型，应识别为 Identifier
+        let toks = Lexer::new("string").tokenize().unwrap();
+        // 第一个非 Newline/EOF token 应为 Identifier
+        let first = toks.iter().find(|t| !matches!(t.kind, TokenType::Newline | TokenType::EOF)).unwrap();
+        assert_eq!(first.kind, TokenType::Identifier);
+        assert_eq!(first.value, "string");
+    }
+
+    #[test]
+    fn test_composite_operators() {
+        // 验证所有复合运算符被正确识别
+        let k = kinds("== != <= >= += -= *= /= %= ** && || ! -> &");
+        assert!(k.contains(&TokenType::Eq));
+        assert!(k.contains(&TokenType::Ne));
+        assert!(k.contains(&TokenType::Le));
+        assert!(k.contains(&TokenType::Ge));
+        assert!(k.contains(&TokenType::PlusAssign));
+        assert!(k.contains(&TokenType::MinusAssign));
+        assert!(k.contains(&TokenType::And));
+        assert!(k.contains(&TokenType::Or));
+        assert!(k.contains(&TokenType::Arrow));
+        assert!(k.contains(&TokenType::Ampersand));
+    }
+
+    #[test]
+    fn test_double_quoted_string_with_escape() {
+        let toks = Lexer::new("\"hello\\nworld\"").tokenize().unwrap();
+        let s = toks.iter().find(|t| t.kind == TokenType::String).unwrap();
+        assert_eq!(s.value, "hello\nworld");
+    }
+
+    #[test]
+    fn test_single_quoted_string() {
+        let toks = Lexer::new("'hi'").tokenize().unwrap();
+        let s = toks.iter().find(|t| t.kind == TokenType::String).unwrap();
+        assert_eq!(s.value, "hi");
+    }
+
+    #[test]
+    fn test_unclosed_string_errors() {
+        assert!(Lexer::new("\"unclosed").tokenize().is_err());
+    }
+
+    #[test]
+    fn test_cjk_identifier() {
+        // 中文标识符应被识别
+        let toks = Lexer::new("变量 = 42").tokenize().unwrap();
+        let ident = toks.iter().find(|t| t.kind == TokenType::Identifier).unwrap();
+        assert_eq!(ident.value, "变量");
+    }
+
+    #[test]
+    fn test_comment_skipped() {
+        let k = kinds("# this is comment\n42");
+        assert_eq!(k, vec![TokenType::Int]);
+    }
+
+    #[test]
+    fn test_indent_dedent_emitted() {
+        let src = "func f()\n    return 1\n";
+        let toks = Lexer::new(src).tokenize().unwrap();
+        let k: Vec<TokenType> = toks.iter().map(|t| t.kind).collect();
+        assert!(k.contains(&TokenType::Indent), "应发出 Indent");
+        assert!(k.contains(&TokenType::Dedent), "应发出 Dedent");
+        assert!(k.contains(&TokenType::Func));
+        assert!(k.contains(&TokenType::Return));
+    }
+
+    #[test]
+    fn test_integer_with_underscores() {
+        // 1_000_000 形式（如果实现支持）
+        let toks = Lexer::new("1_000").tokenize().unwrap();
+        let n = toks.iter().find(|t| t.kind == TokenType::Int).unwrap();
+        // 允许保留下划线或解析为 1000，只要不报错即可
+        assert!(!n.value.is_empty());
+    }
+}

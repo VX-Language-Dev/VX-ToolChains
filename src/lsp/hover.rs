@@ -237,19 +237,17 @@ fn type_hover(ast: &[Stmt], name: &str) -> Option<Hover> {
                     return Some(make_hover(&content));
                 }
             }
-            vx_vm::parser::Expr::UnionDecl(uname, fields, line, _col) => {
-                if uname == name {
-                    let field_str = fields
-                        .iter()
-                        .map(|(n, t)| format!("  {}: {}", n, t))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let content = format!(
-                        "```vx\nunion {}:\n{}\n```\n\n*联合类型，第 {} 行*",
-                        uname, field_str, line
-                    );
-                    return Some(make_hover(&content));
-                }
+            vx_vm::parser::Expr::UnionDecl(uname, fields, line, _col) if uname == name => {
+                let field_str = fields
+                    .iter()
+                    .map(|(n, t)| format!("  {}: {}", n, t))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let content = format!(
+                    "```vx\nunion {}:\n{}\n```\n\n*联合类型，第 {} 行*",
+                    uname, field_str, line
+                );
+                return Some(make_hover(&content));
             }
             _ => {}
         }

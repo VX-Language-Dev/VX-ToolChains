@@ -9,6 +9,21 @@ pub enum DispatchResult {
     Error(String),
 }
 
+macro_rules! try_frame {
+    ($self:expr) => {
+        match $self.current_frame() {
+            Some(f) => f,
+            None => return DispatchResult::Error("VM invariant: no call frames on stack".into()),
+        }
+    };
+    ($self:expr, mut) => {
+        match $self.current_frame_mut() {
+            Some(f) => f,
+            None => return DispatchResult::Error("VM invariant: no call frames on stack".into()),
+        }
+    };
+}
+
 impl VM {
     #[inline]
     pub(crate) fn exec_load_store(&mut self, op: OpCode, iarg: Option<i32>, sarg: Option<&str>) -> DispatchResult {
@@ -25,8 +40,9 @@ impl VM {
             OpCode::LoadFalse => self.push(Value::Bool(false)),
             OpCode::LoadVar => {
                 let slot = iarg.unwrap_or(0) as usize;
-                if slot < self.current_frame().locals.len() {
-                    self.push(self.current_frame().locals[slot].clone());
+                let frame = try_frame!(self);
+                if slot < frame.locals.len() {
+                    self.push(frame.locals[slot].clone());
                 } else {
                     let name = sarg.unwrap_or("").to_string();
                     if let Some(v) = self.globals.get(&name) {
@@ -39,8 +55,8 @@ impl VM {
             OpCode::StoreVar => {
                 let slot = iarg.unwrap_or(0) as usize;
                 let v = self.pop();
-                if slot < self.current_frame().locals.len() {
-                    self.current_frame_mut().locals[slot] = v;
+                if slot < try_frame!(self).locals.len() {
+                    try_frame!(self, mut).locals[slot] = v;
                 } else {
                     let name = sarg.unwrap_or("").to_string();
                     self.globals.insert(name, v);
@@ -49,10 +65,10 @@ impl VM {
             OpCode::DefineVar => {
                 let slot = iarg.unwrap_or(0) as usize;
                 let v = self.pop();
-                if slot >= self.current_frame().locals.len() {
-                    self.current_frame_mut().locals.resize(slot + 1, Value::Nil);
+                if slot >= try_frame!(self).locals.len() {
+                    try_frame!(self, mut).locals.resize(slot + 1, Value::Nil);
                 }
-                self.current_frame_mut().locals[slot] = v;
+                try_frame!(self, mut).locals[slot] = v;
             }
             OpCode::Dup => {
                 if let Some(v) = self.peek(0) {
@@ -64,7 +80,7 @@ impl VM {
             OpCode::Pop => {
                 self.pop();
             }
-            _ => unreachable!(),
+            _ => return DispatchResult::Error(format!("Unexpected opcode in load/store: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -77,6 +93,7 @@ impl VM {
                 if num_args > self.stack_len() {
                     return DispatchResult::Error("Not enough arguments on stack".into());
                 }
+                // drain_stack 返回栈顶到栈底顺序，需 reverse 得到栈底到栈顶（参数自然顺序）
                 let mut args: Vec<Value> =
                     self.drain_stack(self.stack_len() - num_args..self.stack_len());
                 args.reverse();
@@ -100,7 +117,10 @@ impl VM {
             }
             OpCode::Return => {
                 let ret = self.pop();
-                let leaving_frame = self.frames.pop().unwrap();
+                let leaving_frame = match self.frames.pop() {
+                    Some(f) => f,
+                    None => return DispatchResult::Error("Return with no active frame".into()),
+                };
                 self.cleanup_frame_allocs(&leaving_frame.owned_allocs);
                 if let Some(frame) = self.frames.last_mut() {
                     while self.stack.len() > frame.stack_base {
@@ -111,7 +131,7 @@ impl VM {
                     return DispatchResult::Return(ret);
                 }
             }
-            _ => unreachable!(),
+            _ => return DispatchResult::Error(format!("Unexpected opcode in call/return: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -121,23 +141,23 @@ impl VM {
         match op {
             OpCode::Jump => {
                 let target = iarg.unwrap_or(0) as usize;
-                self.current_frame_mut().pc = target;
+                try_frame!(self, mut).pc = target;
             }
             OpCode::JumpIfFalse => {
                 let target = iarg.unwrap_or(0) as usize;
                 let v = self.pop();
                 if !v.is_truthy() {
-                    self.current_frame_mut().pc = target;
+                    try_frame!(self, mut).pc = target;
                 }
             }
             OpCode::JumpIfTrue => {
                 let target = iarg.unwrap_or(0) as usize;
                 let v = self.pop();
                 if v.is_truthy() {
-                    self.current_frame_mut().pc = target;
+                    try_frame!(self, mut).pc = target;
                 }
             }
-            _ => unreachable!(),
+            _ => return DispatchResult::Error(format!("Unexpected opcode in jump: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -158,7 +178,7 @@ impl VM {
                         Value::String(format!("{}{}", as_, bs))
                     }
                     (Value::String(as_), _) => {
-                        Value::String(format!("{}{}", as_, b.to_string()))
+                        Value::String(format!("{}{}", as_, b))
                     }
                     _ => return DispatchResult::Error("Type mismatch in +".into()),
                 };
@@ -224,7 +244,7 @@ impl VM {
                 };
                 self.push(result);
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in binary arith: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -292,7 +312,7 @@ impl VM {
                 let a = self.pop();
                 self.push(Value::Bool(a.is_truthy() || b.is_truthy()));
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in binary cmp: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -372,7 +392,7 @@ impl VM {
                     return DispatchResult::Error("Modulo by zero".into());
                 }
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in specialized arith: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -390,7 +410,7 @@ impl VM {
             OpCode::LeFloat => { let b = self.pop_float(); let a = self.pop_float(); self.push_bool(a <= b); }
             OpCode::GeInt => { let b = self.pop_int(); let a = self.pop_int(); self.push_bool(a >= b); }
             OpCode::GeFloat => { let b = self.pop_float(); let a = self.pop_float(); self.push_bool(a >= b); }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in specialized cmp: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -425,7 +445,7 @@ impl VM {
                 let a = self.pop();
                 self.push(Value::Bool(!a.is_truthy()));
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in logic/unary: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -435,6 +455,7 @@ impl VM {
         match op {
             OpCode::MakeArray => {
                 let count = iarg.unwrap_or(0) as usize;
+                // drain_stack 返回栈顶到栈底顺序，需 reverse 得到栈底到栈顶（数组的自然顺序）
                 let mut tmp: Vec<Value> =
                     self.drain_stack(self.stack_len() - count..self.stack_len());
                 tmp.reverse();
@@ -455,10 +476,13 @@ impl VM {
                         map.get(&key).cloned().unwrap_or(Value::Nil)
                     }
                     (Value::String(s), Value::Int(i)) => {
-                        if *i < 0 || (*i as usize) >= s.len() {
+                        if *i < 0 || (*i as usize) >= s.chars().count() {
                             return DispatchResult::Error("String index out of bounds".into());
                         }
-                        Value::String(s.chars().nth(*i as usize).unwrap().to_string())
+                        match s.chars().nth(*i as usize) {
+                            Some(c) => Value::String(c.to_string()),
+                            None => return DispatchResult::Error("String index out of bounds".into()),
+                        }
                     }
                     _ => return DispatchResult::Error("Cannot index this type".into()),
                 };
@@ -487,13 +511,18 @@ impl VM {
             }
             OpCode::MakeMap => {
                 let count = iarg.unwrap_or(0) as usize;
-                let mut tmp: Vec<Value> =
+                // drain_stack 已返回弹出顺序（栈顶到栈底），无需再 reverse
+                let tmp: Vec<Value> =
                     self.drain_stack(self.stack_len() - count * 2..self.stack_len());
-                tmp.reverse();
+                // MakeMap 元素入栈顺序为 [key0, val0, key1, val1, ...]
+                // drain_stack 后 tmp[0] = val0, tmp[1] = key0, ...（栈顶到栈底）
+                // 因此键值对在 tmp 中是 [val, key, val, key, ...]
+                // 为保持键值对语义，需要按 (tmp[1], tmp[0]), (tmp[3], tmp[2])... 配对
                 let mut map = HashMap::new();
                 for i in 0..count {
-                    let key = tmp[i * 2].to_string();
-                    map.insert(key, tmp[i * 2 + 1].clone());
+                    let val = &tmp[i * 2];
+                    let key = &tmp[i * 2 + 1];
+                    map.insert(key.to_string(), val.clone());
                 }
                 self.push(Value::Map(map));
             }
@@ -509,7 +538,7 @@ impl VM {
                 }
                 self.push(inst_val);
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in collection: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -584,7 +613,7 @@ impl VM {
                 }
                 self.push(obj);
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in property: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -638,7 +667,7 @@ impl VM {
                 };
                 self.push(result);
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in pointer: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -664,6 +693,7 @@ impl VM {
             }
             OpCode::Newz => {
                 let num_args = iarg.unwrap_or(0) as usize;
+                // drain_stack 返回栈顶到栈底顺序，需 reverse 得到栈底到栈顶（参数自然顺序）
                 let mut args: Vec<Value> =
                     self.drain_stack(self.stack_len() - num_args..self.stack_len());
                 args.reverse();
@@ -693,7 +723,7 @@ impl VM {
                     return DispatchResult::Error("newz: expected class name string".into());
                 }
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in new: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -712,10 +742,8 @@ impl VM {
                 }
             }
             OpCode::OwnershipMove => {
-                if let Some(v) = self.peek(0) {
-                    if let Value::String(ref name) = v {
-                        self.moved_vars.insert(name.clone());
-                    }
+                if let Some(Value::String(name)) = self.peek(0) {
+                    self.moved_vars.insert(name.clone());
                 }
             }
             OpCode::ScopeDrop => {
@@ -733,7 +761,7 @@ impl VM {
                     }
                 }
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in memory safety: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -827,7 +855,7 @@ impl VM {
                     _ => return DispatchResult::Error("file_exists: parameter must be a string path".into()),
                 }
             }
-            _ => unreachable!(),
+_ => return DispatchResult::Error(format!("Unexpected opcode in syscall: {:?}", op)),
         }
         DispatchResult::Continue
     }

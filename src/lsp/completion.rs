@@ -147,15 +147,14 @@ fn collect_from_expr(e: &Expr, symbols: &mut Vec<SymbolInfo>) {
                 collect_from_expr(stmt, symbols);
             }
         }
-        Expr::ImportStmt(module, alias, _dirs, _, _) => {
-            if let Some(a) = alias {
-                symbols.push(SymbolInfo {
-                    name: a.clone(),
-                    kind: SymbolKind::TypeAlias,
-                    detail: Some(format!("import {} as {}", module, a)),
-                });
-            }
+        Expr::ImportStmt(module, Some(alias), _dirs, _, _) => {
+            symbols.push(SymbolInfo {
+                name: alias.clone(),
+                kind: SymbolKind::TypeAlias,
+                detail: Some(format!("import {} as {}", module, alias)),
+            });
         }
+        Expr::ImportStmt(_, None, _, _, _) => {}
         Expr::ExprStmt(inner, _, _) => {
             collect_from_expr(inner, symbols);
         }
@@ -528,7 +527,7 @@ mod tests {
     #[test]
     fn test_identifier_name_at_completion() {
         // "    func hello" — n at col 7 (1-indexed) means prefix = "fun"
-        let result = extract_prefix(&"    func hello".to_string(), 9);
+        let result = extract_prefix("    func hello", 9);
         assert_eq!(result, "func");
     }
 }

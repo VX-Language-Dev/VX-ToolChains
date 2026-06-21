@@ -162,19 +162,21 @@ fn test_neg_int() {
     assert_eq!(run_test(module).unwrap(), Value::Int(-42));
 }
 
-#[test]
-fn test_neg_float() {
-    let module = make_module(
-        "__main__",
-        vec![
-            Instruction::with_iarg(OpCode::LoadConst, 0),
-            Instruction::new(OpCode::NegFloat),
-            Instruction::new(OpCode::Return),
-        ],
-        vec![Value::Float(3.14)],
-    );
-    assert_eq!(run_test(module).unwrap(), Value::Float(-3.14));
-}
+    #[test]
+    #[allow(clippy::approx_constant)]
+    fn test_neg_float() {
+        let module = make_module(
+            "__main__",
+            vec![
+                Instruction::with_iarg(OpCode::LoadConst, 0),
+                Instruction::new(OpCode::NegFloat),
+                Instruction::new(OpCode::Return),
+            ],
+            vec![Value::Float(3.14)],
+        );
+        assert_eq!(run_test(module).unwrap(), Value::Float(-3.14));
+    }
+
 
 #[test]
 fn test_unary_neg() {
@@ -282,20 +284,22 @@ fn test_lt_int() {
     assert_eq!(run_test(module).unwrap(), Value::Bool(true));
 }
 
-#[test]
-fn test_gt_float() {
-    let module = make_module(
-        "__main__",
-        vec![
-            Instruction::with_iarg(OpCode::LoadConst, 0),
-            Instruction::with_iarg(OpCode::LoadConst, 1),
-            Instruction::new(OpCode::GtFloat),
-            Instruction::new(OpCode::Return),
-        ],
-        vec![Value::Float(3.14), Value::Float(2.71)],
-    );
-    assert_eq!(run_test(module).unwrap(), Value::Bool(true));
-}
+    #[test]
+    #[allow(clippy::approx_constant)]
+    fn test_gt_float() {
+        let module = make_module(
+            "__main__",
+            vec![
+                Instruction::with_iarg(OpCode::LoadConst, 0),
+                Instruction::with_iarg(OpCode::LoadConst, 1),
+                Instruction::new(OpCode::GtFloat),
+                Instruction::new(OpCode::Return),
+            ],
+            vec![Value::Float(3.14), Value::Float(2.71)],
+        );
+        assert_eq!(run_test(module).unwrap(), Value::Bool(true));
+    }
+
 
 #[test]
 fn test_and_or() {
@@ -642,12 +646,14 @@ fn test_float_to_string_whole_number() {
     assert_eq!(Value::Float(100.0).to_string(), "100");
 }
 
-#[test]
-fn test_float_to_string_fractional() {
-    assert_eq!(Value::Float(3.14).to_string(), "3.14");
-    assert_eq!(Value::Float(1.5).to_string(), "1.5");
-    assert_eq!(Value::Float(0.5).to_string(), "0.5");
-}
+    #[test]
+    #[allow(clippy::approx_constant)]
+    fn test_float_to_string_fractional() {
+        assert_eq!(Value::Float(3.14).to_string(), "3.14");
+        assert_eq!(Value::Float(1.5).to_string(), "1.5");
+        assert_eq!(Value::Float(0.5).to_string(), "0.5");
+    }
+
 
 #[test]
 fn test_float_to_string_trailing_zeros() {
@@ -662,14 +668,15 @@ fn test_float_to_string_negative() {
     assert_eq!(Value::Float(-1.0).to_string(), "-1");
 }
 
-#[test]
-fn test_float_to_string_special() {
-    // NaN 和 Infinity 不做特殊美化，保持 f64 默认输出
-    let nan_str = Value::Float(f64::NAN).to_string();
-    assert!(nan_str == "NaN" || nan_str == "nan");
-    let inf_str = Value::Float(f64::INFINITY).to_string();
-    assert!(inf_str == "inf" || inf_str == "inf");
-}
+    #[test]
+    fn test_float_to_string_special() {
+        // NaN 和 Infinity 不做特殊美化，保持 f64 默认输出
+        let nan_str = Value::Float(f64::NAN).to_string();
+        assert!(nan_str == "NaN" || nan_str == "nan");
+        let inf_str = Value::Float(f64::INFINITY).to_string();
+        assert_eq!(inf_str, "inf");
+    }
+
 
 // ======================== Value 通用测试 ========================
 

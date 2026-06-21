@@ -5,6 +5,8 @@
 mod ast;
 mod expr;
 mod stmt;
+#[cfg(test)]
+mod tests;
 
 // 对外公开 AST 类型
 pub use ast::{Expr, Stmt, get_src_line};

@@ -24,6 +24,8 @@ pub enum StepMode {
     Out,
 }
 
+pub type DebugHook = Option<Box<dyn Fn(&VM) -> DebugAction>>;
+
 pub struct VM {
     pub module: Module,
     pub frames: Vec<CallFrame>,
@@ -37,10 +39,16 @@ pub struct VM {
     /// 移动 (moved) 后的变量槽位集合，用于运行时纵深防御
     pub(crate) moved_vars: HashSet<String>,
     // Debugging support
-    pub debug_hook: Option<Box<dyn Fn(&VM) -> DebugAction>>,
+    pub debug_hook: DebugHook,
     pub breakpoints: HashSet<usize>,
     pub step_mode: StepMode,
     pub step_count: usize,
+}
+
+impl Default for VM {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VM {
@@ -72,9 +80,9 @@ impl VM {
             if args.is_empty() {
                 println!();
             } else {
-                print!("{}", args[0].to_string());
+                print!("{}", args[0]);
                 for i in 1..args.len() {
-                    print!(" {}", args[i].to_string());
+                    print!(" {}", args[i]);
                 }
                 println!();
             }
@@ -171,7 +179,7 @@ impl VM {
             let constants = Vec::new();
             let mut instructions = Vec::with_capacity(f.instructions.len());
             for inst in &f.instructions {
-                let op = OpCode::try_from(inst.op).map_err(|e| e)?;
+                let op = OpCode::try_from(inst.op)?;
                 let instruction = match inst.arg_type {
                     0 => Instruction::new(op),
                     1 => Instruction::with_iarg(op, inst.iarg.unwrap_or(0)),
@@ -276,15 +284,14 @@ impl VM {
         result.reverse();
         result
     }
-    pub fn current_frame(&self) -> &CallFrame {
-        self.frames.last().expect("VM invariant: no call frames on stack")
+    pub fn current_frame(&self) -> Option<&CallFrame> {
+        self.frames.last()
     }
-    pub(crate) fn current_frame_mut(&mut self) -> &mut CallFrame {
-        let idx = self.frames.len() - 1;
-        &mut self.frames[idx]
+    pub(crate) fn current_frame_mut(&mut self) -> Option<&mut CallFrame> {
+        self.frames.last_mut()
     }
-    pub fn current_fn(&self) -> &Function {
-        &self.module.functions[self.current_frame().fn_idx]
+    pub fn current_fn(&self) -> Option<&Function> {
+        self.current_frame().map(|frame| &self.module.functions[frame.fn_idx])
     }
 
     /// 创建运行时错误 Result。调用方需使用 `return self.runtime_error(...)` 提前返回。
@@ -294,7 +301,9 @@ impl VM {
     }
 
     pub(crate) fn call_user_function(&mut self, fn_idx: usize, args: &[Value]) -> Result<(), String> {
-        let fun = &self.module.functions[fn_idx];
+        let fun = self.module.functions.get(fn_idx).ok_or_else(|| {
+            format!("call_user_function: invalid function index {}", fn_idx)
+        })?;
         if args.len() != fun.num_params as usize {
             return Err(format!(
                 "Argument count mismatch for {}: expected {}, got {}",
@@ -320,9 +329,14 @@ impl VM {
 
     /// Handle a breakpoint or step event by entering a debug REPL
     pub(crate) fn handle_breakpoint(&mut self) -> Value {
+        let frame = match self.current_frame() {
+            Some(f) => f,
+            None => return Value::Nil,
+        };
+        let fn_name = self.current_fn().map(|f| f.name.clone()).unwrap_or_else(|| "unknown".to_string());
         println!("\n=== VX Debugger ===");
-        println!("Breakpoint hit at PC: {}", self.current_frame().pc);
-        println!("Current function: {}", self.current_fn().name);
+        println!("Breakpoint hit at PC: {}", frame.pc);
+        println!("Current function: {}", fn_name);
         println!("Stack depth: {}", self.stack.len());
         // Simple debug REPL - in a real implementation, this would be more sophisticated
         loop {
@@ -395,14 +409,22 @@ impl VM {
     fn print_backtrace(&self) {
         println!("Call stack (most recent first):");
         for (i, frame) in self.frames.iter().enumerate().rev() {
-            let func = &self.module.functions[frame.fn_idx];
-            println!("  #{}: {} at PC {}", self.frames.len() - 1 - i, func.name, frame.pc);
+            let func_name = self.module.functions.get(frame.fn_idx)
+                .map(|f| f.name.as_str())
+                .unwrap_or("unknown");
+            println!("  #{}: {} at PC {}", self.frames.len() - 1 - i, func_name, frame.pc);
         }
     }
 
     /// Print local variables of the current frame
     fn print_locals(&self) {
-        let frame = self.current_frame();
+        let frame = match self.current_frame() {
+            Some(f) => f,
+            None => {
+                println!("No active frame.");
+                return;
+            }
+        };
         println!("Local variables:");
         for (i, value) in frame.locals.iter().enumerate() {
             println!("  [{}] {:?}", i, value);
@@ -441,7 +463,7 @@ impl VM {
     }
 
     /// Set the debug hook function
-    pub fn set_debug_hook(&mut self, hook: Option<Box<dyn Fn(&VM) -> DebugAction>>) {
+    pub fn set_debug_hook(&mut self, hook: DebugHook) {
         self.debug_hook = hook;
     }
 }

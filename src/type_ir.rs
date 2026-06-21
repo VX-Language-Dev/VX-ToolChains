@@ -187,7 +187,7 @@ pub enum Linkage {
     External(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TypeModule {
     pub functions: Vec<TypeFunction>,
     pub struct_layouts: Vec<(String, Vec<(String, Type)>)>,
@@ -198,13 +198,7 @@ pub struct TypeModule {
 
 impl TypeModule {
     pub fn new() -> Self {
-        Self {
-            functions: Vec::new(),
-            struct_layouts: Vec::new(),
-            function_map: HashMap::new(),
-            linkage: HashMap::new(),
-            entry_point: None,
-        }
+        Self::default()
     }
 
     pub fn get_function(&self, id: FuncId) -> Option<&TypeFunction> {
@@ -431,10 +425,26 @@ fn serialize_instruction(buf: &mut Vec<u8>, inst: &TypedInstruction) {
         }
         GetField(o, idx) => (61, Some(format!("{},{}", o, idx))),
         SetField(o, idx, v) => (62, Some(format!("{},{},{}", o, idx, v))),
-        MakeArray(_, _) => (63, None),
+        MakeArray(base, args) => {
+            // 格式: "<base>,<arg0>,<arg1>,..."  第一个元素为 base（基类型 VarId），其后为元素 VarId
+            let mut parts = Vec::with_capacity(args.len() + 1);
+            parts.push(base.to_string());
+            for a in args {
+                parts.push(a.to_string());
+            }
+            (63, Some(parts.join(",")))
+        }
         IndexGet(a, i) => (64, Some(format!("{},{}", a, i))),
         IndexSet(a, i, v) => (65, Some(format!("{},{},{}", a, i, v))),
-        MakeMap(_) => (66, None),
+        MakeMap(pairs) => {
+            // 格式: "<k0>,<v0>,<k1>,<v1>,..."  按键值对顺序
+            let mut parts = Vec::with_capacity(pairs.len() * 2);
+            for (k, v) in pairs {
+                parts.push(k.to_string());
+                parts.push(v.to_string());
+            }
+            (66, Some(parts.join(",")))
+        }
         Alloc(_) => (70, None),
         Free(v) => (71, Some(format!("{}", v))),
         OwnershipMove(v) => (72, Some(format!("{}", v))),
@@ -546,10 +556,37 @@ fn deserialize_instruction(data: &[u8], pos: &mut usize) -> Option<TypedInstruct
         64 => { let (a, i) = read_vars(&read_str_at(data, pos)?)?; Some(IndexGet(a, i)) }
         65 => { let s = read_str_at(data, pos)?; let parts: Vec<&str> = s.split(',').collect(); if parts.len() < 3 { return None }; Some(IndexSet(parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?)) }
         63 => {
-            // 序列化时无负载；默认为 0 个元素
-            Some(MakeArray(0, vec![]))
+            // 格式: "<base>,<arg0>,<arg1>,..."  首元素为 base
+            let s = read_str_at(data, pos)?;
+            let parts: Vec<&str> = s.split(',').collect();
+            if parts.is_empty() {
+                return Some(MakeArray(0, vec![]));
+            }
+            let base: VarId = parts[0].parse().ok()?;
+            let args: Vec<VarId> = parts[1..]
+                .iter()
+                .map(|p| p.parse().ok())
+                .collect::<Option<_>>()?;
+            Some(MakeArray(base, args))
         }
-        66 => Some(MakeMap(vec![])),
+        66 => {
+            // 格式: "<k0>,<v0>,<k1>,<v1>,..."  元素成对出现
+            let s = read_str_at(data, pos)?;
+            if s.is_empty() {
+                return Some(MakeMap(vec![]));
+            }
+            let parts: Vec<&str> = s.split(',').collect();
+            if parts.len() % 2 != 0 {
+                return None;
+            }
+            let mut pairs = Vec::with_capacity(parts.len() / 2);
+            for chunk in parts.chunks_exact(2) {
+                let k: VarId = chunk[0].parse().ok()?;
+                let v: VarId = chunk[1].parse().ok()?;
+                pairs.push((k, v));
+            }
+            Some(MakeMap(pairs))
+        }
         70 => Some(Alloc(Type::Unknown)),
         71 => { let v = read_single(&read_str_at(data, pos)?)?; Some(Free(v)) }
         72 => { let v = read_single(&read_str_at(data, pos)?)?; Some(OwnershipMove(v)) }
@@ -649,5 +686,83 @@ mod tests {
         assert_eq!(parsed.functions.len(), 1);
         assert_eq!(parsed.functions[0].name, "test_func");
         assert_eq!(parsed.functions[0].return_type, Type::Int);
+    }
+
+    /// 修复回归: MakeArray 序列化时必须保留 base 与全部元素 VarId
+    #[test]
+    fn test_make_array_roundtrip() {
+        let mut module = TypeModule::new();
+        let mut func = TypeFunction::new("test_array", 0);
+        func.body.push(TypedInstruction::MakeArray(7, vec![1, 2, 3, 4]));
+        module.functions.push(func);
+        module.function_map.insert(0, "test_array".to_string());
+
+        let data = serialize_type_module(&module);
+        let parsed = deserialize_type_module(&data).unwrap();
+        match &parsed.functions[0].body[0] {
+            TypedInstruction::MakeArray(base, args) => {
+                assert_eq!(*base, 7, "base VarId 应被保留");
+                assert_eq!(args, &vec![1, 2, 3, 4], "所有元素 VarId 应被保留");
+            }
+            other => panic!("反序列化后类型不匹配: {:?}", other),
+        }
+    }
+
+    /// 修复回归: MakeArray 空数组 roundtrip
+    #[test]
+    fn test_make_array_empty_roundtrip() {
+        let mut module = TypeModule::new();
+        let mut func = TypeFunction::new("test_empty_array", 0);
+        func.body.push(TypedInstruction::MakeArray(0, vec![]));
+        module.functions.push(func);
+        module.function_map.insert(0, "test_empty_array".to_string());
+
+        let data = serialize_type_module(&module);
+        let parsed = deserialize_type_module(&data).unwrap();
+        match &parsed.functions[0].body[0] {
+            TypedInstruction::MakeArray(base, args) => {
+                assert_eq!(*base, 0);
+                assert!(args.is_empty());
+            }
+            other => panic!("反序列化后类型不匹配: {:?}", other),
+        }
+    }
+
+    /// 修复回归: MakeMap 序列化时必须保留所有键值对
+    #[test]
+    fn test_make_map_roundtrip() {
+        let mut module = TypeModule::new();
+        let mut func = TypeFunction::new("test_map", 0);
+        func.body.push(TypedInstruction::MakeMap(vec![(10, 20), (30, 40)]));
+        module.functions.push(func);
+        module.function_map.insert(0, "test_map".to_string());
+
+        let data = serialize_type_module(&module);
+        let parsed = deserialize_type_module(&data).unwrap();
+        match &parsed.functions[0].body[0] {
+            TypedInstruction::MakeMap(pairs) => {
+                assert_eq!(pairs.len(), 2);
+                assert_eq!(pairs[0], (10, 20));
+                assert_eq!(pairs[1], (30, 40));
+            }
+            other => panic!("反序列化后类型不匹配: {:?}", other),
+        }
+    }
+
+    /// 修复回归: MakeMap 空 Map roundtrip
+    #[test]
+    fn test_make_map_empty_roundtrip() {
+        let mut module = TypeModule::new();
+        let mut func = TypeFunction::new("test_empty_map", 0);
+        func.body.push(TypedInstruction::MakeMap(vec![]));
+        module.functions.push(func);
+        module.function_map.insert(0, "test_empty_map".to_string());
+
+        let data = serialize_type_module(&module);
+        let parsed = deserialize_type_module(&data).unwrap();
+        match &parsed.functions[0].body[0] {
+            TypedInstruction::MakeMap(pairs) => assert!(pairs.is_empty()),
+            other => panic!("反序列化后类型不匹配: {:?}", other),
+        }
     }
 }

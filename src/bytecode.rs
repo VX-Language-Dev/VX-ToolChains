@@ -33,6 +33,10 @@ pub const SECTION_TYPE_META: &str = "TypeMeta";
 
 // ==================== Public Types ====================
 
+pub type BytecodeInstructionTuple = (u8, u8, Option<i32>, Option<String>);
+
+pub type VxobjFunctionRef<'a> = (&'a str, u32, bool, &'a [String], &'a [BytecodeInstructionTuple]);
+
 #[derive(Debug, Clone)]
 pub struct SectionIndex {
     pub name: String,
@@ -481,7 +485,7 @@ fn parse_v2_raw(data: &[u8]) -> io::Result<VxObjModule> {
 pub fn write_vxobj(
     w: &mut dyn Write,
     constants: &[SerializedConstant],
-    functions: &[(&str, u32, bool, &[String], &[(u8, u8, Option<i32>, Option<String>)])],
+    functions: &[VxobjFunctionRef<'_>],
     struct_defs: &HashMap<String, Vec<String>>,
 ) -> io::Result<()> {
     w.write_all(MAGIC)?;
@@ -528,6 +532,105 @@ pub fn write_vxobj(
     }
     w.flush()?;
     Ok(())
+}
+
+/// 直接从 `&CompiledModule` 写入 VXOBJ v2，跳过中间 tuple 缓冲。
+///
+/// 等价于先调用 `convert_module_to_vxobj_parts` 然后 `write_vxobj`，
+/// 但避免了在调用方构造临时 `Vec` 的两次内存分配。
+pub fn write_vxobj_from_module(
+    w: &mut dyn Write,
+    module: &crate::compiler_bytecode::CompiledModule,
+) -> io::Result<()> {
+    use crate::compiler_bytecode::{BytecodeArg, ConstantValue};
+
+    // 1. 转换常量
+    let constants: Vec<SerializedConstant> = module
+        .constants
+        .iter()
+        .map(|c| match c {
+            ConstantValue::Nil => SerializedConstant::nil(),
+            ConstantValue::Bool(b) => SerializedConstant::bool(*b),
+            ConstantValue::Int(v) => SerializedConstant::int(*v),
+            ConstantValue::Float(v) => SerializedConstant::float(*v),
+            ConstantValue::String(s) => SerializedConstant::string(s),
+        })
+        .collect();
+
+    // 2. 合并 struct / class 定义
+    let mut struct_defs: HashMap<String, Vec<String>> = HashMap::with_capacity(
+        module.structs.len() + module.classes.len(),
+    );
+    for (n, f) in &module.structs {
+        struct_defs.insert(n.clone(), f.clone());
+    }
+    for (n, f) in &module.classes {
+        struct_defs.insert(n.clone(), f.clone());
+    }
+
+    // 3. 转换函数指令为 SerializedConstant + 函数元组
+    let functions: Vec<VxobjFunctionRefData> = module
+        .functions
+        .iter()
+        .map(|f| {
+            // 对每条指令把 BytecodeArg 转成 (op, arg_type, iarg, sarg) 元组
+            // 重要: 这是 owned Vec（不是借用），因为 ImportTuple 需要拼接字符串
+            let insts: Vec<(u8, u8, Option<i32>, Option<String>)> = f
+                .instructions
+                .iter()
+                .map(|inst| {
+                    let (arg_type, iarg, sarg) = match &inst.arg {
+                        BytecodeArg::None => (0u8, None, None),
+                        BytecodeArg::Int(v) => (1u8, Some(*v), None),
+                        BytecodeArg::String(s) => (2u8, None, Some(s.clone())),
+                        BytecodeArg::ImportTuple(a, b, c) => {
+                            let s = format!(
+                                "{},{},{}",
+                                b.as_deref().unwrap_or(""),
+                                c.as_deref().unwrap_or(""),
+                                a,
+                            );
+                            (2u8, None, Some(s))
+                        }
+                    };
+                    (inst.op as u8, arg_type, iarg, sarg)
+                })
+                .collect();
+            VxobjFunctionRefData {
+                name: f.name.clone(),
+                num_params: f.num_params as u32,
+                has_return: f.has_return,
+                param_names: f.param_names.clone(),
+                insts,
+            }
+        })
+        .collect();
+
+    // 4. 构造借用切片元组
+    let func_refs: Vec<VxobjFunctionRef<'_>> = functions
+        .iter()
+        .map(|fd| {
+            (
+                fd.name.as_str(),
+                fd.num_params,
+                fd.has_return,
+                fd.param_names.as_slice(),
+                fd.insts.as_slice(),
+            )
+        })
+        .collect();
+
+    write_vxobj(w, &constants, &func_refs, &struct_defs)
+}
+
+/// 内部数据结构：用于 `write_vxobj_from_module` 持有 owned 数据，
+/// 再借用为 `VxobjFunctionRef` 元组传入 `write_vxobj`。
+struct VxobjFunctionRefData {
+    name: String,
+    num_params: u32,
+    has_return: bool,
+    param_names: Vec<String>,
+    insts: Vec<(u8, u8, Option<i32>, Option<String>)>,
 }
 
 // ==================== V3 Writer ====================
@@ -627,7 +730,7 @@ mod tests {
             SerializedConstant::string("hello"),
         ];
         let instructions = vec![(0x01, 1, Some(1), None), (0x09, 0, None, None)];
-        let functions: Vec<(&str, u32, bool, &[String], &[(u8, u8, Option<i32>, Option<String>)])> =
+        let functions: Vec<VxobjFunctionRef<'_>> =
             vec![("__main__", 0, false, &[], &instructions)];
         let struct_defs = HashMap::new();
         let mut buf = Vec::new();
@@ -642,11 +745,8 @@ mod tests {
         let mut bytecode_buf = Vec::new();
         let constants = vec![SerializedConstant::int(99)];
         let insts: Vec<(u8, u8, Option<i32>, Option<String>)> = vec![(0x01, 1, Some(0), None), (0x09, 0, None, None)];
-        let functions: Vec<(&str, u32, bool, &[String], &[(u8, u8, Option<i32>, Option<String>)])> = {
-            let mut v = Vec::new();
-            v.push(("test", 0u32, false, &[] as &[String], insts.as_slice()));
-            v
-        };
+        let functions: Vec<VxobjFunctionRef<'_>> =
+            vec![("test", 0u32, false, &[] as &[String], insts.as_slice())];
         let struct_defs = HashMap::new();
         write_vxobj(&mut bytecode_buf, &constants, &functions, &struct_defs).unwrap();
 

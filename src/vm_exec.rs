@@ -16,7 +16,13 @@ impl VM {
             .copied()
             .unwrap_or(0);
 
-        let local_count = self.module.functions[main_idx].num_params.max(16) as usize;
+        let num_params = self
+            .module
+            .functions
+            .get(main_idx)
+            .map(|f| f.num_params)
+            .unwrap_or(0);
+        let local_count = num_params.max(16) as usize;
         self.frames.push(crate::instruction::CallFrame {
             fn_idx: main_idx,
             pc: 0,
@@ -49,38 +55,46 @@ impl VM {
 
             if self.breakpoints.contains(&frame.pc) {
                 if let Some(ref hook) = self.debug_hook {
-                    match hook(self) {
-                        DebugAction::Break => {
-                            return Ok(self.handle_breakpoint());
-                        }
-                        _ => {}
+                    if let DebugAction::Break = hook(self) {
+                        return Ok(self.handle_breakpoint());
                     }
                 } else {
                     return Ok(self.handle_breakpoint());
                 }
             }
 
-            if frame.pc >= self.current_fn().instructions.len() {
-                let leaving_frame = self.frames.pop().unwrap();
+            let fn_idx = frame.fn_idx;
+            let pc = frame.pc;
+
+            if pc >= self.module.functions[fn_idx].instructions.len() {
+                let leaving_frame = self.frames.pop().ok_or_else(|| {
+                    "VM invariant: frame unexpectedly missing during function exit".to_string()
+                })?;
                 self.cleanup_frame_allocs(&leaving_frame.owned_allocs);
                 continue;
             }
 
-            // 只使用不可变借用获取帧信息，一次性提取指令元数据
-            let fn_idx = self.frames.last().unwrap().fn_idx;
-            let pc = self.frames.last().unwrap().pc;
-            // 在内部作用域中读取指令并释放 self.module 的引用
-            let (op, iarg, sarg_owned) = {
-                let inst_ref = &self.module.functions[fn_idx].instructions[pc];
-                (
-                    inst_ref.op,
-                    inst_ref.iarg,
-                    // 将 sarg 克隆为自有字符串，避免后续 &mut self 冲突
-                    inst_ref.sarg.as_ref().map(|s| s.to_string()),
-                )
+            // 拆出指令中的 op/iarg 字段（两个都是 Copy），
+            // sarg 用 Box<str> 的引用形式透传给 dispatcher（无堆分配）。
+            // 为避免与后续 &mut self 调用冲突，使用裸指针解引用 sarg。
+            // 在 dispatcher 调用期间 self.module 不会被修改（Vec 不会因 push 而失效），
+            // 因此此裸指针访问是安全的。
+            let op = self.module.functions[fn_idx].instructions[pc].op;
+            let iarg = self.module.functions[fn_idx].instructions[pc].iarg;
+
+            if let Some(frame_mut) = self.frames.last_mut() {
+                frame_mut.pc += 1;
+            } else {
+                return Err("VM invariant: frame unexpectedly missing during instruction advance".to_string());
+            }
+
+            // 现在 pc 已递增，重新读取 sarg 时不再持有对 self 的借用。
+            // 用裸指针避免与后续 &mut self 冲突。
+            let sarg: Option<&str> = unsafe {
+                let sarg_field = &self.module.functions[fn_idx].instructions[pc].sarg
+                    as *const Option<Box<str>>;
+                (*sarg_field).as_deref()
             };
-            let sarg = sarg_owned.as_deref();
-            self.frames.last_mut().unwrap().pc += 1;
 
             let result = match op {
                 OpCode::LoadConst | OpCode::LoadNil | OpCode::LoadTrue | OpCode::LoadFalse

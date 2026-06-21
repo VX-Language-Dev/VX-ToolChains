@@ -629,11 +629,11 @@ fn remove_from_vxmod(workspace_root: &Path, package_name: &str) -> Result<(), Vp
 /// `vpm build` 构建器命令: 基于 vxsetting.toml 自动化构建
 ///
 /// 路径区分:
-///   - 多文件项目 (vxsetting.toml 含 [bin]/[vxlib]/[lib]/[[module]]):
-///       构建器读取配置 → 调用 vpm 包查询解析 module 依赖 →
-///       调用 vxcompiler 编译各源 → 调用 vxlinker 链接产物
-///   - 单文件项目 (仅 [libraries]/[vxset]):
-///       无缝回退至 ipt (vxcompiler) 直接编译入口源文件
+/// - 多文件项目 (vxsetting.toml 含 [bin]/[vxlib]/[lib]/[[module]]):
+///   构建器读取配置 → 调用 vpm 包查询解析 module 依赖 →
+///   调用 vxcompiler 编译各源 → 调用 vxlinker 链接产物
+/// - 单文件项目 (仅 [libraries]/[vxset]):
+///   无缝回退至 ipt (vxcompiler) 直接编译入口源文件
 fn cmd_build(args: &[String]) -> Result<(), VpmError> {
     // 入口文件 (可选): vpm build [entry.vx]
     let single_entry = if args.is_empty() {
@@ -674,7 +674,12 @@ fn cmd_build(args: &[String]) -> Result<(), VpmError> {
     }
 
     println!("[VPM] 加载配置: {}", setting_path.display());
-    let settings = VxSettings::from_file(setting_path.to_str().unwrap())
+    let settings = VxSettings::from_file(
+        setting_path.to_str().unwrap_or_else(|| {
+            eprintln!("[VPM 错误] 配置文件路径包含非 UTF-8 字符");
+            "<invalid>"
+        })
+    )
         .map_err(|e| VpmError::InvalidVack(format!("解析 vxsetting.toml 失败: {}", e)))?;
 
     let builder = VxBuilder::new(settings).with_single_entry(single_entry.clone());

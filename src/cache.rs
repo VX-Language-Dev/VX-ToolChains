@@ -34,7 +34,7 @@ pub struct CacheFile {
 }
 
 /// 全局元数据 (任一字段变化 → 全部目标失效)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CacheMeta {
     /// vxsetting.toml 内容哈希
     pub vxsetting_hash: String,
@@ -47,16 +47,6 @@ pub struct CacheMeta {
     pub toolchain_version: String,
 }
 
-impl Default for CacheMeta {
-    fn default() -> Self {
-        Self {
-            vxsetting_hash: String::new(),
-            vxmod_hash: None,
-            timestamp: 0,
-            toolchain_version: String::new(),
-        }
-    }
-}
 
 /// 单个构建目标的缓存条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,11 +200,7 @@ impl BuildCache {
                 Some(h) => h,
                 None => return false,
             };
-            if entry
-                .sources_hash
-                .get(i)
-                .map_or(true, |h| *h != cur_hash)
-            {
+            if entry.sources_hash.get(i) != Some(&cur_hash) {
                 return false;
             }
         }
@@ -372,7 +358,7 @@ mod tests {
         cache.set_meta("h1".to_string(), None, TOOLCHAIN_VERSION.to_string());
         cache.update_entry(
             "bin".to_string(),
-            &[src.clone()],
+            std::slice::from_ref(&src),
             &src.to_string_lossy(),
             &output.to_string_lossy(),
             20,
@@ -395,13 +381,13 @@ mod tests {
 
         let mut cache = BuildCache::empty(&path);
         cache.set_meta("h1".into(), None, TOOLCHAIN_VERSION.into());
-        cache.update_entry("bin".into(), &[src.clone()], "obj", &output.to_string_lossy(), 20);
+        cache.update_entry("bin".into(), std::slice::from_ref(&src), "obj", &output.to_string_lossy(), 20);
 
         // 等待并修改源文件内容 (mtime + 内容均变)
         std::thread::sleep(Duration::from_millis(1100));
         write_file(dir.path(), "main.vx", "fn main() { changed }");
 
-        assert!(!cache.is_target_fresh("bin", &[src.clone()], 20));
+        assert!(!cache.is_target_fresh("bin", std::slice::from_ref(&src), 20));
     }
 
     #[test]
@@ -413,7 +399,7 @@ mod tests {
 
         let mut cache = BuildCache::empty(&path);
         cache.set_meta("h1".into(), None, TOOLCHAIN_VERSION.into());
-        cache.update_entry("bin".into(), &[src.clone()], "obj", &output.to_string_lossy(), 20);
+        cache.update_entry("bin".into(), std::slice::from_ref(&src), "obj", &output.to_string_lossy(), 20);
 
         // mtime 变化但内容相同: 精确哈希兜底 → 仍新鲜
         std::thread::sleep(Duration::from_millis(1100));
@@ -453,9 +439,9 @@ mod tests {
 
         let mut cache = BuildCache::empty(Path::new("/tmp/x.toml"));
         cache.set_meta("h".into(), None, TOOLCHAIN_VERSION.into());
-        cache.update_entry("bin".into(), &[src.clone()], "obj", &output.to_string_lossy(), 10);
+        cache.update_entry("bin".into(), std::slice::from_ref(&src), "obj", &output.to_string_lossy(), 10);
 
-        assert!(cache.is_target_fresh("bin", &[src.clone()], 10));
+        assert!(cache.is_target_fresh("bin", std::slice::from_ref(&src), 10));
         assert!(!cache.is_target_fresh("bin", &[src], 20), "优化等级变化应失效");
     }
 
@@ -486,13 +472,13 @@ mod tests {
         let src = write_file(dir.path(), "main.vx", "x");
         let out = write_file(dir.path(), "o", "y");
         let mut cache = BuildCache::empty(Path::new("/tmp/x.toml"));
-        cache.update_entry("bin".into(), &[src.clone()], "obj", &out.to_string_lossy(), 20);
-        cache.update_entry("vxlib".into(), &[src.clone()], "obj", &out.to_string_lossy(), 20);
+        cache.update_entry("bin".into(), std::slice::from_ref(&src), "obj", &out.to_string_lossy(), 20);
+        cache.update_entry("vxlib".into(), std::slice::from_ref(&src), "obj", &out.to_string_lossy(), 20);
         assert_eq!(cache.target_count(), 2);
 
         cache.invalidate("bin");
         assert_eq!(cache.target_count(), 1);
-        assert!(!cache.is_target_fresh("bin", &[src.clone()], 20));
+        assert!(!cache.is_target_fresh("bin", std::slice::from_ref(&src), 20));
         assert!(cache.is_target_fresh("vxlib", &[src], 20));
 
         cache.invalidate_all();
@@ -506,9 +492,9 @@ mod tests {
         // output 路径不存在
         let ghost_output = dir.path().join("ghost.bin");
         let mut cache = BuildCache::empty(Path::new("/tmp/x.toml"));
-        cache.update_entry("bin".into(), &[src.clone()], "obj", &ghost_output.to_string_lossy(), 20);
+        cache.update_entry("bin".into(), std::slice::from_ref(&src), "obj", &ghost_output.to_string_lossy(), 20);
         // update_entry 会检测 output_exists = false
-        assert!(!cache.is_target_fresh("bin", &[src.clone()], 20));
+        assert!(!cache.is_target_fresh("bin", std::slice::from_ref(&src), 20));
     }
 
     #[test]

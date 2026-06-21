@@ -94,54 +94,6 @@ impl Value {
             _ => 0,
         }
     }
-
-    #[allow(dead_code)]
-    pub fn to_string(&self) -> String {
-        match self {
-            Value::Nil => "nil".to_string(),
-            Value::Int(i) => i.to_string(),
-        Value::Float(f) => {
-            let mut s = f.to_string();
-            if s.contains('.') {
-                s = s.trim_end_matches('0').trim_end_matches('.').to_string();
-            }
-            s
-        }
-            Value::Bool(b) => {
-                if *b {
-                    "true".to_string()
-                } else {
-                    "false".to_string()
-                }
-            }
-            Value::String(s) => s.clone(),
-            Value::Array(arr) => {
-                let items: Vec<String> = arr.iter().map(|v| v.to_string()).collect();
-                format!("[{}]", items.join(", "))
-            }
-            Value::Map(map) => {
-                let items: Vec<String> = map
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v.to_string()))
-                    .collect();
-                format!("{{{}}}", items.join(", "))
-            }
-            Value::Instance { class_name, fields } => {
-                let items: Vec<String> = fields
-                    .iter()
-                    .map(|(k, v)| format!("{}={}", k, v.to_string()))
-                    .collect();
-                format!("{}({})", class_name, items.join(", "))
-            }
-            Value::Pointer {
-                class_name,
-                alloc_id,
-                generation,
-            } => {
-                format!("{}*({}:{})", class_name, alloc_id, generation)
-            }
-        }
-    }
 }
 
 impl std::fmt::Display for Value {

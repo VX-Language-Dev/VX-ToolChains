@@ -507,10 +507,12 @@ impl VxBuilder {
     /// extra_libs_env: 编码后的额外库映射, 通过环境变量 VX_EXTRA_LIBS 传递
     ///
     /// 优化/死代码策略通过两条链路注入:
-    ///   1) `--opt-level` / `--warn-dead-code` / `--error-dead-code` CLI 参数
-    ///   2) `VX_OPT_LEVEL` / `VX_WARN_DEAD_CODE` / `VX_ERROR_DEAD_CODE` 环境变量
-    /// 后者供 vxcompiler 内部的 `Compiler::with_options` 使用, 保证编译核心
-    /// 实例字段与 CLI 透传值一致 (避免 vxcompiler 内部默认值覆盖)。
+    ///
+    /// 1. `--opt-level` / `--warn-dead-code` / `--error-dead-code` CLI 参数
+    ///
+    /// 2. `VX_OPT_LEVEL` / `VX_WARN_DEAD_CODE` / `VX_ERROR_DEAD_CODE` 环境变量
+    ///    后者供 vxcompiler 内部的 `Compiler::with_options` 使用, 保证编译核心
+    ///    实例字段与 CLI 透传值一致 (避免 vxcompiler 内部默认值覆盖)。
     fn run_vxcompiler(
         &self,
         source: &str,

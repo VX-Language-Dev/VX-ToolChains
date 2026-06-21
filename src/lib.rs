@@ -14,7 +14,11 @@ pub mod type_ir;
 
 // 编译器模块：供 vxcompiler CLI、LSP、构建器、集成测试共享使用
 pub mod compiler_bytecode;
+pub mod compiler_typeir;
 pub mod compiler_core;
+pub mod compiler_expr;
+pub mod compiler_stmt;
+pub mod compiler_module;
 
 // AOT 后端: Feature-gated Cranelift 原生代码生成
 // 启用: cargo build --features aot
