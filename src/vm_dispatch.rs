@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::opcode::OpCode;
 use crate::value::Value;
 use crate::vm::VM;
@@ -22,6 +23,70 @@ macro_rules! try_frame {
             None => return DispatchResult::Error("VM invariant: no call frames on stack".into()),
         }
     };
+}
+
+/// 特化整数算术宏：弹出两个 i64，执行 checked 操作，溢出时返回错误
+macro_rules! int_arith {
+    ($self:expr, $checked_fn:ident, $op_name:expr) => {{
+        let b = $self.pop_int();
+        let a = $self.pop_int();
+        match a.$checked_fn(b) {
+            Some(v) => $self.push_int(v),
+            None => return DispatchResult::Error(concat!("Integer overflow: ", $op_name).into()),
+        }
+    }};
+}
+
+/// 特化浮点算术宏：弹出两个 f64，执行操作
+macro_rules! float_arith {
+    ($self:expr, $op:tt) => {{
+        let b = $self.pop_float();
+        let a = $self.pop_float();
+        $self.push_float(a $op b);
+    }};
+}
+
+/// 带除零检查的整数运算宏
+macro_rules! int_arith_checked {
+    ($self:expr, $checked_fn:ident, $zero_err:expr, $op_name:expr) => {{
+        let b = $self.pop_int();
+        let a = $self.pop_int();
+        if b != 0 {
+            match a.$checked_fn(b) {
+                Some(v) => $self.push_int(v),
+                None => return DispatchResult::Error(concat!("Integer overflow: ", $op_name).into()),
+            }
+        } else {
+            return DispatchResult::Error($zero_err.into());
+        }
+    }};
+}
+
+/// 带除零检查的浮点运算宏
+macro_rules! float_arith_checked {
+    ($self:expr, $op:tt, $zero_err:expr) => {{
+        let b = $self.pop_float();
+        let a = $self.pop_float();
+        if b != 0.0 {
+            $self.push_float(a $op b);
+        } else {
+            return DispatchResult::Error($zero_err.into());
+        }
+    }};
+}
+
+/// 特化比较宏：弹出两个同类型值，执行比较，推入 bool 结果
+macro_rules! specialized_cmp {
+    ($self:expr, int, $op:tt) => {{
+        let b = $self.pop_int();
+        let a = $self.pop_int();
+        $self.push_bool(a $op b);
+    }};
+    ($self:expr, float, $op:tt) => {{
+        let b = $self.pop_float();
+        let a = $self.pop_float();
+        $self.push_bool(a $op b);
+    }};
 }
 
 impl VM {
@@ -101,11 +166,11 @@ impl VM {
 
                 match &callee {
                     Value::String(ref s) => {
-                        if let Some(&fn_idx) = self.module.function_map.get(s) {
+                        if let Some(&fn_idx) = self.module.function_map.get(s.as_ref()) {
                             if let Err(e) = self.call_user_function(fn_idx, &args) {
                                 return DispatchResult::Error(e);
                             }
-                        } else if let Some(f) = self.builtins.get(s) {
+                        } else if let Some(f) = self.builtins.get(s.as_ref()) {
                             let result = f(&mut args);
                             self.push(result);
                         } else {
@@ -175,10 +240,10 @@ impl VM {
                     },
                     (Value::Float(af), Value::Float(bf)) => Value::Float(af + bf),
                     (Value::String(as_), Value::String(bs)) => {
-                        Value::String(format!("{}{}", as_, bs))
+                        Value::String(Arc::from(format!("{}{}", as_, bs).as_str()))
                     }
                     (Value::String(as_), _) => {
-                        Value::String(format!("{}{}", as_, b))
+                        Value::String(Arc::from(format!("{}{}", as_, b).as_str()))
                     }
                     _ => return DispatchResult::Error("Type mismatch in +".into()),
                 };
@@ -320,79 +385,16 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in binary cmp: {:?}
     #[inline]
     pub(crate) fn exec_specialized_arith(&mut self, op: OpCode) -> DispatchResult {
         match op {
-            OpCode::AddInt => {
-                let b = self.pop_int();
-                let a = self.pop_int();
-                match a.checked_add(b) {
-                    Some(v) => self.push_int(v),
-                    None => return DispatchResult::Error("Integer overflow: AddInt".into()),
-                }
-            }
-            OpCode::AddFloat => {
-                let b = self.pop_float();
-                let a = self.pop_float();
-                self.push_float(a + b);
-            }
-            OpCode::SubInt => {
-                let b = self.pop_int();
-                let a = self.pop_int();
-                match a.checked_sub(b) {
-                    Some(v) => self.push_int(v),
-                    None => return DispatchResult::Error("Integer underflow: SubInt".into()),
-                }
-            }
-            OpCode::SubFloat => {
-                let b = self.pop_float();
-                let a = self.pop_float();
-                self.push_float(a - b);
-            }
-            OpCode::MulInt => {
-                let b = self.pop_int();
-                let a = self.pop_int();
-                match a.checked_mul(b) {
-                    Some(v) => self.push_int(v),
-                    None => return DispatchResult::Error("Integer overflow: MulInt".into()),
-                }
-            }
-            OpCode::MulFloat => {
-                let b = self.pop_float();
-                let a = self.pop_float();
-                self.push_float(a * b);
-            }
-            OpCode::DivInt => {
-                let b = self.pop_int();
-                let a = self.pop_int();
-                if b != 0 {
-                    match a.checked_div(b) {
-                        Some(v) => self.push_int(v),
-                        None => return DispatchResult::Error("Integer overflow: DivInt".into()),
-                    }
-                } else {
-                    return DispatchResult::Error("Division by zero".into());
-                }
-            }
-            OpCode::DivFloat => {
-                let b = self.pop_float();
-                let a = self.pop_float();
-                if b != 0.0 {
-                    self.push_float(a / b);
-                } else {
-                    return DispatchResult::Error("Division by zero".into());
-                }
-            }
-            OpCode::ModInt => {
-                let b = self.pop_int();
-                let a = self.pop_int();
-                if b != 0 {
-                    match a.checked_rem(b) {
-                        Some(v) => self.push_int(v),
-                        None => return DispatchResult::Error("Integer overflow: ModInt".into()),
-                    }
-                } else {
-                    return DispatchResult::Error("Modulo by zero".into());
-                }
-            }
-_ => return DispatchResult::Error(format!("Unexpected opcode in specialized arith: {:?}", op)),
+            OpCode::AddInt => int_arith!(self, checked_add, "AddInt"),
+            OpCode::AddFloat => float_arith!(self, +),
+            OpCode::SubInt => int_arith!(self, checked_sub, "SubInt"),
+            OpCode::SubFloat => float_arith!(self, -),
+            OpCode::MulInt => int_arith!(self, checked_mul, "MulInt"),
+            OpCode::MulFloat => float_arith!(self, *),
+            OpCode::DivInt => int_arith_checked!(self, checked_div, "Division by zero", "DivInt"),
+            OpCode::DivFloat => float_arith_checked!(self, /, "Division by zero"),
+            OpCode::ModInt => int_arith_checked!(self, checked_rem, "Modulo by zero", "ModInt"),
+            _ => return DispatchResult::Error(format!("Unexpected opcode in specialized arith: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -400,17 +402,17 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in specialized arit
     #[inline]
     pub(crate) fn exec_specialized_cmp(&mut self, op: OpCode) -> DispatchResult {
         match op {
-            OpCode::EqInt => { let b = self.pop_int(); let a = self.pop_int(); self.push_bool(a == b); }
-            OpCode::EqFloat => { let b = self.pop_float(); let a = self.pop_float(); self.push_bool(a == b); }
-            OpCode::LtInt => { let b = self.pop_int(); let a = self.pop_int(); self.push_bool(a < b); }
-            OpCode::LtFloat => { let b = self.pop_float(); let a = self.pop_float(); self.push_bool(a < b); }
-            OpCode::GtInt => { let b = self.pop_int(); let a = self.pop_int(); self.push_bool(a > b); }
-            OpCode::GtFloat => { let b = self.pop_float(); let a = self.pop_float(); self.push_bool(a > b); }
-            OpCode::LeInt => { let b = self.pop_int(); let a = self.pop_int(); self.push_bool(a <= b); }
-            OpCode::LeFloat => { let b = self.pop_float(); let a = self.pop_float(); self.push_bool(a <= b); }
-            OpCode::GeInt => { let b = self.pop_int(); let a = self.pop_int(); self.push_bool(a >= b); }
-            OpCode::GeFloat => { let b = self.pop_float(); let a = self.pop_float(); self.push_bool(a >= b); }
-_ => return DispatchResult::Error(format!("Unexpected opcode in specialized cmp: {:?}", op)),
+            OpCode::EqInt => specialized_cmp!(self, int, ==),
+            OpCode::EqFloat => specialized_cmp!(self, float, ==),
+            OpCode::LtInt => specialized_cmp!(self, int, <),
+            OpCode::LtFloat => specialized_cmp!(self, float, <),
+            OpCode::GtInt => specialized_cmp!(self, int, >),
+            OpCode::GtFloat => specialized_cmp!(self, float, >),
+            OpCode::LeInt => specialized_cmp!(self, int, <=),
+            OpCode::LeFloat => specialized_cmp!(self, float, <=),
+            OpCode::GeInt => specialized_cmp!(self, int, >=),
+            OpCode::GeFloat => specialized_cmp!(self, float, >=),
+            _ => return DispatchResult::Error(format!("Unexpected opcode in specialized cmp: {:?}", op)),
         }
         DispatchResult::Continue
     }
@@ -418,17 +420,17 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in specialized cmp:
     #[inline]
     pub(crate) fn exec_specialized_logic_unary(&mut self, op: OpCode) -> DispatchResult {
         match op {
-            OpCode::And => { let b = self.pop_bool(); let a = self.pop_bool(); self.push_bool(a && b); }
-            OpCode::Or => { let b = self.pop_bool(); let a = self.pop_bool(); self.push_bool(a || b); }
-            OpCode::NegInt => {
+            OpCode::And => {{ let b = self.pop_bool(); let a = self.pop_bool(); self.push_bool(a && b); }}
+            OpCode::Or  => {{ let b = self.pop_bool(); let a = self.pop_bool(); self.push_bool(a || b); }}
+            OpCode::NegInt => {{
                 let a = self.pop_int();
                 match a.checked_neg() {
                     Some(v) => self.push_int(v),
                     None => return DispatchResult::Error("Integer overflow: NegInt".into()),
                 }
-            }
-            OpCode::NegFloat => { let a = self.pop_float(); self.push_float(-a); }
-            OpCode::Not => { let a = self.pop_bool(); self.push_bool(!a); }
+            }}
+            OpCode::NegFloat => {{ let a = self.pop_float(); self.push_float(-a); }}
+            OpCode::Not => {{ let a = self.pop_bool(); self.push_bool(!a); }}
             OpCode::UnaryNeg => {
                 let a = self.pop();
                 let result = match a {
@@ -459,7 +461,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in logic/unary: {:?
                 let mut tmp: Vec<Value> =
                     self.drain_stack(self.stack_len() - count..self.stack_len());
                 tmp.reverse();
-                self.push(Value::Array(tmp));
+                self.push(Value::Array(Arc::new(tmp)));
             }
             OpCode::IndexGet => {
                 let idx = self.pop();
@@ -480,7 +482,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in logic/unary: {:?
                             return DispatchResult::Error("String index out of bounds".into());
                         }
                         match s.chars().nth(*i as usize) {
-                            Some(c) => Value::String(c.to_string()),
+                            Some(c) => Value::String(c.to_string().into()),
                             None => return DispatchResult::Error("String index out of bounds".into()),
                         }
                     }
@@ -498,12 +500,12 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in logic/unary: {:?
                             if i < 0 || (i as usize) >= arr.len() {
                                 return DispatchResult::Error("Array index out of bounds in assignment".into());
                             }
-                            arr[i as usize] = val;
+                            Arc::make_mut(arr)[i as usize] = val;
                         }
                     }
                     Value::Map(map) => {
                         let key = idx.to_string();
-                        map.insert(key, val);
+                        Arc::make_mut(map).insert(key, val);
                     }
                     _ => return DispatchResult::Error("Cannot index-assign this type".into()),
                 }
@@ -524,15 +526,15 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in logic/unary: {:?
                     let key = &tmp[i * 2 + 1];
                     map.insert(key.to_string(), val.clone());
                 }
-                self.push(Value::Map(map));
+                self.push(Value::Map(Arc::new(map)));
             }
             OpCode::MakeStruct | OpCode::MakeClass => {
                 let name = sarg.unwrap_or("").to_string();
-                let mut inst_val = Value::Instance { class_name: name.clone(), fields: HashMap::new() };
+                let mut inst_val = Value::Instance { class_name: name.clone().into(), fields: Arc::new(HashMap::new()) };
                 if let Some(fields) = self.module.struct_defs.get(&name) {
                     if let Value::Instance { fields: ref mut inst_fields, .. } = inst_val {
                         for field in fields {
-                            inst_fields.insert(field.clone(), Value::Nil);
+                            Arc::make_mut(inst_fields).insert(field.clone(), Value::Nil);
                         }
                     }
                 }
@@ -563,7 +565,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in collection: {:?}
                                     } else {
                                         let method_name = format!("{}_{}", rec.instance.type_name(), prop_name);
                                         if self.module.function_map.contains_key(&method_name) {
-                                            Value::String(method_name)
+                                            Value::String(method_name.into())
                                         } else {
                                             return DispatchResult::Error(format!("Property not found: {}", prop_name));
                                         }
@@ -581,7 +583,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in collection: {:?}
                         } else {
                             let method_name = format!("{}_{}", obj_type_name, prop_name);
                             if self.module.function_map.contains_key(&method_name) {
-                                Value::String(method_name)
+                                Value::String(method_name.into())
                             } else {
                                 return DispatchResult::Error(format!("Property not found: {}", prop_name));
                             }
@@ -601,13 +603,17 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in collection: {:?}
                     let alloc_id = *alloc_id;
                     if let Ok(true) = self.validate_pointer(&obj) {
                         if let Some(rec) = self.alloc_registry.get_mut(&alloc_id) {
-                            if let Value::Instance { fields, .. } | Value::Map(fields) = &mut rec.instance {
-                                fields.insert(prop_name, val);
+                            if let Value::Instance { fields: ref mut f1, .. } = rec.instance {
+                                Arc::make_mut(f1).insert(prop_name, val);
+                            } else if let Value::Map(ref mut f2) = rec.instance {
+                                Arc::make_mut(f2).insert(prop_name, val);
                             }
                         }
                     }
-                } else if let Value::Instance { fields, .. } | Value::Map(fields) = &mut obj {
-                    fields.insert(prop_name, val);
+                } else if let Value::Instance { fields: ref mut f3, .. } = &mut obj {
+                    Arc::make_mut(f3).insert(prop_name, val);
+                } else if let Value::Map(ref mut f4) = &mut obj {
+                    Arc::make_mut(f4).insert(prop_name, val);
                 } else {
                     return DispatchResult::Error("Cannot set property on this type".into());
                 }
@@ -648,7 +654,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in property: {:?}",
                                     } else {
                                         let method_name = format!("{}_{}", rec.instance.type_name(), prop_name);
                                         if self.module.function_map.contains_key(&method_name) {
-                                            Value::String(method_name)
+                                            Value::String(method_name.into())
                                         } else {
                                             return DispatchResult::Error(format!("Pointer member not found: {}", prop_name));
                                         }
@@ -678,11 +684,11 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in pointer: {:?}", 
             OpCode::New => {
                 let class_name_val = self.pop();
                 if let Value::String(class_name) = class_name_val {
-                    let mut inst_val = Value::Instance { class_name: class_name.clone(), fields: HashMap::new() };
-                    if let Some(fields) = self.module.struct_defs.get(&class_name) {
+                    let mut inst_val = Value::Instance { class_name: class_name.clone(), fields: Arc::new(HashMap::new()) };
+                    if let Some(fields) = self.module.struct_defs.get(class_name.as_ref()) {
                         if let Value::Instance { fields: fields_map, .. } = &mut inst_val {
                             for field in fields {
-                                fields_map.insert(field.clone(), Value::Nil);
+                                Arc::make_mut(fields_map).insert(field.clone(), Value::Nil);
                             }
                         }
                     }
@@ -700,8 +706,8 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in pointer: {:?}", 
                 let class_name_val = self.pop();
 
                 if let Value::String(class_name) = class_name_val {
-                    let mut inst_val = Value::Instance { class_name: class_name.clone(), fields: HashMap::new() };
-                    if let Some(fields) = self.module.struct_defs.get(&class_name) {
+                    let mut inst_val = Value::Instance { class_name: class_name.clone(), fields: Arc::new(HashMap::new()) };
+                    if let Some(fields) = self.module.struct_defs.get(class_name.as_ref()) {
                         let mut fields_map = HashMap::new();
                         for (i, field) in fields.iter().enumerate() {
                             let val = args.get(i).cloned().unwrap_or(Value::Nil);
@@ -709,10 +715,10 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in pointer: {:?}", 
                         }
                         inst_val = Value::Instance {
                             class_name: class_name.clone(),
-                            fields: fields_map,
+                            fields: Arc::new(fields_map),
                         };
                     }
-                    let alloc_id = self.alloc_heap(class_name.clone(), inst_val);
+                    let alloc_id = self.alloc_heap(class_name.to_string(), inst_val);
                     let gen = self
                         .alloc_registry
                         .get(&alloc_id)
@@ -743,7 +749,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in new: {:?}", op))
             }
             OpCode::OwnershipMove => {
                 if let Some(Value::String(name)) = self.peek(0) {
-                    self.moved_vars.insert(name.clone());
+                    self.moved_vars.insert(name.to_string());
                 }
             }
             OpCode::ScopeDrop => {
@@ -780,16 +786,16 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in memory safety: {
                     if !module_name.is_empty() {
                         self.globals.insert(
                             module_name.to_string(),
-                            Value::Instance { class_name: module_name.to_string(), fields: HashMap::new() },
+                            Value::Instance { class_name: module_name.into(), fields: HashMap::new().into() },
                         );
                     }
                 }
             }
             OpCode::SysArgv => {
                 let args: Vec<Value> = self.argv.iter()
-                    .map(|s| Value::String(s.clone()))
+                    .map(|s| Value::String(s.clone().into()))
                     .collect();
-                self.push(Value::Array(args));
+                self.push(Value::Array(args.into()));
             }
             OpCode::System => {
                 let cmd_arg = self.pop();
@@ -813,8 +819,8 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in memory safety: {
                 let path_val = self.pop();
                 match path_val {
                     Value::String(ref path) => {
-                        match std::fs::read_to_string(path) {
-                            Ok(content) => self.push(Value::String(content)),
+                        match std::fs::read_to_string(path.as_ref()) {
+                            Ok(content) => self.push(Value::String(content.into())),
                             Err(e) => {
                                 return DispatchResult::Error(format!("file_read failed: {}", e));
                             }
@@ -828,7 +834,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in memory safety: {
                 let path_val = self.pop();
                 match (path_val, content_val) {
                     (Value::String(ref path), Value::String(ref content)) => {
-                        match std::fs::write(path, content) {
+                        match std::fs::write(path.as_ref(), content.as_ref()) {
                             Ok(_) => self.push(Value::Bool(true)),
                             Err(e) => {
                                 return DispatchResult::Error(format!("file_write failed: {}", e));
@@ -836,7 +842,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in memory safety: {
                         }
                     }
                     (Value::String(ref path), other) => {
-                        match std::fs::write(path, other.to_string()) {
+                        match std::fs::write(path.as_ref(), other.to_string()) {
                             Ok(_) => self.push(Value::Bool(true)),
                             Err(e) => {
                                 return DispatchResult::Error(format!("file_write failed: {}", e));
@@ -850,7 +856,7 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in memory safety: {
                 let path_val = self.pop();
                 match path_val {
                     Value::String(ref path) => {
-                        self.push(Value::Bool(std::path::Path::new(path).exists()));
+                        self.push(Value::Bool(std::path::Path::new(path.as_ref()).exists()));
                     }
                     _ => return DispatchResult::Error("file_exists: parameter must be a string path".into()),
                 }

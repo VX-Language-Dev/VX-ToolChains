@@ -1,6 +1,7 @@
 // ==================== VM 核心 ====================
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use crate::value::Value;
 use crate::instruction::{Instruction, Function, Module, CallFrame};
 use crate::memory_safety::AllocRecord;
@@ -120,10 +121,261 @@ impl VM {
             if args.len() >= 2 {
                 let val = args[1].clone();
                 if let Value::Array(ref mut arr) = args[0] {
-                    arr.push(val);
+                    Arc::make_mut(arr).push(val);
                 }
             }
             Value::nil()
+        });
+
+        // ---- VX 自举所需扩展内建函数 ----
+        vm.define_builtin("ord", |args| {
+            if args.is_empty() {
+                return Value::int(0);
+            }
+            match &args[0] {
+                Value::String(s) => {
+                    if let Some(c) = s.chars().next() {
+                        Value::int(c as i64)
+                    } else {
+                        Value::int(0)
+                    }
+                }
+                _ => Value::int(0),
+            }
+        });
+
+        vm.define_builtin("chr", |args| {
+            if args.is_empty() {
+                return Value::string("".to_string());
+            }
+            match &args[0] {
+                Value::Int(i) => {
+                    if let Some(c) = char::from_u32(*i as u32) {
+                        Value::string(c.to_string())
+                    } else {
+                        Value::string("".to_string())
+                    }
+                }
+                _ => Value::string("".to_string()),
+            }
+        });
+
+        vm.define_builtin("float", |args| {
+            if args.is_empty() {
+                return Value::float(0.0);
+            }
+            match &args[0] {
+                Value::Int(i) => Value::float(*i as f64),
+                Value::Float(f) => Value::float(*f),
+                Value::Bool(b) => Value::float(if *b { 1.0 } else { 0.0 }),
+                Value::String(s) => s.parse::<f64>().map(Value::float).unwrap_or(Value::float(0.0)),
+                _ => Value::float(0.0),
+            }
+        });
+
+        vm.define_builtin("parse_int", |args| {
+            if args.is_empty() {
+                return Value::nil();
+            }
+            match &args[0] {
+                Value::String(s) => s.parse::<i64>().map(Value::int).unwrap_or(Value::nil()),
+                Value::Int(i) => Value::int(*i),
+                _ => Value::nil(),
+            }
+        });
+
+        vm.define_builtin("parse_float", |args| {
+            if args.is_empty() {
+                return Value::nil();
+            }
+            match &args[0] {
+                Value::String(s) => s.parse::<f64>().map(Value::float).unwrap_or(Value::nil()),
+                Value::Float(f) => Value::float(*f),
+                Value::Int(i) => Value::float(*i as f64),
+                _ => Value::nil(),
+            }
+        });
+
+        vm.define_builtin("file_read_bytes", |args| {
+            if args.is_empty() {
+                return Value::nil();
+            }
+            match &args[0] {
+                Value::String(path) => match std::fs::read(path.as_ref()) {
+                    Ok(bytes) => Value::Array(Arc::new(bytes.into_iter().map(|b| Value::int(b as i64)).collect())),
+                    Err(_) => Value::nil(),
+                },
+                _ => Value::nil(),
+            }
+        });
+
+        vm.define_builtin("file_write_bytes", |args| {
+            if args.len() < 2 {
+                return Value::bool(false);
+            }
+            let path = match &args[0] {
+                Value::String(s) => s.to_string(),
+                _ => return Value::bool(false),
+            };
+            let bytes: Vec<u8> = match &args[1] {
+                Value::Array(arr) => arr.iter()
+                    .map(|v| match v {
+                        Value::Int(i) => *i as u8,
+                        _ => 0,
+                    })
+                    .collect(),
+                _ => return Value::bool(false),
+            };
+            match std::fs::write(&path, bytes) {
+                Ok(_) => Value::bool(true),
+                Err(_) => Value::bool(false),
+            }
+        });
+
+        vm.define_builtin("file_size", |args| {
+            if args.is_empty() {
+                return Value::int(-1);
+            }
+            match &args[0] {
+                Value::String(path) => match std::fs::metadata(path.as_ref()) {
+                    Ok(m) => Value::int(m.len() as i64),
+                    Err(_) => Value::int(-1),
+                },
+                _ => Value::int(-1),
+            }
+        });
+
+        vm.define_builtin("is_dir", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            match &args[0] {
+                Value::String(path) => match std::fs::metadata(path.as_ref()) {
+                    Ok(m) => Value::bool(m.is_dir()),
+                    Err(_) => Value::bool(false),
+                },
+                _ => Value::bool(false),
+            }
+        });
+
+        vm.define_builtin("mkdir", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            match &args[0] {
+                Value::String(path) => match std::fs::create_dir_all(path.as_ref()) {
+                    Ok(_) => Value::bool(true),
+                    Err(_) => Value::bool(false),
+                },
+                _ => Value::bool(false),
+            }
+        });
+
+        vm.define_builtin("remove_file", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            match &args[0] {
+                Value::String(path) => match std::fs::remove_file(path.as_ref()) {
+                    Ok(_) => Value::bool(true),
+                    Err(_) => Value::bool(false),
+                },
+                _ => Value::bool(false),
+            }
+        });
+
+        vm.define_builtin("remove_dir", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            match &args[0] {
+                Value::String(path) => match std::fs::remove_dir_all(path.as_ref()) {
+                    Ok(_) => Value::bool(true),
+                    Err(_) => Value::bool(false),
+                },
+                _ => Value::bool(false),
+            }
+        });
+
+        vm.define_builtin("get_env", |args| {
+            if args.is_empty() {
+                return Value::nil();
+            }
+            match &args[0] {
+                Value::String(key) => match std::env::var(key.as_ref()) {
+                    Ok(v) => Value::string(v),
+                    Err(_) => Value::nil(),
+                },
+                _ => Value::nil(),
+            }
+        });
+
+        vm.define_builtin("set_env", |args| {
+            if args.len() < 2 {
+                return Value::bool(false);
+            }
+            let key = match &args[0] {
+                Value::String(s) => s.to_string(),
+                _ => return Value::bool(false),
+            };
+            let val = match &args[1] {
+                Value::String(s) => s.to_string(),
+                other => other.to_string(),
+            };
+            match std::env::set_var(&key, val) {
+                _ => Value::bool(true),
+            }
+        });
+
+        vm.define_builtin("unset_env", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            match &args[0] {
+                Value::String(key) => {
+                    std::env::remove_var(key.as_ref());
+                    Value::bool(true)
+                }
+                _ => Value::bool(false),
+            }
+        });
+
+        vm.define_builtin("current_dir", |_args| {
+            match std::env::current_dir() {
+                Ok(p) => Value::string(p.to_string_lossy().to_string()),
+                Err(_) => Value::nil(),
+            }
+        });
+
+        vm.define_builtin("exit", |args| {
+            let code = if args.is_empty() {
+                0
+            } else {
+                match &args[0] {
+                    Value::Int(i) => *i as i32,
+                    _ => 0,
+                }
+            };
+            std::process::exit(code);
+        });
+
+        vm.define_builtin("run_cmd", |args| {
+            if args.is_empty() {
+                return Value::Array(Arc::new(vec![Value::int(-1), Value::string("".to_string()), Value::string("".to_string())]));
+            }
+            let cmd = match &args[0] {
+                Value::String(s) => s.to_string(),
+                _ => return Value::Array(Arc::new(vec![Value::int(-1), Value::string("".to_string()), Value::string("".to_string())])),
+            };
+            match std::process::Command::new("sh").arg("-c").arg(&cmd).output() {
+                Ok(output) => {
+                    let status = output.status.code().unwrap_or(-1) as i64;
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    Value::Array(Arc::new(vec![Value::int(status), Value::string(stdout), Value::string(stderr)]))
+                }
+                Err(e) => Value::Array(Arc::new(vec![Value::int(-1), Value::string("".to_string()), Value::string(e.to_string())])),
+            }
         });
 
         vm
@@ -166,7 +418,7 @@ impl VM {
                     buf.copy_from_slice(&c.data[..8]);
                     Value::Float(f64::from_be_bytes(buf))
                 }
-                3 => Value::String(String::from_utf8_lossy(&c.data).to_string()),
+                3 => Value::String(String::from_utf8_lossy(&c.data).to_string().into()),
                 4 => Value::Bool(c.data.first().copied().unwrap_or(0) != 0),
                 _ => Value::Nil,
             };

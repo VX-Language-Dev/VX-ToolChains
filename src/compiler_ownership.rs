@@ -316,7 +316,7 @@ impl OwnershipChecker {
                 }
                 self.pop_scope();
             }
-            Expr::FuncDecl(_, params, _, body, _, _) => {
+            Expr::FuncDecl(_, _, params, _, body, _, _) => {
                 self.push_scope();
                 for (p, _) in params {
                     self.declare_var(p, false);

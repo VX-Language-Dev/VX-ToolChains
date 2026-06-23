@@ -1,4 +1,10 @@
 // ==================== OpCode ====================
+//
+// OpCode 使用 #[repr(u8)] 保证与字节码文件中的编码一致。
+// TryFrom<u8> 通过查找表实现，新增 OpCode 时只需：
+//   1. 在 enum 中添加变体并指定显式判别值
+//   2. 在 OP_LOOKUP_TABLE 的对应位置添加条目
+// 无需手动维护冗长的 match 表。
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u8)]
@@ -34,30 +40,6 @@ pub enum OpCode {
     BinaryOr = 0x1D,
     UnaryNeg = 0x1E,
     UnaryNot = 0x1F,
-    AddInt = 0x40,
-    AddFloat = 0x41,
-    SubInt = 0x42,
-    SubFloat = 0x43,
-    MulInt = 0x44,
-    MulFloat = 0x45,
-    DivInt = 0x46,
-    DivFloat = 0x47,
-    ModInt = 0x48,
-    EqInt = 0x49,
-    EqFloat = 0x4A,
-    LtInt = 0x4B,
-    LtFloat = 0x4C,
-    GtInt = 0x4D,
-    GtFloat = 0x4E,
-    LeInt = 0x4F,
-    LeFloat = 0x50,
-    GeInt = 0x51,
-    GeFloat = 0x52,
-    NegInt = 0x53,
-    NegFloat = 0x54,
-    Not = 0x55,
-    And = 0x56,
-    Or = 0x57,
     MakeStruct = 0x20,
     MakeClass = 0x21,
     MakeEnum = 0x22,
@@ -90,99 +72,145 @@ pub enum OpCode {
     ScopeDrop = 0x3C,
     BorrowCheck = 0x3D,
     AliveCheck = 0x3E,
+    // Specialized type ops (0x40-0x57)
+    AddInt = 0x40,
+    AddFloat = 0x41,
+    SubInt = 0x42,
+    SubFloat = 0x43,
+    MulInt = 0x44,
+    MulFloat = 0x45,
+    DivInt = 0x46,
+    DivFloat = 0x47,
+    ModInt = 0x48,
+    EqInt = 0x49,
+    EqFloat = 0x4A,
+    LtInt = 0x4B,
+    LtFloat = 0x4C,
+    GtInt = 0x4D,
+    GtFloat = 0x4E,
+    LeInt = 0x4F,
+    LeFloat = 0x50,
+    GeInt = 0x51,
+    GeFloat = 0x52,
+    NegInt = 0x53,
+    NegFloat = 0x54,
+    Not = 0x55,
+    And = 0x56,
+    Or = 0x57,
 }
+
+/// 最大 opcode 值 + 1，用于确定查找表大小。
+const OP_CODE_MAX: u8 = 0x58; // 88
+
+/// 查找表：将 u8 字节码映射到 Option<OpCode>。
+/// 新增 OpCode 时，在对应索引位置添加 Some(OpCode::Xxx) 即可。
+/// 未使用的字节码位置为 None（返回错误）。
+const OP_LOOKUP_TABLE: [Option<OpCode>; OP_CODE_MAX as usize] = {
+    // 使用 const 表达式初始化数组（Rust 1.59+ 支持）
+    let mut table: [Option<OpCode>; OP_CODE_MAX as usize] = [None; OP_CODE_MAX as usize];
+    // 辅助宏：在编译期填充表项
+    macro_rules! fill {
+        ($t:ident, $val:expr) => {
+            $t[$val as usize] = Some($val)
+        };
+    }
+    fill!(table, OpCode::LoadConst);
+    fill!(table, OpCode::LoadNil);
+    fill!(table, OpCode::LoadTrue);
+    fill!(table, OpCode::LoadFalse);
+    fill!(table, OpCode::LoadVar);
+    fill!(table, OpCode::StoreVar);
+    fill!(table, OpCode::DefineVar);
+    fill!(table, OpCode::Call);
+    fill!(table, OpCode::Return);
+    fill!(table, OpCode::MakeFunction);
+    fill!(table, OpCode::Jump);
+    fill!(table, OpCode::JumpIfFalse);
+    fill!(table, OpCode::JumpIfTrue);
+    fill!(table, OpCode::Break);
+    fill!(table, OpCode::Continue);
+    fill!(table, OpCode::BinaryAdd);
+    fill!(table, OpCode::BinarySub);
+    fill!(table, OpCode::BinaryMul);
+    fill!(table, OpCode::BinaryDiv);
+    fill!(table, OpCode::BinaryMod);
+    fill!(table, OpCode::BinaryPow);
+    fill!(table, OpCode::BinaryEq);
+    fill!(table, OpCode::BinaryNe);
+    fill!(table, OpCode::BinaryLt);
+    fill!(table, OpCode::BinaryGt);
+    fill!(table, OpCode::BinaryLe);
+    fill!(table, OpCode::BinaryGe);
+    fill!(table, OpCode::BinaryAnd);
+    fill!(table, OpCode::BinaryOr);
+    fill!(table, OpCode::UnaryNeg);
+    fill!(table, OpCode::UnaryNot);
+    fill!(table, OpCode::MakeStruct);
+    fill!(table, OpCode::MakeClass);
+    fill!(table, OpCode::MakeEnum);
+    fill!(table, OpCode::MakeUnion);
+    fill!(table, OpCode::LoadField);
+    fill!(table, OpCode::StoreField);
+    fill!(table, OpCode::MakeArray);
+    fill!(table, OpCode::MakeMap);
+    fill!(table, OpCode::IndexGet);
+    fill!(table, OpCode::IndexSet);
+    fill!(table, OpCode::PropertyGet);
+    fill!(table, OpCode::PropertySet);
+    fill!(table, OpCode::AddressOf);
+    fill!(table, OpCode::Deref);
+    fill!(table, OpCode::PointerMember);
+    fill!(table, OpCode::Import);
+    fill!(table, OpCode::New);
+    fill!(table, OpCode::Halt);
+    fill!(table, OpCode::SysArgv);
+    fill!(table, OpCode::System);
+    fill!(table, OpCode::FileRead);
+    fill!(table, OpCode::FileWrite);
+    fill!(table, OpCode::FileExists);
+    fill!(table, OpCode::Dup);
+    fill!(table, OpCode::Pop);
+    fill!(table, OpCode::Newz);
+    fill!(table, OpCode::Free);
+    fill!(table, OpCode::OwnershipMove);
+    fill!(table, OpCode::ScopeDrop);
+    fill!(table, OpCode::BorrowCheck);
+    fill!(table, OpCode::AliveCheck);
+    // Specialized ops
+    fill!(table, OpCode::AddInt);
+    fill!(table, OpCode::AddFloat);
+    fill!(table, OpCode::SubInt);
+    fill!(table, OpCode::SubFloat);
+    fill!(table, OpCode::MulInt);
+    fill!(table, OpCode::MulFloat);
+    fill!(table, OpCode::DivInt);
+    fill!(table, OpCode::DivFloat);
+    fill!(table, OpCode::ModInt);
+    fill!(table, OpCode::EqInt);
+    fill!(table, OpCode::EqFloat);
+    fill!(table, OpCode::LtInt);
+    fill!(table, OpCode::LtFloat);
+    fill!(table, OpCode::GtInt);
+    fill!(table, OpCode::GtFloat);
+    fill!(table, OpCode::LeInt);
+    fill!(table, OpCode::LeFloat);
+    fill!(table, OpCode::GeInt);
+    fill!(table, OpCode::GeFloat);
+    fill!(table, OpCode::NegInt);
+    fill!(table, OpCode::NegFloat);
+    fill!(table, OpCode::Not);
+    fill!(table, OpCode::And);
+    fill!(table, OpCode::Or);
+    table
+};
 
 impl TryFrom<u8> for OpCode {
     type Error = String;
     fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v {
-            0x01 => Ok(OpCode::LoadConst),
-            0x02 => Ok(OpCode::LoadNil),
-            0x03 => Ok(OpCode::LoadTrue),
-            0x04 => Ok(OpCode::LoadFalse),
-            0x05 => Ok(OpCode::LoadVar),
-            0x06 => Ok(OpCode::StoreVar),
-            0x07 => Ok(OpCode::DefineVar),
-            0x08 => Ok(OpCode::Call),
-            0x09 => Ok(OpCode::Return),
-            0x0A => Ok(OpCode::MakeFunction),
-            0x0B => Ok(OpCode::Jump),
-            0x0C => Ok(OpCode::JumpIfFalse),
-            0x0D => Ok(OpCode::JumpIfTrue),
-            0x0E => Ok(OpCode::Break),
-            0x0F => Ok(OpCode::Continue),
-            0x10 => Ok(OpCode::BinaryAdd),
-            0x11 => Ok(OpCode::BinarySub),
-            0x12 => Ok(OpCode::BinaryMul),
-            0x13 => Ok(OpCode::BinaryDiv),
-            0x14 => Ok(OpCode::BinaryMod),
-            0x15 => Ok(OpCode::BinaryPow),
-            0x16 => Ok(OpCode::BinaryEq),
-            0x17 => Ok(OpCode::BinaryNe),
-            0x18 => Ok(OpCode::BinaryLt),
-            0x19 => Ok(OpCode::BinaryGt),
-            0x1A => Ok(OpCode::BinaryLe),
-            0x1B => Ok(OpCode::BinaryGe),
-            0x1C => Ok(OpCode::BinaryAnd),
-            0x1D => Ok(OpCode::BinaryOr),
-            0x1E => Ok(OpCode::UnaryNeg),
-            0x1F => Ok(OpCode::UnaryNot),
-            0x20 => Ok(OpCode::MakeStruct),
-            0x21 => Ok(OpCode::MakeClass),
-            0x22 => Ok(OpCode::MakeEnum),
-            0x23 => Ok(OpCode::MakeUnion),
-            0x24 => Ok(OpCode::LoadField),
-            0x25 => Ok(OpCode::StoreField),
-            0x26 => Ok(OpCode::MakeArray),
-            0x27 => Ok(OpCode::MakeMap),
-            0x28 => Ok(OpCode::IndexGet),
-            0x29 => Ok(OpCode::IndexSet),
-            0x2A => Ok(OpCode::PropertyGet),
-            0x2B => Ok(OpCode::PropertySet),
-            0x2C => Ok(OpCode::AddressOf),
-            0x2D => Ok(OpCode::Deref),
-            0x2E => Ok(OpCode::PointerMember),
-            0x2F => Ok(OpCode::Import),
-            0x30 => Ok(OpCode::New),
-            0x31 => Ok(OpCode::Halt),
-            0x32 => Ok(OpCode::SysArgv),
-            0x33 => Ok(OpCode::System),
-            0x34 => Ok(OpCode::FileRead),
-            0x35 => Ok(OpCode::FileWrite),
-            0x36 => Ok(OpCode::FileExists),
-            0x37 => Ok(OpCode::Dup),
-            0x38 => Ok(OpCode::Pop),
-            0x39 => Ok(OpCode::Newz),
-            0x3A => Ok(OpCode::Free),
-            0x3B => Ok(OpCode::OwnershipMove),
-            0x3C => Ok(OpCode::ScopeDrop),
-            0x3D => Ok(OpCode::BorrowCheck),
-            0x3E => Ok(OpCode::AliveCheck),
-            0x40 => Ok(OpCode::AddInt),
-            0x41 => Ok(OpCode::AddFloat),
-            0x42 => Ok(OpCode::SubInt),
-            0x43 => Ok(OpCode::SubFloat),
-            0x44 => Ok(OpCode::MulInt),
-            0x45 => Ok(OpCode::MulFloat),
-            0x46 => Ok(OpCode::DivInt),
-            0x47 => Ok(OpCode::DivFloat),
-            0x48 => Ok(OpCode::ModInt),
-            0x49 => Ok(OpCode::EqInt),
-            0x4A => Ok(OpCode::EqFloat),
-            0x4B => Ok(OpCode::LtInt),
-            0x4C => Ok(OpCode::LtFloat),
-            0x4D => Ok(OpCode::GtInt),
-            0x4E => Ok(OpCode::GtFloat),
-            0x4F => Ok(OpCode::LeInt),
-            0x50 => Ok(OpCode::LeFloat),
-            0x51 => Ok(OpCode::GeInt),
-            0x52 => Ok(OpCode::GeFloat),
-            0x53 => Ok(OpCode::NegInt),
-            0x54 => Ok(OpCode::NegFloat),
-            0x55 => Ok(OpCode::Not),
-            0x56 => Ok(OpCode::And),
-            0x57 => Ok(OpCode::Or),
-            _ => Err(format!("Unknown opcode: 0x{:02X}", v)),
-        }
+        OP_LOOKUP_TABLE
+            .get(v as usize)
+            .copied()
+            .flatten()
+            .ok_or_else(|| format!("Unknown opcode: 0x{:02X}", v))
     }
 }

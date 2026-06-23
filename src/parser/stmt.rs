@@ -13,10 +13,13 @@ impl Parser {
             TokenType::Class => self.parse_class_decl(),
             TokenType::Enum => self.parse_enum_decl(),
             TokenType::Union => self.parse_union_decl(),
+            TokenType::Macro => self.parse_macro_def(),  // 宏定义
+            TokenType::Hash => self.parse_macro_call_stmt(),  // 宏调用（作为语句）
             TokenType::Identifier if self.peek(1).kind == TokenType::Colon => self.parse_var_decl(),
             TokenType::Import => self.parse_import_stmt(),
             TokenType::Func => self.parse_func_decl(),
             TokenType::If => self.parse_if_stmt(),
+            TokenType::Identifier if self.current().value == "match" => self.parse_match_stmt(),
             TokenType::While => self.parse_while_stmt(),
             TokenType::For => self.parse_for_stmt(),
             TokenType::Return => self.parse_return_stmt(),
@@ -41,6 +44,7 @@ impl Parser {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
         let n = self.expect(TokenType::Identifier, None)?.value;
+        let gp = self.parse_generic_params()?;
         self.expect(TokenType::Colon, None)?;
         self.skip_newlines();
         let mut f = vec![];
@@ -61,13 +65,14 @@ impl Parser {
             }
         }
         self.expect(TokenType::Dedent, None)?;
-        Ok(Expr::StructDecl(n, f, m, l, c))
+        Ok(Expr::StructDecl(n, gp, f, m, l, c))
     }
 
     fn parse_class_decl(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
         let n = self.expect(TokenType::Identifier, None)?.value;
+        let gp = self.parse_generic_params()?;
         // 冒号继承语法: class Dog : Animal, Canine { ... }
         // 冒号后跟父类名，逗号分隔接口列表
         let (mut p, mut ii) = (None, vec![]);
@@ -101,7 +106,7 @@ impl Parser {
             }
         }
         self.expect(TokenType::Dedent, None)?;
-        Ok(Expr::ClassDecl(n, f, m, p, ii, l, c))
+        Ok(Expr::ClassDecl(n, gp, f, m, p, ii, l, c))
     }
 
     fn parse_enum_decl(&mut self) -> Result<Stmt, VXError> {
@@ -192,6 +197,7 @@ impl Parser {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
         let n = self.expect(TokenType::Identifier, None)?.value;
+        let gp = self.parse_generic_params()?;
         self.expect(TokenType::LParen, None)?;
         let mut p = vec![];
         if !self.match_kind(&[TokenType::RParen]) {
@@ -214,7 +220,7 @@ impl Parser {
             rt = Some(expr_to_type_name(&self.parse_type()?));
         }
         let b = self.parse_block()?;
-        Ok(Expr::FuncDecl(n, p, rt, b, l, c))
+        Ok(Expr::FuncDecl(n, gp, p, rt, b, l, c))
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt, VXError> {
@@ -238,6 +244,41 @@ impl Parser {
             ebody = Some(self.parse_block()?);
         }
         Ok(Expr::IfStmt(Box::new(cond), body, elifs, ebody, l, c))
+    }
+
+    fn parse_match_stmt(&mut self) -> Result<Stmt, VXError> {
+        let t = self.advance(); // 消费上下文标识符 match
+        let (l, c) = (t.line, t.col);
+        let subject = self.parse_expression()?;
+        let arms = self.parse_match_arms()?;
+        Ok(Expr::MatchStmt(Box::new(subject), arms, l, c))
+    }
+
+    fn parse_match_arms(&mut self) -> Result<Vec<(Box<Expr>, Vec<Box<Stmt>>)>, VXError> {
+        self.expect(TokenType::Colon, Some("期望 match 后的 ':'"))?;
+        self.skip_newlines();
+        if !self.match_kind(&[TokenType::Indent]) {
+            let arm = self.parse_match_arm()?;
+            return Ok(vec![arm]);
+        }
+        self.advance(); // 消费 Indent
+        let mut arms: Vec<(Box<Expr>, Vec<Box<Stmt>>)> = vec![];
+        while !self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
+            self.skip_newlines();
+            if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
+                break;
+            }
+            arms.push(self.parse_match_arm()?);
+        }
+        self.expect(TokenType::Dedent, None)?;
+        Ok(arms)
+    }
+
+    fn parse_match_arm(&mut self) -> Result<(Box<Expr>, Vec<Box<Stmt>>), VXError> {
+        let pattern = self.parse_expression()?;
+        self.expect(TokenType::Colon, Some("期望分支模式后的 ':'"))?;
+        let body = self.parse_block()?;
+        Ok((Box::new(pattern), body))
     }
 
     fn parse_for_stmt(&mut self) -> Result<Stmt, VXError> {
@@ -326,5 +367,78 @@ impl Parser {
             st.push(self.parse_statement()?);
         }
         Ok(st)
+    }
+
+    // ==================== 宏系统解析 ====================
+
+    /// 解析宏定义: macro name(params) { body }
+    fn parse_macro_def(&mut self) -> Result<Stmt, VXError> {
+        let t = self.advance();  // 跳过 'macro' 关键字
+        let (l, c) = (t.line, t.col);
+        
+        // 解析宏名称
+        let name = self.expect(TokenType::Identifier, Some("期望宏名称"))?.value;
+        
+        // 解析参数列表 (...)
+        self.expect(TokenType::LParen, Some("期望 '('"))?;
+        
+        let mut params = Vec::new();
+        if self.current().kind != TokenType::RParen {
+            loop {
+                let param_token = self.expect(TokenType::Identifier, Some("期望参数名"))?;
+                params.push(param_token.value);
+                
+                if self.current().kind == TokenType::RParen {
+                    break;
+                }
+                
+                self.expect(TokenType::Comma, Some("期望 ',' 或 ')'"))?;
+            }
+        }
+        
+        self.expect(TokenType::RParen, Some("期望 ')'"))?;
+        
+        // 解析宏体 {...}
+        self.expect(TokenType::LBrace, Some("期望 '{'"))?;
+        
+        let mut body = Vec::new();
+        while self.current().kind != TokenType::RBrace && self.current().kind != TokenType::EOF {
+            let stmt = self.parse_statement()?;
+            body.push(Box::new(stmt));
+        }
+        
+        self.expect(TokenType::RBrace, Some("期望 '}'"))?;
+        
+        Ok(Expr::MacroDef(name, params, body, l, c))
+    }
+
+    /// 解析宏调用语句: #macro_name(args)
+    fn parse_macro_call_stmt(&mut self) -> Result<Stmt, VXError> {
+        let t = self.advance();  // 跳过 '#'
+        let (l, c) = (t.line, t.col);
+        
+        // 解析宏名称
+        let name = self.expect(TokenType::Identifier, Some("期望宏名称"))?.value;
+        
+        // 解析参数列表 (...)
+        self.expect(TokenType::LParen, Some("期望 '('"))?;
+        
+        let mut args = Vec::new();
+        if self.current().kind != TokenType::RParen {
+            loop {
+                let arg = self.parse_expression()?;
+                args.push(Box::new(arg));
+                
+                if self.current().kind == TokenType::RParen {
+                    break;
+                }
+                
+                self.expect(TokenType::Comma, Some("期望 ',' 或 ')'"))?;
+            }
+        }
+        
+        self.expect(TokenType::RParen, Some("期望 ')'"))?;
+        
+        Ok(Expr::MacroCall(name, args, l, c))
     }
 }

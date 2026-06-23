@@ -17,13 +17,46 @@ pub struct LoopInfo {
     pub continue_jumps: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnownType {
     Int,
     Float,
     Bool,
     String,
+    Array,
+    Map,
+    Instance,
+    Pointer,
+    Nil,
     Unknown,
+}
+
+impl KnownType {
+    /// 返回类型的显示名称
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KnownType::Int => "int",
+            KnownType::Float => "float",
+            KnownType::Bool => "bool",
+            KnownType::String => "string",
+            KnownType::Array => "array",
+            KnownType::Map => "map",
+            KnownType::Instance => "instance",
+            KnownType::Pointer => "pointer",
+            KnownType::Nil => "nil",
+            KnownType::Unknown => "unknown",
+        }
+    }
+
+    /// 判断是否为数值类型（可用于算术运算）
+    pub fn is_numeric(self) -> bool {
+        matches!(self, KnownType::Int | KnownType::Float)
+    }
+
+    /// 判断是否为复合类型
+    pub fn is_compound(self) -> bool {
+        matches!(self, KnownType::Array | KnownType::Map | KnownType::Instance)
+    }
 }
 
 pub struct Compiler {
@@ -40,6 +73,8 @@ pub struct Compiler {
     pub opt_level: u8,
     pub warn_dead_code: bool,
     pub error_dead_code: bool,
+    /// 宏注册表，用于编译时宏展开
+    pub(crate) macros: crate::macros::MacroRegistry,
 }
 
 impl Compiler {
@@ -58,6 +93,7 @@ impl Compiler {
             opt_level: 0,
             warn_dead_code: false,
             error_dead_code: false,
+            macros: crate::macros::MacroRegistry::new(),
         }
     }
 
@@ -66,6 +102,151 @@ impl Compiler {
         self.warn_dead_code = warn_dead_code;
         self.error_dead_code = error_dead_code;
         self
+    }
+
+    /// 在编译之前展开宏
+    pub fn expand_macros(&mut self, ast: Vec<crate::parser::Expr>) -> Result<Vec<crate::parser::Expr>, String> {
+        let mut expanded = Vec::new();
+        
+        for stmt in ast {
+            match stmt {
+                crate::parser::Expr::MacroDef(name, params, body, line, col) => {
+                    // 注册宏定义
+                    let mac = crate::macros::Macro {
+                        name,
+                        params,
+                        body,
+                        line,
+                        col,
+                    };
+                    self.macros.register_macro(mac)?;
+                    // 宏定义本身不产生代码，跳过
+                }
+                crate::parser::Expr::MacroCall(name, args, _line, _col) => {
+                    // 展开宏调用
+                    let expanded_exprs = self.macros.expand_macro(&name, &args)?;
+                    expanded.extend(expanded_exprs);
+                }
+                _ => {
+                    // 递归处理嵌套表达式中的宏
+                    let processed = self.process_expr_for_macros(stmt)?;
+                    expanded.push(Box::new(processed));
+                }
+            }
+        }
+        
+        Ok(expanded.into_iter().map(|boxed| *boxed).collect())
+    }
+
+    /// 递归处理表达式，展开其中嵌套的宏调用
+    fn process_expr_for_macros(&mut self, expr: crate::parser::Expr) -> Result<crate::parser::Expr, String> {
+        use crate::parser::Expr;
+        
+        match expr {
+            Expr::CallExpr(func, args, line, col) => {
+                // 检查函数名是否是宏调用（通过#符号调用的宏已在parse阶段转换为MacroCall）
+                // 这里主要处理嵌套在其他表达式中的情况
+                let new_func = Box::new(self.process_expr_for_macros(*func)?);
+                let new_args: Result<Vec<Box<Expr>>, String> = args
+                    .into_iter()
+                    .map(|arg| Ok(Box::new(self.process_expr_for_macros(*arg)?)))
+                    .collect();
+                let new_args = new_args?;
+                
+                Ok(Expr::CallExpr(new_func, new_args, line, col))
+            }
+            
+            // 处理条件语句中的宏
+            Expr::IfStmt(condition, then_branch, elif_branches, else_branch, line, col) => {
+                let new_condition = Box::new(self.process_expr_for_macros(*condition)?);
+                let new_then_branch: Result<Vec<Box<Expr>>, String> = then_branch
+                    .into_iter()
+                    .map(|stmt| Ok(Box::new(self.process_expr_for_macros(*stmt)?)))
+                    .collect();
+                let new_then_branch = new_then_branch?;
+                let new_elif_branches: Result<Vec<(Box<Expr>, Vec<Box<Expr>>)>, String> = elif_branches
+                    .into_iter()
+                    .map(|(cond, body)| {
+                        let new_cond = self.process_expr_for_macros(*cond)?;
+                        let new_body: Result<Vec<Box<Expr>>, String> = body
+                            .into_iter()
+                            .map(|stmt| Ok(Box::new(self.process_expr_for_macros(*stmt)?)))
+                            .collect();
+                        Ok((Box::new(new_cond), new_body?))
+                    })
+                    .collect();
+                let new_elif_branches = new_elif_branches?;
+                let new_else_branch = if let Some(branch) = else_branch {
+                    let processed: Result<Vec<Box<Expr>>, String> = branch
+                        .into_iter()
+                        .map(|stmt| Ok(Box::new(self.process_expr_for_macros(*stmt)?)))
+                        .collect();
+                    Some(processed?)
+                } else {
+                    None
+                };
+                
+                Ok(Expr::IfStmt(
+                    new_condition, 
+                    new_then_branch, 
+                    new_elif_branches, 
+                    new_else_branch, 
+                    line, 
+                    col
+                ))
+            }
+            
+            // 处理while循环
+            Expr::WhileStmt(condition, body, line, col) => {
+                let new_condition = Box::new(self.process_expr_for_macros(*condition)?);
+                let new_body: Result<Vec<Box<Expr>>, String> = body
+                    .into_iter()
+                    .map(|stmt| Ok(Box::new(self.process_expr_for_macros(*stmt)?)))
+                    .collect();
+                
+                Ok(Expr::WhileStmt(new_condition, new_body?, line, col))
+            }
+            
+            // 处理for循环
+            Expr::ForStmt(var, iterable, body, line, col) => {
+                let new_iterable = Box::new(self.process_expr_for_macros(*iterable)?);
+                let new_body: Result<Vec<Box<Expr>>, String> = body
+                    .into_iter()
+                    .map(|stmt| Ok(Box::new(self.process_expr_for_macros(*stmt)?)))
+                    .collect();
+                
+                Ok(Expr::ForStmt(var, new_iterable, new_body?, line, col))
+            }
+            
+            // 处理二元操作
+            Expr::BinaryOp(op, left, right, line, col) => {
+                Ok(Expr::BinaryOp(
+                    op,
+                    Box::new(self.process_expr_for_macros(*left)?),
+                    Box::new(self.process_expr_for_macros(*right)?),
+                    line,
+                    col,
+                ))
+            }
+            
+            // 处理一元操作
+            Expr::UnaryOp(op, operand, line, col) => {
+                Ok(Expr::UnaryOp(
+                    op,
+                    Box::new(self.process_expr_for_macros(*operand)?),
+                    line,
+                    col,
+                ))
+            }
+            
+            // 其他表达式类型保持不变
+            _ => Ok(expr),
+        }
+    }
+
+    /// 获取宏系统的统计信息
+    pub fn get_macro_stats(&self) -> (u64, u64, f64) {
+        self.macros.get_stats()
     }
 
     pub(crate) fn allocate_slot(&mut self, name: &str) -> u32 {

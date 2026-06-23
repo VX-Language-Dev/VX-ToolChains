@@ -2,6 +2,7 @@
 // 测试编译→字节码→VM 执行的端到端流程
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use vx_vm::*;
 
 /// 辅助：构造一个包含单函数 `__main__` 的最简 Module
@@ -505,13 +506,13 @@ fn test_string_concat() {
             Instruction::new(OpCode::Return),
         ],
         vec![
-            Value::String("Hello, ".to_string()),
-            Value::String("World!".to_string()),
+            Value::string("Hello, ".to_string()),
+            Value::string("World!".to_string()),
         ],
     );
     assert_eq!(
         run_test(module).unwrap(),
-        Value::String("Hello, World!".to_string())
+        Value::string("Hello, World!".to_string())
     );
 }
 
@@ -532,7 +533,7 @@ fn test_make_array() {
     );
     assert_eq!(
         run_test(module).unwrap(),
-        Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        Value::Array(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
     );
 }
 
@@ -547,7 +548,7 @@ fn test_index_get() {
             Instruction::new(OpCode::Return),
         ],
         vec![
-            Value::Array(vec![Value::Int(10), Value::Int(20), Value::Int(30)]),
+            Value::Array(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])),
             Value::Int(1),
         ],
     );
@@ -565,7 +566,7 @@ fn test_array_index_out_of_bounds() {
             Instruction::new(OpCode::Return),
         ],
         vec![
-            Value::Array(vec![Value::Int(10)]),
+            Value::Array(Arc::new(vec![Value::Int(10)])),
             Value::Int(5),
         ],
     );
@@ -689,12 +690,12 @@ fn test_value_is_truthy() {
     assert!(!Value::Int(0).is_truthy());
     assert!(Value::Float(1.0).is_truthy());
     assert!(!Value::Float(0.0).is_truthy());
-    assert!(Value::String("hello".to_string()).is_truthy());
-    assert!(!Value::String("".to_string()).is_truthy());
-    assert!(Value::Array(vec![Value::Int(1)]).is_truthy());
-    assert!(!Value::Array(vec![]).is_truthy());
-    assert!(Value::Map(HashMap::from([("k".to_string(), Value::Int(1))])).is_truthy());
-    assert!(!Value::Map(HashMap::new()).is_truthy());
+    assert!(Value::string("hello".to_string()).is_truthy());
+    assert!(!Value::string("".to_string()).is_truthy());
+    assert!(Value::Array(Arc::new(vec![Value::Int(1)])).is_truthy());
+    assert!(!Value::Array(Arc::new(vec![])).is_truthy());
+    assert!(Value::Map(Arc::new(HashMap::from([("k".to_string(), Value::Int(1))]))).is_truthy());
+    assert!(!Value::Map(Arc::new(HashMap::new())).is_truthy());
 }
 
 #[test]
@@ -703,13 +704,13 @@ fn test_value_type_name() {
     assert_eq!(Value::Int(0).type_name(), "Int");
     assert_eq!(Value::Float(0.0).type_name(), "Float");
     assert_eq!(Value::Bool(true).type_name(), "Bool");
-    assert_eq!(Value::String("s".to_string()).type_name(), "String");
-    assert_eq!(Value::Array(vec![]).type_name(), "Array");
-    assert_eq!(Value::Map(HashMap::new()).type_name(), "Map");
+    assert_eq!(Value::string("s".to_string()).type_name(), "String");
+    assert_eq!(Value::Array(Arc::new(vec![])).type_name(), "Array");
+    assert_eq!(Value::Map(Arc::new(HashMap::new())).type_name(), "Map");
     assert_eq!(
         Value::Instance {
-            class_name: "MyClass".to_string(),
-            fields: HashMap::new()
+            class_name: Arc::from("MyClass"),
+            fields: Arc::new(HashMap::new())
         }
         .type_name(),
         "MyClass"
@@ -763,7 +764,7 @@ fn test_user_function_call() {
     function_map.insert("add".to_string(), 1);
 
     let module = Module {
-        constants: vec![Value::String("add".to_string()), Value::Int(3), Value::Int(4)],
+        constants: vec![Value::string("add".to_string()), Value::Int(3), Value::Int(4)],
         functions: vec![
             Function {
                 name: "__main__".to_string(),
@@ -806,7 +807,7 @@ fn test_function_arg_count_mismatch() {
     function_map.insert("foo".to_string(), 1);
 
     let module = Module {
-        constants: vec![Value::String("foo".to_string()), Value::Int(1)],
+        constants: vec![Value::string("foo".to_string()), Value::Int(1)],
         functions: vec![
             Function {
                 name: "__main__".to_string(),
@@ -867,7 +868,7 @@ fn test_make_struct_and_property_get() {
     };
     let result = run_test(module).unwrap();
     match result {
-        Value::Instance { class_name, .. } => assert_eq!(class_name, "Point"),
+        Value::Instance { class_name, .. } => assert_eq!(class_name, "Point".into()),
         _ => panic!("Expected Instance, got {:?}", result),
     }
 }
@@ -880,7 +881,7 @@ fn test_newz_creates_pointer() {
     struct_defs.insert("Obj".to_string(), vec!["val".to_string()]);
 
     let module = Module {
-        constants: vec![Value::String("Obj".to_string()), Value::Int(42)],
+        constants: vec![Value::string("Obj".to_string()), Value::Int(42)],
         functions: vec![Function {
             name: "__main__".to_string(),
             instructions: vec![
@@ -900,7 +901,7 @@ fn test_newz_creates_pointer() {
     let result = run_test(module).unwrap();
     match result {
         Value::Pointer { class_name, alloc_id, generation } => {
-            assert_eq!(class_name, "Obj");
+            assert_eq!(class_name, "Obj".into());
             assert!(alloc_id > 0);
             assert_eq!(generation, 0);
         }
@@ -914,7 +915,7 @@ fn test_newz_deref_property() {
     struct_defs.insert("Point".to_string(), vec!["x".to_string(), "y".to_string()]);
 
     let module = Module {
-        constants: vec![Value::String("Point".to_string()), Value::Int(99)],
+        constants: vec![Value::string("Point".to_string()), Value::Int(99)],
         functions: vec![Function {
             name: "__main__".to_string(),
             instructions: vec![
@@ -942,7 +943,7 @@ fn test_double_free_error() {
     struct_defs.insert("Obj".to_string(), vec![]);
 
     let module = Module {
-        constants: vec![Value::String("Obj".to_string())],
+        constants: vec![Value::string("Obj".to_string())],
         functions: vec![Function {
             name: "__main__".to_string(),
             instructions: vec![
@@ -970,7 +971,7 @@ fn test_scope_drop_cleans_allocs() {
     struct_defs.insert("Temp".to_string(), vec![]);
 
     let module = Module {
-        constants: vec![Value::String("Temp".to_string())],
+        constants: vec![Value::string("Temp".to_string())],
         functions: vec![Function {
             name: "__main__".to_string(),
             instructions: vec![
@@ -1011,9 +1012,9 @@ fn test_sys_argv_returns_configured_args() {
     match result {
         Value::Array(args) => {
             assert_eq!(args.len(), 3);
-            assert_eq!(args[0], Value::String("test_prog".to_string()));
-            assert_eq!(args[1], Value::String("--flag".to_string()));
-            assert_eq!(args[2], Value::String("value".to_string()));
+            assert_eq!(args[0], Value::string("test_prog".to_string()));
+            assert_eq!(args[1], Value::string("--flag".to_string()));
+            assert_eq!(args[2], Value::string("value".to_string()));
         }
         _ => panic!("Expected Array, got {:?}", result),
     }
@@ -1036,11 +1037,11 @@ fn test_file_write_and_read() {
             Instruction::new(OpCode::FileWrite),
             Instruction::new(OpCode::Return),
         ],
-        vec![Value::String(path.clone()), Value::String("hello vx".to_string())],
+        vec![Value::string(path.clone()), Value::string("hello vx".to_string())],
     );
     // 手动设置常量索引
     let mut write_mod = write_module;
-    write_mod.constants = vec![Value::String(path.clone()), Value::String("hello vx".to_string())];
+    write_mod.constants = vec![Value::string(path.clone()), Value::string("hello vx".to_string())];
     write_mod.functions[0].instructions = vec![
         Instruction::with_iarg(OpCode::LoadConst, 0), // path
         Instruction::with_iarg(OpCode::LoadConst, 1), // content
@@ -1057,11 +1058,11 @@ fn test_file_write_and_read() {
             Instruction::new(OpCode::FileRead),
             Instruction::new(OpCode::Return),
         ],
-        vec![Value::String(path.clone())],
+        vec![Value::string(path.clone())],
     );
-    read_mod.constants = vec![Value::String(path.clone())];
+    read_mod.constants = vec![Value::string(path.clone())];
     let result = run_test(read_mod).unwrap();
-    assert_eq!(result, Value::String("hello vx".to_string()));
+    assert_eq!(result, Value::string("hello vx".to_string()));
 }
 
 #[test]
@@ -1077,9 +1078,9 @@ fn test_file_exists() {
             Instruction::new(OpCode::FileExists),
             Instruction::new(OpCode::Return),
         ],
-        vec![Value::String(path)],
+        vec![Value::string(path)],
     );
-    module.constants = vec![Value::String(tmp.path().to_string_lossy().to_string())];
+    module.constants = vec![Value::string(tmp.path().to_string_lossy().to_string())];
     let result = run_test(module).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
@@ -1168,7 +1169,7 @@ fn test_multiple_functions_with_return() {
     function_map.insert("double".to_string(), 1);
 
     let module = Module {
-        constants: vec![Value::String("double".to_string()), Value::Int(21)],
+        constants: vec![Value::string("double".to_string()), Value::Int(21)],
         functions: vec![
             Function {
                 name: "__main__".to_string(),
@@ -1302,7 +1303,7 @@ fn test_use_after_free_detected() {
     struct_defs.insert("Obj".to_string(), vec!["x".to_string()]);
 
     let module = Module {
-        constants: vec![Value::String("Obj".to_string()), Value::Int(42)],
+        constants: vec![Value::string("Obj".to_string()), Value::Int(42)],
         functions: vec![Function {
             name: "__main__".to_string(),
             instructions: vec![
@@ -1331,7 +1332,7 @@ fn test_double_free_pointer_detected() {
     struct_defs.insert("Data".to_string(), vec!["value".to_string()]);
 
     let module = Module {
-        constants: vec![Value::String("Data".to_string()), Value::Int(100)],
+        constants: vec![Value::string("Data".to_string()), Value::Int(100)],
         functions: vec![Function {
             name: "__main__".to_string(),
             instructions: vec![

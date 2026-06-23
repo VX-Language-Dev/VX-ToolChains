@@ -57,7 +57,7 @@ pub fn collect_symbols(ast: &[Stmt]) -> Vec<SymbolInfo> {
 
 fn collect_from_expr(e: &Expr, symbols: &mut Vec<SymbolInfo>) {
     match e {
-        Expr::FuncDecl(name, params, ret_type, body, _line, _col) => {
+        Expr::FuncDecl(name, _type_params, params, ret_type, body, _line, _col) => {
             let detail = format_func_signature(name, params, ret_type);
             symbols.push(SymbolInfo {
                 name: name.clone(),
@@ -68,7 +68,7 @@ fn collect_from_expr(e: &Expr, symbols: &mut Vec<SymbolInfo>) {
                 collect_from_expr(stmt, symbols);
             }
         }
-        Expr::StructDecl(name, fields, methods, _line, _col) => {
+        Expr::StructDecl(name, _type_params, fields, methods, _line, _col) => {
             let detail = format_struct_detail(name, fields);
             symbols.push(SymbolInfo {
                 name: name.clone(),
@@ -79,7 +79,7 @@ fn collect_from_expr(e: &Expr, symbols: &mut Vec<SymbolInfo>) {
                 collect_from_expr(m, symbols);
             }
         }
-        Expr::ClassDecl(name, _fields, methods, parent, interfaces, _line, _col) => {
+        Expr::ClassDecl(name, _type_params, _fields, methods, parent, interfaces, _line, _col) => {
             let detail = format_class_detail(name, parent, interfaces);
             symbols.push(SymbolInfo {
                 name: name.clone(),
@@ -218,7 +218,7 @@ fn format_enum_detail(name: &str, variants: &[(String, i64)]) -> String {
 /// 从 AST 查找指定类型名的成员（用于 `.` 补全）
 pub fn find_type_members(ast: &[Stmt], type_name: &str) -> Vec<SymbolInfo> {
     for stmt in ast {
-        if let Expr::StructDecl(name, fields, methods, _, _) = stmt {
+        if let Expr::StructDecl(name, _type_params, fields, methods, _, _) = stmt {
             if name == type_name {
                 let mut members = Vec::new();
                 for (fname, ftype) in fields {
@@ -229,7 +229,7 @@ pub fn find_type_members(ast: &[Stmt], type_name: &str) -> Vec<SymbolInfo> {
                     });
                 }
                 for m in methods {
-                    if let Expr::FuncDecl(fname, params, ret, _, _l, _c) = m.as_ref() {
+                    if let Expr::FuncDecl(fname, _type_params, params, ret, _, _l, _c) = m.as_ref() {
                         members.push(SymbolInfo {
                             name: fname.clone(),
                             kind: SymbolKind::Function,
@@ -240,7 +240,7 @@ pub fn find_type_members(ast: &[Stmt], type_name: &str) -> Vec<SymbolInfo> {
                 return members;
             }
         }
-        if let Expr::ClassDecl(name, fields, methods, _, _, _, _) = stmt {
+        if let Expr::ClassDecl(name, _type_params, fields, methods, _, _, _, _) = stmt {
             if name == type_name {
                 let mut members = Vec::new();
                 for (fname, ftype, vis) in fields {
@@ -251,7 +251,7 @@ pub fn find_type_members(ast: &[Stmt], type_name: &str) -> Vec<SymbolInfo> {
                     });
                 }
                 for m in methods {
-                    if let Expr::FuncDecl(fname, params, ret, _, _l, _c) = m.as_ref() {
+                    if let Expr::FuncDecl(fname, _type_params, params, ret, _, _l, _c) = m.as_ref() {
                         members.push(SymbolInfo {
                             name: fname.clone(),
                             kind: SymbolKind::Function,
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn test_collect_symbols_func() {
         let ast = vec![
-            Expr::FuncDecl("add".to_string(), vec![("a".into(), "int".into()), ("b".into(), "int".into())], Some("int".into()), vec![], 1, 1)
+            Expr::FuncDecl("add".to_string(), vec![], vec![("a".into(), "int".into()), ("b".into(), "int".into())], Some("int".into()), vec![], 1, 1)
         ];
         let syms = collect_symbols(&ast);
         assert_eq!(syms.len(), 1);
@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn test_find_type_members() {
         let ast = vec![
-            Expr::StructDecl("Point".to_string(), vec![("x".into(), "int".into()), ("y".into(), "int".into())], vec![], 1, 1)
+            Expr::StructDecl("Point".to_string(), vec![], vec![("x".into(), "int".into()), ("y".into(), "int".into())], vec![], 1, 1)
         ];
         let members = find_type_members(&ast, "Point");
         assert_eq!(members.len(), 2);

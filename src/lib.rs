@@ -34,6 +34,9 @@ pub mod vxsetting;
 pub mod builder;
 pub mod cache;
 
+// 宏系统：编译时宏展开支持
+pub mod macros;
+
 // Re-export public API
 pub use opcode::OpCode;
 pub use value::Value;
@@ -45,3 +48,4 @@ pub use builder::{VxBuilder, BuildError};
 pub use cache::BuildCache;
 pub use compiler_bytecode::{BytecodeArg, Instruction as CompilerInstruction, BytecodeFunction, ConstantValue, CompiledModule};
 pub use compiler_core::Compiler;
+pub use macros::{Macro, MacroRegistry};

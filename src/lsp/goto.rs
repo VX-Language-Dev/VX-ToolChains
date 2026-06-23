@@ -55,7 +55,7 @@ fn collect_from_stmt(stmt: &Stmt, name: &str, defs: &mut Vec<(usize, usize)>, de
         return;
     }
     match stmt {
-        vx_vm::parser::Expr::FuncDecl(fname, params, _, body, line, col) => {
+        vx_vm::parser::Expr::FuncDecl(fname, _type_params, params, _ret, body, line, col) => {
             if fname == name {
                 defs.push((*line, *col));
             }
@@ -68,12 +68,12 @@ fn collect_from_stmt(stmt: &Stmt, name: &str, defs: &mut Vec<(usize, usize)>, de
                 collect_from_stmt(s, name, defs, depth + 1);
             }
         }
-        vx_vm::parser::Expr::StructDecl(sname, _, _, line, col) => {
+        vx_vm::parser::Expr::StructDecl(sname, _, _, _, line, col) => {
             if sname == name {
                 defs.push((*line, *col));
             }
         }
-        vx_vm::parser::Expr::ClassDecl(cname, _, _, _, _, line, col) => {
+        vx_vm::parser::Expr::ClassDecl(cname, _, _, _, _, _, line, col) => {
             if cname == name {
                 defs.push((*line, *col));
             }
@@ -138,7 +138,7 @@ fn collect_from_expr(
         return;
     }
     match e {
-        vx_vm::parser::Expr::FuncDecl(fname, _, _, body, line, col) => {
+        vx_vm::parser::Expr::FuncDecl(fname, _, _, _, body, line, col) => {
             if fname == name {
                 defs.push((*line, *col));
             }
@@ -202,6 +202,7 @@ mod tests {
         let ast = vec![Expr::FuncDecl(
             "hello".to_string(),
             vec![],
+            vec![],
             Some("int".to_string()),
             vec![],
             1,
@@ -218,6 +219,7 @@ mod tests {
         let ast = vec![Expr::FuncDecl(
             "hello".to_string(),
             vec![],
+            vec![],
             None,
             vec![],
             1,
@@ -230,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_collect_definitions_struct() {
-        let ast = vec![Expr::StructDecl("Point".to_string(), vec![], vec![], 5, 3)];
+        let ast = vec![Expr::StructDecl("Point".to_string(), vec![], vec![], vec![], 5, 3)];
         let mut defs = Vec::new();
         collect_definitions(&ast, "Point", &mut defs);
         assert_eq!(defs.len(), 1);

@@ -138,6 +138,9 @@ pub enum TokenType {
     Union,
     // 内存分配/构造
     New,
+    // 宏系统
+    Macro,      // macro 关键字
+    Hash,       // # 符号，用于宏调用
 }
 
 #[derive(Debug, Clone)]
@@ -172,6 +175,7 @@ pub const KEYWORDS: &[( &str, TokenType)] = &[
     ("union", TokenType::Union),
     ("new", TokenType::New),
     ("move", TokenType::Move),
+    ("macro", TokenType::Macro),  // 宏定义关键字
     // 5 原生标量类型 (硬件基础类型, 保留)
     ("int", TokenType::IntT),
     ("float", TokenType::FloatT),
@@ -321,10 +325,12 @@ impl Lexer {
                 s.push(self.advance());
             }
         }
+        // 已由 is_ascii_digit() 过滤，解析失败概率极低；
+        // 使用 unwrap_or 回退到 0 避免潜在 panic。
         let val = if f {
-            format!("{}", s.parse::<f64>().unwrap())
+            format!("{}", s.parse::<f64>().unwrap_or(0.0))
         } else {
-            format!("{}", s.parse::<i64>().unwrap())
+            format!("{}", s.parse::<i64>().unwrap_or(0))
         };
         Token {
             kind: if f { TokenType::Float } else { TokenType::Int },
@@ -607,6 +613,7 @@ impl Lexer {
                 '=' => TokenType::Assign,
                 '!' => TokenType::Not,
                 '&' => TokenType::Ampersand,
+                '#' => TokenType::Hash,  // 宏调用符号
                 '(' => TokenType::LParen,
                 ')' => TokenType::RParen,
                 '[' => TokenType::LBracket,

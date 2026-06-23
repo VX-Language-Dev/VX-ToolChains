@@ -9,6 +9,7 @@ std/
 ├── mod.vx                 # std 总入口
 ├── prelude.vx             # 预导入模块
 ├── error.vx               # 错误处理（零依赖）
+├── macros.vx              # 编译时宏工具（零依赖）
 ├── collections/           # 核心数据结构
 │   ├── mod.vx
 │   ├── vec.vx             # 动态数组 Vec
@@ -39,6 +40,41 @@ std/
     ├── sync.vx             # 同步原语（Mutex/Semaphore/Channel）
     └── env.vx              # 环境变量与进程控制
 ```
+
+## 宏工具
+
+`std::macros` 提供基于 VX 编译时宏系统的常用代码模板，由 `prelude` 自动注入，零运行时开销。
+
+```vx
+func main():
+    var x = 42
+    #debug_print("x", x)             # DEBUG: x = 42
+
+    #assert(x > 0, "x 必须为正数")   # 条件失败时输出错误信息
+
+    #repeat(3, out("Hello"))        # 输出 3 次 Hello
+
+    #when(x > 0, out("x 为正数"))   # 条件为真时执行
+
+    #log_info("服务启动完成")       # 输出 [INFO] 服务启动完成
+```
+
+可用宏：
+
+| 宏 | 参数 | 说明 |
+|----|------|------|
+| `#assert` | `(condition, message)` | 断言，失败时输出错误信息 |
+| `#debug_print` | `(name, value)` | 调试输出变量名和值 |
+| `#log_info` | `(message)` | 信息日志 |
+| `#log_warn` | `(message)` | 警告日志 |
+| `#log_error` | `(message)` | 错误日志 |
+| `#log_debug` | `(message)` | 调试日志 |
+| `#when` | `(condition, action)` | 条件为真时执行 |
+| `#unless` | `(condition, action)` | 条件为假时执行 |
+| `#repeat` / `#times` | `(n, body)` | 重复执行 n 次 |
+| `#swap` | `(a, b)` | 交换两个变量值 |
+| `#ensure_ok` | `(result, message)` | 确保 Result 成功 |
+| `#try_return` | `(result)` | Result 失败时直接返回 |
 
 ## 快速开始
 
@@ -75,6 +111,7 @@ func read_config(path: var) -> var:
 
 ```
 error (零依赖)
+macros (零依赖)
   ↓
 collections → error
   ↓

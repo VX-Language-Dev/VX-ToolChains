@@ -148,7 +148,7 @@ fn keyword_hover(kind: &TokenType) -> Option<Hover> {
 
 fn function_hover(ast: &[Stmt], name: &str) -> Option<Hover> {
     for stmt in ast {
-        if let vx_vm::parser::Expr::FuncDecl(fname, params, ret, _, line, col) = stmt {
+        if let vx_vm::parser::Expr::FuncDecl(fname, _type_params, params, ret, _body, line, col) = stmt {
             if fname == name {
                 let param_str = params
                     .iter()
@@ -188,7 +188,7 @@ fn function_hover(ast: &[Stmt], name: &str) -> Option<Hover> {
 fn type_hover(ast: &[Stmt], name: &str) -> Option<Hover> {
     for stmt in ast {
         match stmt {
-            vx_vm::parser::Expr::StructDecl(sname, fields, _, line, _col) => {
+            vx_vm::parser::Expr::StructDecl(sname, _type_params, fields, _methods, line, _col) => {
                 if sname == name {
                     let field_str = fields
                         .iter()
@@ -202,7 +202,7 @@ fn type_hover(ast: &[Stmt], name: &str) -> Option<Hover> {
                     return Some(make_hover(&content));
                 }
             }
-            vx_vm::parser::Expr::ClassDecl(cname, fields, _, parent, interfaces, line, _col) => {
+            vx_vm::parser::Expr::ClassDecl(cname, _type_params, fields, _methods, parent, interfaces, line, _col) => {
                 if cname == name {
                     let field_str = fields
                         .iter()
@@ -300,7 +300,7 @@ fn find_var_in_stmt(stmt: &Stmt, name: &str, depth: usize) -> Option<Hover> {
                 }
             }
         }
-        vx_vm::parser::Expr::FuncDecl(_, params, _, body, _, _) => {
+        vx_vm::parser::Expr::FuncDecl(_, _type_params, params, _ret, body, _, _) => {
             for (pname, ptype) in params {
                 if pname == name {
                     let content = format!(
@@ -347,14 +347,14 @@ fn find_var_in_stmt(stmt: &Stmt, name: &str, depth: usize) -> Option<Hover> {
                 }
             }
         }
-        vx_vm::parser::Expr::StructDecl(_, _, methods, _, _) => {
+        vx_vm::parser::Expr::StructDecl(_, _type_params, _fields, methods, _, _) => {
             for m in methods {
                 if let Some(h) = find_var_in_stmt(m, name, depth + 1) {
                     return Some(h);
                 }
             }
         }
-        vx_vm::parser::Expr::ClassDecl(_, _, methods, _, _, _, _) => {
+        vx_vm::parser::Expr::ClassDecl(_, _type_params, _fields, methods, _, _, _, _) => {
             for m in methods {
                 if let Some(h) = find_var_in_stmt(m, name, depth + 1) {
                     return Some(h);
@@ -393,7 +393,7 @@ fn find_var_in_expr(
                 return Some(make_hover(&content));
             }
         }
-        vx_vm::parser::Expr::FuncDecl(fname, params, _, body, _, _) => {
+        vx_vm::parser::Expr::FuncDecl(fname, _type_params, params, _ret, body, _, _) => {
             if fname == name {
                 let param_str = params
                     .iter()

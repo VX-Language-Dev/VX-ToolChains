@@ -31,7 +31,7 @@ impl Compiler {
             }
             Expr::NilLiteral(_, _) => {
                 self.emit(OpCode::LoadNil, BytecodeArg::None);
-                self.push_stack_type(KnownType::Unknown);
+                self.push_stack_type(KnownType::Nil);
             }
             Expr::Identifier(name, _, _) => match name.as_str() {
                 "sys_argv" => {
@@ -188,6 +188,7 @@ impl Compiler {
                     self.compile_expr(x)?;
                 }
                 self.emit(OpCode::MakeArray, BytecodeArg::Int(elements.len() as i32));
+                self.push_stack_type(KnownType::Array);
             }
             Expr::MapLiteral(pairs, _, _) => {
                 for (k, v) in pairs {
@@ -195,6 +196,7 @@ impl Compiler {
                     self.compile_expr(v)?;
                 }
                 self.emit(OpCode::MakeMap, BytecodeArg::Int(pairs.len() as i32));
+                self.push_stack_type(KnownType::Map);
             }
             Expr::NewExpr(type_name, _, args, _, _) => {
                 let idx = self.add_const(ConstantValue::String(type_name.clone())) as i32;
@@ -203,6 +205,7 @@ impl Compiler {
                     self.compile_expr(a)?;
                 }
                 self.emit(OpCode::Call, BytecodeArg::Int(args.len() as i32));
+                self.push_stack_type(KnownType::Instance);
             }
             // NewzExpr 已裁减 → 由 NewExpr + zero:true 扩展或 std::mem::zeroed<T>() 替代
             // 编译器将 newz Foo(args) 展开为 new (Foo) { args..., zero: true } 或调用 zeroed 内建
@@ -215,11 +218,13 @@ impl Compiler {
                 self.compile_expr(operand)?;
                 self.emit(OpCode::BorrowCheck, BytecodeArg::None);
                 self.emit(OpCode::AddressOf, BytecodeArg::None);
+                self.push_stack_type(KnownType::Pointer);
             }
             Expr::Deref(operand, _, _) => {
                 self.compile_expr(operand)?;
                 self.emit(OpCode::AliveCheck, BytecodeArg::None);
                 self.emit(OpCode::Deref, BytecodeArg::None);
+                self.push_stack_type(KnownType::Instance);
             }
             Expr::PointerMember(obj, member, _, _) => {
                 self.compile_expr(obj)?;
@@ -239,6 +244,7 @@ impl Compiler {
             | Expr::VarDecl(..)
             | Expr::Assign(..)
             | Expr::IfStmt(..)
+            | Expr::MatchStmt(..)
             | Expr::WhileStmt(..)
             | Expr::ForStmt(..)
             | Expr::BreakStmt(..)
@@ -248,6 +254,13 @@ impl Compiler {
             //   NewzExpr → mem::zeroed<T>() 标准库调用
             //   FreeStmt → mem::free(ptr) 标准库调用
             //   VectorLiteral → 数组字面量自动转为 std::Vec<T>
+            
+            // 宏节点在编译前已被展开，此处不应出现
+            Expr::MacroDef(..) | Expr::MacroCall(..) => {
+                // 理论上不可达，因为宏在expand_macros阶段已被处理
+                // 如果到达这里，说明有未展开的宏，抛出错误
+                return Err("VX Error: 未展开的宏节点".to_string());
+            }
         }
         Ok(())
     }

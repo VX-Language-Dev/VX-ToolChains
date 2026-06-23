@@ -22,7 +22,7 @@ pub fn document_symbols(ast: &[Stmt]) -> Vec<DocumentSymbol> {
 
 fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
     match stmt {
-        Expr::FuncDecl(name, params, ret, body, line, col) => {
+        Expr::FuncDecl(name, _type_params, params, ret, body, line, col) => {
             let _detail = format_func_signature(name, params, ret);
             let mut children = Vec::new();
             for s in body {
@@ -66,7 +66,7 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                 },
             })
         }
-        Expr::StructDecl(name, fields, methods, line, col) => {
+        Expr::StructDecl(name, _type_params, fields, methods, line, col) => {
             let mut children = Vec::new();
             for (fname, ftype) in fields {
                 children.push(make_var_symbol(fname, Some(ftype), *line, *col));
@@ -112,7 +112,7 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                 },
             })
         }
-        Expr::ClassDecl(name, fields, methods, _parent, _interfaces, line, col) => {
+        Expr::ClassDecl(name, _type_params, fields, methods, _parent, _interfaces, line, col) => {
             let mut children = Vec::new();
             for (fname, ftype, _vis) in fields {
                 children.push(make_var_symbol(fname, Some(ftype), *line, *col));
@@ -344,7 +344,7 @@ fn collect_symbol_info(
         return;
     }
     match stmt {
-        Expr::FuncDecl(name, params, ret, body, line, col) => {
+        Expr::FuncDecl(name, _type_params, params, ret, body, line, col) => {
             let _detail = format_func_signature(name, params, ret);
             let line0 = (*line as u32).saturating_sub(1);
             let col0 = (*col as u32).saturating_sub(1);
@@ -374,7 +374,7 @@ fn collect_symbol_info(
                 collect_symbol_info(s, uri, nested_container.clone(), out, depth + 1);
             }
         }
-        Expr::StructDecl(name, _fields, methods, line, col) => {
+        Expr::StructDecl(name, _type_params, _fields, methods, line, col) => {
             let line0 = (*line as u32).saturating_sub(1);
             let col0 = (*col as u32).saturating_sub(1);
             out.push(SymbolInformation {
@@ -403,7 +403,7 @@ fn collect_symbol_info(
                 collect_symbol_info(m, uri, nested_container.clone(), out, depth + 1);
             }
         }
-        Expr::ClassDecl(name, _fields, methods, _parent, _interfaces, line, col) => {
+        Expr::ClassDecl(name, _type_params, _fields, methods, _parent, _interfaces, line, col) => {
             let line0 = (*line as u32).saturating_sub(1);
             let col0 = (*col as u32).saturating_sub(1);
             out.push(SymbolInformation {
@@ -599,6 +599,7 @@ mod tests {
         let ast = vec![Expr::FuncDecl(
             "test_func".to_string(),
             vec![],
+            vec![],
             None,
             vec![],
             1,
@@ -614,6 +615,7 @@ mod tests {
     fn test_document_symbols_struct() {
         let ast = vec![Expr::StructDecl(
             "Point".to_string(),
+            vec![],
             vec![("x".into(), "int".into()), ("y".into(), "int".into())],
             vec![],
             1,
@@ -639,7 +641,7 @@ mod tests {
     #[test]
     fn test_extract_workspace_symbols() {
         let ast = vec![
-            Expr::FuncDecl("hello".to_string(), vec![], None, vec![], 2, 3),
+            Expr::FuncDecl("hello".to_string(), vec![], vec![], None, vec![], 2, 3),
             Expr::EnumDecl("Color".to_string(), vec![], 5, 1),
         ];
         let uri = Url::parse("file:///test.vx").unwrap();

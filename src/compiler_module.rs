@@ -77,19 +77,19 @@ impl Compiler {
 
         for s in ast {
             match s {
-                Expr::StructDecl(name, fields, _, _, _) => {
+                Expr::StructDecl(name, _gen_params, fields, _, _, _) => {
                     structs.push((name.clone(), fields.iter().map(|f| f.1.clone()).collect()));
                     let field_names: Vec<String> = fields.iter().map(|f| f.1.clone()).collect();
                     let param_names: Vec<String> = fields.iter().map(|f| f.1.clone()).collect();
                     self.emit_type_ctor(OpCode::MakeStruct, name, &field_names, param_names);
                 }
-                Expr::ClassDecl(name, fields, methods, _, _, _, _) => {
+                Expr::ClassDecl(name, _, fields, methods, _, _, _, _) => {
                     classes.push((name.clone(), fields.iter().map(|f| f.1.clone()).collect()));
                     let field_names: Vec<String> = fields.iter().map(|f| f.1.clone()).collect();
                     let param_names: Vec<String> = fields.iter().map(|f| f.1.clone()).collect();
                     self.emit_type_ctor(OpCode::MakeClass, name, &field_names, param_names);
                     for m in methods {
-                        if let Expr::FuncDecl(mname, params, _, mbody, _, _) = m.as_ref() {
+                        if let Expr::FuncDecl(mname, _, params, _, mbody, _, _) = m.as_ref() {
                             let msave = std::mem::replace(&mut self.instructions, Vec::new());
                             let save_var_types = self.var_types.clone();
                             self.var_types.clear();
@@ -145,7 +145,7 @@ impl Compiler {
                         BytecodeArg::ImportTuple(name.clone(), alias.clone(), combined_dirs),
                     );
                 }
-                Expr::FuncDecl(fname, params, _, body, _, _) => {
+                Expr::FuncDecl(fname, _, params, _, body, _, _) => {
                     let save = std::mem::replace(&mut self.instructions, Vec::new());
                     let save_var_types = self.var_types.clone();
                     let save_var_slots = self.var_slots.clone();
@@ -252,6 +252,11 @@ impl Compiler {
             KnownType::Bool => Type::Bool,
             KnownType::String => Type::String,
             KnownType::Unknown => Type::Unknown,
+            KnownType::Array => Type::Array(Box::new(Type::Unknown)),
+            KnownType::Map => Type::Map(Box::new(Type::Unknown), Box::new(Type::Unknown)),
+            KnownType::Instance => Type::Struct("Instance".to_string(), vec![]),
+            KnownType::Pointer => Type::Pointer(Box::new(Type::Unknown)),
+            KnownType::Nil => Type::Unknown,
         }
     }
 

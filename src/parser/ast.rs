@@ -31,12 +31,14 @@ pub enum Expr {
         usize,
         usize,
     ),
+    MatchStmt(Box<Expr>, Vec<(Box<Expr>, Vec<Box<Expr>>)>, usize, usize),
     WhileStmt(Box<Expr>, Vec<Box<Expr>>, usize, usize),
     ForStmt(String, Box<Expr>, Vec<Box<Expr>>, usize, usize),
     BreakStmt(usize, usize),
     ContinueStmt(usize, usize),
     FuncDecl(
         String,
+        Vec<String>,
         Vec<(String, String)>,
         Option<String>,
         Vec<Box<Expr>>,
@@ -45,10 +47,11 @@ pub enum Expr {
     ),
     ReturnStmt(Option<Box<Expr>>, usize, usize),
     CallExpr(Box<Expr>, Vec<Box<Expr>>, usize, usize),
-    StructDecl(String, Vec<(String, String)>, Vec<Box<Expr>>, usize, usize),
+    StructDecl(String, Vec<String>, Vec<(String, String)>, Vec<Box<Expr>>, usize, usize),
     // 冒号继承语法: class Dog : Animal, Canine { ... }
     ClassDecl(
         String,
+        Vec<String>,
         Vec<(String, String, String)>,
         Vec<Box<Expr>>,
         Option<String>,       // 父类 (extends)
@@ -66,6 +69,10 @@ pub enum Expr {
     ExprStmt(Box<Expr>, usize, usize),
     // dirs 已裁减 → ImportStmt 支持可变路径列表
     ImportStmt(String, Option<String>, Vec<String>, usize, usize),
+    
+    // 宏系统相关节点
+    MacroDef(String, Vec<String>, Vec<Box<Expr>>, usize, usize),  // macro name(params) { body }
+    MacroCall(String, Vec<Box<Expr>>, usize, usize),              // #macro_name(args)
 }
 
 pub type Stmt = Expr;
@@ -110,21 +117,26 @@ pub fn pos(e: &Expr) -> (usize, usize) {
         Expr::IndexAccess(_, _, l, c) => (*l, *c),
         Expr::PropertyAccess(_, _, l, c) => (*l, *c),
         Expr::IfStmt(_, _, _, _, l, c) => (*l, *c),
+        Expr::MatchStmt(_, _, l, c) => (*l, *c),
         Expr::WhileStmt(_, _, l, c) => (*l, *c),
         Expr::ForStmt(_, _, _, l, c) => (*l, *c),
         Expr::BreakStmt(l, c) => (*l, *c),
         Expr::ContinueStmt(l, c) => (*l, *c),
-        Expr::FuncDecl(_, _, _, _, l, c) => (*l, *c),
+        Expr::FuncDecl(_, _, _, _, _, l, c) => (*l, *c),
         Expr::ReturnStmt(_, l, c) => (*l, *c),
         Expr::CallExpr(_, _, l, c) => (*l, *c),
-        Expr::StructDecl(_, _, _, l, c) => (*l, *c),
-        Expr::ClassDecl(_, _, _, _, _, l, c) => (*l, *c),
+        Expr::StructDecl(_, _, _, _, l, c) => (*l, *c),
+        Expr::ClassDecl(_, _, _, _, _, _, l, c) => (*l, *c),
         Expr::EnumDecl(_, _, l, c) => (*l, *c),
         Expr::UnionDecl(_, _, l, c) => (*l, *c),
         Expr::NewExpr(_, _, _, l, c) => (*l, *c),
         Expr::MoveExpr(_, l, c) => (*l, *c),
         Expr::ExprStmt(_, l, c) => (*l, *c),
         Expr::ImportStmt(_, _, _, l, c) => (*l, *c),
+        
+        // 宏系统节点
+        Expr::MacroDef(_, _, _, l, c) => (*l, *c),
+        Expr::MacroCall(_, _, l, c) => (*l, *c),
     }
 }
 

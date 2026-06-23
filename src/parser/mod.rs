@@ -78,4 +78,20 @@ impl Parser {
             self.advance();
         }
     }
+
+    /// 解析可选的泛型参数列表 `<T, U>`，用于函数/结构体/类声明。
+    /// 如果当前 token 不是 `<`，返回空列表。
+    fn parse_generic_params(&mut self) -> Result<Vec<String>, VXError> {
+        let mut params = Vec::new();
+        if self.current().kind == TokenType::Lt {
+            self.advance();
+            params.push(self.expect(TokenType::Identifier, Some("期望类型参数名"))?.value);
+            while self.current().kind == TokenType::Comma {
+                self.advance();
+                params.push(self.expect(TokenType::Identifier, Some("期望类型参数名"))?.value);
+            }
+            self.expect(TokenType::Gt, Some("期望 '>'"))?;
+        }
+        Ok(params)
+    }
 }
