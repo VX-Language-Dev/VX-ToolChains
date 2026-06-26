@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::process::Command;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -24,6 +25,8 @@ pub enum LinkMode {
     Interpret,
     Jit,
     Aot,
+    /// 原生静态编译模式：直接从 VXCO 生成目标平台的原生可执行文件
+    Native,
 }
 
 impl LinkMode {
@@ -32,6 +35,7 @@ impl LinkMode {
             "interpret" | "interp" | "i" => Some(LinkMode::Interpret),
             "jit" | "j" => Some(LinkMode::Jit),
             "aot" | "a" => Some(LinkMode::Aot),
+            "native" | "n" | "static" | "s" => Some(LinkMode::Native),
             _ => None,
         }
     }
@@ -79,6 +83,7 @@ impl VXLinker {
             LinkMode::Interpret => Self::link_interpret(vxobj_path, output_path, stub_path),
             LinkMode::Jit => Self::link_jit(vxobj_path, output_path, stub_path),
             LinkMode::Aot => Self::link_aot(vxobj_path, output_path),
+            LinkMode::Native => Self::link_native(vxobj_path, output_path),
         }
     }
 
@@ -175,6 +180,329 @@ impl VXLinker {
         Ok(())
     }
 
+    // === Mode D: Native Static Compilation ===
+    // 从 VXCO 中间文件直接生成目标平台的原生可执行文件
+    //
+    // 编译流程:
+    //   1. 解析 VXCO 文件获取 TypeIR 和外部依赖
+    //   2. 使用 Cranelift AOT 将 TypeIR 编译为原生对象文件
+    //   3. 调用系统链接器生成最终的可执行文件
+    //      - Linux/macOS: 使用 ld 或 cc
+    //      - Windows: 使用 link.exe
+    //   4. 若存在外部依赖且非可选，则采用动态链接
+    //   5. 默认采用静态链接（无外部依赖时）
+    fn link_native(vxco_path: &str, output_path: &str) -> Result<(), LinkerError> {
+        let file_data = Self::read_file(vxco_path)?;
+
+        // 尝试解析为 VXCO 格式（跨平台中间文件）
+        let vxco_container = bytecode::VxcoContainer::parse(&file_data)
+            .ok();
+
+        let (type_ir_data, external_dep_names) = if let Some(ref vxco) = vxco_container {
+            let deps = if let Some(deps_data) = vxco.get_section(bytecode::VXCO_SECTION_EXTERNAL_DEPS) {
+                bytecode::deserialize_external_deps(deps_data)
+                    .iter()
+                    .map(|d| d.name.clone())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            (
+                vxco.get_section(bytecode::VXCO_SECTION_TYPE_IR).cloned(),
+                deps,
+            )
+        } else {
+            // 兼容模式: 尝试作为 VXOBJ v3 解析（为向后兼容）
+            let container = VxObjV3Container::parse(&file_data)
+                .map_err(|_| LinkerError::InvalidFile("Not a valid VXCO or VXOBJ file".into()))?;
+            (
+                container.get_section(bytecode::SECTION_TYPE_IR),
+                Vec::new(),
+            )
+        };
+
+        let type_ir_data = type_ir_data
+            .ok_or_else(|| LinkerError::NoTypeIr("No TypeIR section found".into()))?;
+
+        let type_module = vx_vm::type_ir::deserialize_type_module(&type_ir_data)
+            .ok_or_else(|| LinkerError::AotError("Failed to deserialize TypeIR".into()))?;
+
+        let dynamic_link = !external_dep_names.is_empty();
+        println!("[*] Native compilation: {} functions", type_module.functions.len());
+        if dynamic_link {
+            println!("[*] External dependencies: {:?} (dynamic linking)", external_dep_names);
+        } else {
+            println!("[*] External dependencies: none (static linking)");
+        }
+
+        // 使用 Cranelift AOT 编译到原生对象文件
+        let obj_data = Self::aot_compile(&type_module)?;
+
+        // 创建临时对象文件
+        let temp_dir = std::env::temp_dir();
+        let obj_file_path = temp_dir.join(format!("vx_native_{}.o", std::process::id()));
+        fs::write(&obj_file_path, &obj_data)
+            .map_err(|e| LinkerError::Io(e))?;
+
+        // 调用系统链接器生成最终可执行文件
+        let linker_result = Self::invoke_system_linker(&obj_file_path, output_path, dynamic_link, &external_dep_names);
+
+        // 清理临时文件
+        let _ = fs::remove_file(&obj_file_path);
+
+        linker_result
+    }
+
+    /// 调用系统链接器生成最终可执行文件
+    ///
+    /// 平台适配:
+    ///   - Linux: 使用 cc 或 ld
+    ///   - macOS: 使用 cc 或 ld
+    ///   - Windows: 使用 link.exe
+    ///
+    /// 链接模式:
+    ///   - 静态链接（默认）: 不链接任何动态库，生成完全独立的可执行文件
+    ///   - 动态链接: 仅当源代码明确引用外部动态库时采用
+    fn invoke_system_linker(
+        obj_path: &Path,
+        output_path: &str,
+        dynamic_link: bool,
+        external_dep_names: &[String],
+    ) -> Result<(), LinkerError> {
+        let obj_path_str = obj_path.to_string_lossy();
+
+        #[cfg(target_os = "windows")]
+        {
+            // Windows: 使用 link.exe
+            let mut cmd = Command::new("link.exe");
+            cmd.arg("/OUT:".to_string() + output_path);
+            cmd.arg("/NOLOGO");
+            
+            if !dynamic_link {
+                // 静态链接选项
+                cmd.arg("/SUBSYSTEM:CONSOLE");
+                cmd.arg("/ENTRY:mainCRTStartup");
+                cmd.arg("/NODEFAULTLIB");
+                cmd.arg("/DYNAMICBASE:NO");
+                cmd.arg("/NXCOMPAT:NO");
+                cmd.arg("/LTCG");  // 链接时代码生成优化
+            } else {
+                // 动态链接选项
+                cmd.arg("/SUBSYSTEM:CONSOLE");
+                cmd.arg("/ENTRY:mainCRTStartup");
+            }
+            
+            // 添加外部动态库依赖
+            for dep in external_dep_names {
+                let lib_name = if dep.ends_with(".lib") || dep.ends_with(".dll") {
+                    dep.clone()
+                } else if dep.starts_with("lib") {
+                    // 处理 "libc" -> "msvcrt.lib" 等
+                    let base = dep.trim_start_matches("lib");
+                    format!("{}.lib", base)
+                } else {
+                    format!("{}.lib", dep)
+                };
+                cmd.arg(lib_name);
+            }
+            
+            // 添加默认库
+            if !dynamic_link {
+                cmd.arg("msvcrt.lib");
+                cmd.arg("kernel32.lib");
+            }
+            
+            cmd.arg(obj_path_str.as_ref());
+
+            println!("[*] Invoking Windows linker: link.exe ...");
+
+            let output = cmd.output().map_err(|e|
+                LinkerError::AotError(format!("Failed to invoke linker: {}", e))
+            )?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(LinkerError::AotError(format!(
+                    "Windows linker failed: {}", stderr
+                )));
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // macOS: 使用 cc 或 ld
+            let linker = if Path::new("/usr/bin/ld").exists() { "ld" } else { "cc" };
+            let mut cmd = Command::new(linker);
+
+            if dynamic_link {
+                cmd.arg("-o").arg(output_path);
+                cmd.arg(obj_path_str.as_ref());
+                // macOS 动态链接需要指定 dylib
+                for dep in external_dep_names {
+                    let lib_name = if dep.starts_with("lib") {
+                        dep.trim_start_matches("lib")
+                    } else {
+                        dep
+                    };
+                    cmd.arg(format!("-l{}", lib_name));
+                }
+                cmd.arg("-lc");
+                cmd.arg("-lSystem");  // macOS 系统库
+            } else {
+                // 静态链接: 生成完全独立的可执行文件
+                cmd.arg("-static");
+                cmd.arg("-o").arg(output_path);
+                cmd.arg(obj_path_str.as_ref());
+                cmd.arg("-e");
+                cmd.arg("_main"); // 入口点符号
+                cmd.arg("-no_pie");  // 非位置无关可执行文件
+                cmd.arg("-O2");  // 优化
+            }
+
+            println!("[*] Invoking macOS linker: {} ...", linker);
+
+            let output = cmd.output().map_err(|e|
+                LinkerError::AotError(format!("Failed to invoke linker: {}", e))
+            )?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // 如果静态链接失败，尝试动态链接作为后备
+                if !dynamic_link {
+                    eprintln!("[!] Static linking failed, trying dynamic linking...");
+                    return Self::invoke_system_linker(obj_path, output_path, true, external_dep_names);
+                }
+                return Err(LinkerError::AotError(format!(
+                    "macOS linker failed: {}", stderr
+                )));
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if dynamic_link {
+                // 动态链接模式：使用 cc 以正确链接 C 运行时库
+                let mut cmd = Command::new("cc");
+                cmd.arg("-o").arg(output_path);
+                cmd.arg(obj_path_str.as_ref());
+                cmd.arg("-O2");  // 优化
+                
+                // 添加外部动态库
+                for dep in external_dep_names {
+                    // 处理库名：如果是 "libc" 则转换为 "c"
+                    let lib_name = if dep.starts_with("lib") {
+                        dep.trim_start_matches("lib")
+                    } else {
+                        dep
+                    };
+                    cmd.arg(format!("-l{}", lib_name));
+                }
+                
+                // 添加默认库
+                cmd.arg("-lc");  // C 标准库
+
+                println!("[*] Invoking Linux linker: cc ...");
+
+                let output = cmd.output().map_err(|e|
+                    LinkerError::AotError(format!("Failed to invoke linker: {}", e))
+                )?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(LinkerError::AotError(format!(
+                        "Linux linker failed: {}", stderr
+                    )));
+                }
+            } else {
+                // 静态链接: 生成完全独立的可执行文件
+                // 需要提供 _start 入口点调用 __main__ 并执行 exit syscall
+                let temp_dir = std::env::temp_dir();
+                let start_c_path = temp_dir.join(format!("vx_start_{}.c", std::process::id()));
+                let start_o_path = temp_dir.join(format!("vx_start_{}.o", std::process::id()));
+                let start_c = r#"
+extern long __main__(void);
+__attribute__((naked)) void _start(void) {
+    __asm__ volatile (
+        "call __main__\n\t"
+        "movq %%rax, %%rdi\n\t"
+        "movq $60, %%rax\n\t"
+        "syscall\n\t"
+        "hlt"
+        :
+        :
+        : "rax", "rdi", "memory"
+    );
+}
+"#;
+                fs::write(&start_c_path, start_c).map_err(LinkerError::Io)?;
+
+                // 编译 start.c 为对象文件
+                let cc_output = Command::new("cc")
+                    .arg("-c")
+                    .arg("-fno-stack-protector")
+                    .arg("-nostdlib")
+                    .arg("-O2")
+                    .arg("-o")
+                    .arg(&start_o_path)
+                    .arg(&start_c_path)
+                    .output()
+                    .map_err(|e| LinkerError::AotError(format!("Failed to compile start stub: {}", e)))?;
+
+                if !cc_output.status.success() {
+                    let _ = fs::remove_file(&start_c_path);
+                    let stderr = String::from_utf8_lossy(&cc_output.stderr);
+                    return Err(LinkerError::AotError(format!(
+                        "Failed to compile start stub: {}", stderr
+                    )));
+                }
+
+                let linker = if Path::new("/usr/bin/ld").exists() { "ld" } else { "cc" };
+                let mut cmd = Command::new(linker);
+                cmd.arg("-static");
+                cmd.arg("-o").arg(output_path);
+                cmd.arg(obj_path_str.as_ref());
+                cmd.arg(start_o_path.to_string_lossy().as_ref());
+                
+                // 添加优化选项
+                if linker == "ld" {
+                    cmd.arg("--gc-sections");  // 移除未使用的段
+                } else {
+                    cmd.arg("-Wl,--gc-sections");  // 通过 cc 传递 ld 选项
+                }
+
+                println!("[*] Invoking Linux linker: {} ...", linker);
+
+                let output = cmd.output().map_err(|e| {
+                    let _ = fs::remove_file(&start_c_path);
+                    let _ = fs::remove_file(&start_o_path);
+                    LinkerError::AotError(format!("Failed to invoke linker: {}", e))
+                })?;
+
+                let _ = fs::remove_file(&start_c_path);
+                let _ = fs::remove_file(&start_o_path);
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(LinkerError::AotError(format!(
+                        "Linux linker failed: {}", stderr
+                    )));
+                }
+            }
+        }
+
+        // 设置可执行权限 (Unix)
+        #[cfg(unix)]
+        {
+            let metadata = fs::metadata(output_path)?;
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(output_path, perms)?;
+        }
+
+        println!("[+] Native linked: {} (static={})", output_path, !dynamic_link);
+        Ok(())
+    }
+
     // === AOT Compilation via Cranelift ===
     // 启用方式: `cargo build --features aot`
     // 编译流水线: TypeIR → Cranelift CLIF IR → 宿主原生机器码 → 对象文件
@@ -265,18 +593,19 @@ impl VXLinker {
 }
 
 fn print_usage(prog_name: &str) {
-    eprintln!("VX Linker v3 - Multi-mode linker");
-    eprintln!("Usage: {} <input.vxobj> [options]", prog_name);
+    eprintln!("VX Linker v4 - Multi-mode linker");
+    eprintln!("Usage: {} <input.vxobj/.vxco> [options]", prog_name);
     eprintln!("Options:");
     eprintln!("  -o <path>      Output path (default: input with .out/.exe)");
     eprintln!("  -s <path>      Runtime stub path (for interpret/jit mode)");
-    eprintln!("  --mode <mode>  Link mode: interpret (default), jit, aot");
-    eprintln!("  --dump         Dump VXOBJ section info");
+    eprintln!("  --mode <mode>  Link mode: interpret (default), jit, aot, native");
+    eprintln!("  --dump         Dump VXOBJ/VXCO section info");
     eprintln!();
     eprintln!("Modes:");
     eprintln!("  interpret  VM interpreter + bytecode (compatible, slowest)");
     eprintln!("  jit        Cranelift JIT stub + type info (balanced)");
     eprintln!("  aot        AOT compile to native machine code (fastest)");
+    eprintln!("  native     Static compile to native executable (default for .vxco)");
 }
 
 fn main() {

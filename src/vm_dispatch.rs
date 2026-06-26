@@ -735,6 +735,105 @@ _ => return DispatchResult::Error(format!("Unexpected opcode in new: {:?}", op))
     }
 
     #[inline]
+    pub(crate) fn exec_iterator(&mut self, op: OpCode) -> DispatchResult {
+        match op {
+            OpCode::Iterate => {
+                // 栈顶是 iterable 对象
+                let iterable = self.pop();
+                match iterable {
+                    Value::Array(arr) => {
+                        // 返回迭代器状态：[items, index, total]
+                        self.push(Value::Array(arr.clone()));
+                        self.push_int(0);
+                        self.push_int(arr.len() as i64);
+                    }
+                    Value::String(s) => {
+                        // 字符串迭代器
+                        self.push(Value::String(s.clone()));
+                        self.push_int(0);
+                        self.push_int(s.len() as i64);
+                    }
+                    Value::Map(m) => {
+                        // Map 迭代器：返回键数组
+                        let keys: Vec<Value> = m.keys().map(|k| Value::String(k.clone().into())).collect();
+                        let keys_len = keys.len();
+                        self.push(Value::Array(Arc::new(keys)));
+                        self.push_int(0);
+                        self.push_int(keys_len as i64);
+                    }
+                    _ => {
+                        return DispatchResult::Error(format!("iterate: unsupported iterable type: {:?}", iterable));
+                    }
+                }
+            }
+            OpCode::Next => {
+                // 栈上是：[iterator_state, total]
+                // iterator_state = [container, current_index]
+                let total = self.pop_int();
+                let iter_state = self.pop();  // [container, index]
+                
+                if let Value::Array(arr) = iter_state {
+                    if arr.len() < 2 {
+                        return DispatchResult::Error("next: iterator state must have 2 elements".into());
+                    }
+                    let container = &arr[0];
+                    let current_idx = match &arr[1] {
+                        Value::Int(i) => *i as usize,
+                        _ => return DispatchResult::Error("next: invalid index in iterator state".into()),
+                    };
+                    
+                    if current_idx >= total as usize {
+                        // 迭代完成
+                        self.push(Value::Nil);
+                    } else {
+                        // 返回 [element, next_index]
+                        match container {
+                            Value::Array(items) => {
+                                if current_idx < items.len() {
+                                    self.push(items[current_idx].clone());
+                                } else {
+                                    self.push(Value::Nil);
+                                }
+                            }
+                            Value::String(s) => {
+                                if current_idx < s.len() {
+                                    let ch = s.chars().nth(current_idx);
+                                    self.push(match ch {
+                                        Some(c) => Value::string(c.to_string()),
+                                        None => Value::Nil,
+                                    });
+                                } else {
+                                    self.push(Value::Nil);
+                                }
+                            }
+                            Value::Map(_) => {
+                                // container 是键数组
+                                if let Value::Array(keys) = container {
+                                    if current_idx < keys.len() {
+                                        self.push(keys[current_idx].clone());
+                                    } else {
+                                        self.push(Value::Nil);
+                                    }
+                                } else {
+                                    self.push(Value::Nil);
+                                }
+                            }
+                            _ => {
+                                self.push(Value::Nil);
+                            }
+                        }
+                        self.push_int((current_idx + 1) as i64);
+                    }
+                } else {
+                    return DispatchResult::Error("next: expected array iterator state".into());
+                }
+            }
+            _ => return DispatchResult::Error(format!("Unexpected opcode in iterator: {:?}", op)),
+        }
+        DispatchResult::Continue
+    }
+
+    #[inline]
     pub(crate) fn exec_memory_safety(&mut self, op: OpCode) -> DispatchResult {
         match op {
             OpCode::Free => {

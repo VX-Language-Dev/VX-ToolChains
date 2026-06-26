@@ -24,6 +24,293 @@ const MAGIC: &[u8; 5] = b"VXOBJ";
 const VERSION_V2: u32 = 2;
 const VERSION_V3: u32 = 3;
 
+// ==================== VXCO v1: Cross-Platform Intermediate Format ====================
+//
+// VXCO (VX Compiler Object): 跨平台中间文件格式，不包含任何可执行文件特征
+//
+// 格式结构:
+//   [Header]
+//     4 bytes magic: "VXCO"
+//     4 bytes version (u32 BE): 1
+//     4 bytes flags (u32 BE): bit 0 = has_external_deps
+//     4 bytes target_triple_len (u32 BE)
+//     N bytes target_triple (UTF-8)
+//   [Section Index Table]
+//     4 bytes count (u32 BE)
+//     For each section:
+//       4 bytes name_len (u32 BE) + name bytes
+//       4 bytes offset (u32 BE, from file start)
+//       4 bytes size (u32 BE)
+//   [Sections] (TypeIR, DebugInfo, SourceMap, ExternalDeps)
+//
+// 用途:
+//   - 编译器输出 VXCO 格式，不嵌入任何运行时或可执行信息
+//   - 链接器接收 VXCO，自动适配目标平台，生成原生机器码可执行文件
+//
+// 外部依赖机制:
+//   - 当源代码引用外部动态链接库时，ExternalDeps section 包含依赖信息
+//   - 链接器根据此信息自动采用动态链接方式
+//   - 未引用外部库的源代码默认静态链接生成独立可执行文件
+
+const VXCO_MAGIC: &[u8; 4] = b"VXCO";
+const VXCO_VERSION: u32 = 1;
+
+// VXCO Section names
+pub const VXCO_SECTION_TYPE_IR: &str = "TypeIR";
+pub const VXCO_SECTION_DEBUG: &str = "Debug";
+pub const VXCO_SECTION_SOURCE_MAP: &str = "SourceMap";
+pub const VXCO_SECTION_EXTERNAL_DEPS: &str = "ExternalDeps";
+
+#[derive(Debug, Clone)]
+pub struct VxcoHeader {
+    pub version: u32,
+    pub flags: u32,
+    pub target_triple: String,
+    pub sections: Vec<VxcoSectionIndex>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VxcoSectionIndex {
+    pub name: String,
+    pub offset: u32,
+    pub size: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct VxcoContainer {
+    pub header: VxcoHeader,
+    pub section_data: HashMap<String, Vec<u8>>,
+}
+
+impl VxcoContainer {
+    pub fn new(target_triple: &str) -> Self {
+        Self {
+            header: VxcoHeader {
+                version: VXCO_VERSION,
+                flags: 0,
+                target_triple: target_triple.to_string(),
+                sections: Vec::new(),
+            },
+            section_data: HashMap::new(),
+        }
+    }
+
+    pub fn set_section(&mut self, name: &str, data: Vec<u8>) {
+        let size = data.len() as u32;
+        self.section_data.insert(name.to_string(), data);
+        self.header.sections.push(VxcoSectionIndex {
+            name: name.to_string(),
+            offset: 0,
+            size,
+        });
+    }
+
+    pub fn get_section(&self, name: &str) -> Option<&Vec<u8>> {
+        self.section_data.get(name)
+    }
+
+    pub fn has_external_deps(&self) -> bool {
+        (self.header.flags & 1) != 0
+    }
+
+    pub fn set_external_deps_flag(&mut self, has_deps: bool) {
+        if has_deps {
+            self.header.flags |= 1;
+        } else {
+            self.header.flags &= !1;
+        }
+    }
+
+    pub fn write(&self, w: &mut dyn Write) -> io::Result<()> {
+        let mut sections: Vec<(String, Vec<u8>)> = Vec::new();
+        for sec in &self.header.sections {
+            if let Some(data) = self.section_data.get(&sec.name) {
+                sections.push((sec.name.clone(), data.clone()));
+            }
+        }
+
+        let base_header_size = 4 + 4 + 4 + 4 + self.header.target_triple.len() as u32;
+        let section_index_size: u32 = 4 + self.header.sections.iter()
+            .map(|s| 4 + s.name.len() as u32 + 4 + 4)
+            .sum::<u32>();
+        let mut cur_off = base_header_size + section_index_size;
+
+        // Write header
+        w.write_all(VXCO_MAGIC)?;
+        write_u32_be(w, VXCO_VERSION)?;
+        write_u32_be(w, self.header.flags)?;
+        write_string(w, &self.header.target_triple)?;
+
+        // Write section index
+        write_u32_be(w, self.header.sections.len() as u32)?;
+        for (i, sec) in self.header.sections.iter().enumerate() {
+            write_string(w, &sec.name)?;
+            write_u32_be(w, cur_off)?;
+            write_u32_be(w, sec.size)?;
+            cur_off += sections[i].1.len() as u32;
+        }
+
+        // Write section data
+        for (_, data) in &sections {
+            w.write_all(data)?;
+        }
+        w.flush()?;
+        Ok(())
+    }
+
+    pub fn parse(data: &[u8]) -> io::Result<Self> {
+        let mut r = io::Cursor::new(data);
+
+        // Read magic
+        let mut magic = [0u8; 4];
+        r.read_exact(&mut magic)?;
+        if &magic != VXCO_MAGIC {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid VXCO magic"));
+        }
+
+        let version = read_u32_be(&mut r)?;
+        if version != VXCO_VERSION {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Unsupported VXCO version: {}", version)));
+        }
+
+        let flags = read_u32_be(&mut r)?;
+        let target_triple = read_string(&mut r)?;
+
+        let num_sections = read_u32_be(&mut r)?;
+        let mut sections = Vec::with_capacity(num_sections as usize);
+        let mut section_data = HashMap::new();
+
+        for _ in 0..num_sections {
+            let name = read_string(&mut r)?;
+            let offset = read_u32_be(&mut r)?;
+            let size = read_u32_be(&mut r)?;
+
+            let end = (offset + size) as usize;
+            if end > data.len() {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "VXCO section data truncated"));
+            }
+            section_data.insert(name.clone(), data[offset as usize..end].to_vec());
+            sections.push(VxcoSectionIndex { name, offset, size });
+        }
+
+        Ok(Self {
+            header: VxcoHeader { version, flags, target_triple, sections },
+            section_data,
+        })
+    }
+}
+
+// ==================== VXCO External Dependencies ====================
+//
+// 简单格式: null-separated list of entries
+// 每个 entry 格式: "name\0path\0is_optional\0"
+// - name: 库名称
+// - path: 库路径（可选，为空表示系统库）
+// - is_optional: "1" 表示可选，"0" 表示必需
+
+#[derive(Debug, Clone)]
+pub struct ExternalDependency {
+    pub name: String,
+    pub path: Option<String>,
+    pub is_optional: bool,
+}
+
+impl ExternalDependency {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            path: None,
+            is_optional: false,
+        }
+    }
+
+    pub fn with_path(mut self, path: &str) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+
+    pub fn set_optional(mut self, optional: bool) -> Self {
+        self.is_optional = optional;
+        self
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut result = self.name.as_bytes().to_vec();
+        result.push(0);
+        if let Some(ref path) = self.path {
+            result.extend_from_slice(path.as_bytes());
+        }
+        result.push(0);
+        result.push(if self.is_optional { b'1' } else { b'0' });
+        result.push(0);
+        result
+    }
+
+    fn from_bytes(data: &[u8]) -> Option<Self> {
+        let parts: Vec<&[u8]> = data.split(|&b| b == 0).collect();
+        if parts.is_empty() {
+            return None;
+        }
+        let name = String::from_utf8_lossy(parts[0]).to_string();
+        let path = if parts.len() > 1 && !parts[1].is_empty() {
+            Some(String::from_utf8_lossy(parts[1]).to_string())
+        } else {
+            None
+        };
+        let is_optional = parts.len() > 2 && parts[2] == b"1";
+        Some(ExternalDependency { name, path, is_optional })
+    }
+}
+
+pub fn serialize_external_deps(deps: &[ExternalDependency]) -> Vec<u8> {
+    let mut result = Vec::new();
+    for dep in deps {
+        result.extend_from_slice(&dep.to_bytes());
+    }
+    result
+}
+
+pub fn deserialize_external_deps(data: &[u8]) -> Vec<ExternalDependency> {
+    let mut deps = Vec::new();
+    let mut pos = 0;
+
+    while pos < data.len() {
+        // 读取 name (直到第一个 null)
+        let name_end = data[pos..].iter().position(|&b| b == 0).unwrap_or(data.len() - pos);
+        let name = String::from_utf8_lossy(&data[pos..pos + name_end]).to_string();
+        pos += name_end + 1;
+
+        if pos >= data.len() {
+            break;
+        }
+
+        // 读取 path (直到第二个 null)
+        let path_end = data[pos..].iter().position(|&b| b == 0).unwrap_or(data.len() - pos);
+        let path = if path_end > 0 {
+            Some(String::from_utf8_lossy(&data[pos..pos + path_end]).to_string())
+        } else {
+            None
+        };
+        pos += path_end + 1;
+
+        if pos >= data.len() {
+            break;
+        }
+
+        // 读取 is_optional (第三个字段)
+        let is_optional = data[pos] == b'1';
+        pos += 1;
+
+        deps.push(ExternalDependency {
+            name,
+            path,
+            is_optional,
+        });
+    }
+
+    deps
+}
+
 // Section names
 pub const SECTION_TYPE_IR: &str = "TypeIR";
 pub const SECTION_BYTECODE: &str = "Bytecode";
@@ -323,17 +610,33 @@ pub fn parse_vxobj(data: &[u8]) -> io::Result<VxObjModule> {
     let num_constants = read_u32_be(&mut r)?;
     let mut constants = Vec::with_capacity(num_constants as usize);
     for _ in 0..num_constants {
-        let c = read_constant(&mut r)?;
-        constants.push(SerializedConstant {
-            tag: match &c {
-                ConstantValue::Nil => 0,
-                ConstantValue::Int(_) => 1,
-                ConstantValue::Float(_) => 2,
-                ConstantValue::String(_) => 3,
-                ConstantValue::Bool(_) => 4,
-            },
-            data: vec![],
-        });
+        let tag = read_u8(&mut r)?;
+        let data = match tag {
+            0 => vec![],
+            1 => {
+                let mut buf = [0u8; 8];
+                r.read_exact(&mut buf)?;
+                buf.to_vec()
+            }
+            2 => {
+                let mut buf = [0u8; 8];
+                r.read_exact(&mut buf)?;
+                buf.to_vec()
+            }
+            3 => {
+                let len = read_u32_be(&mut r)?;
+                let mut buf = vec![0u8; len as usize];
+                r.read_exact(&mut buf)?;
+                buf
+            }
+            4 => {
+                let mut buf = [0u8; 1];
+                r.read_exact(&mut buf)?;
+                buf.to_vec()
+            }
+            _ => vec![],
+        };
+        constants.push(SerializedConstant { tag, data });
     }
 
     let num_functions = read_u32_be(&mut r)?;
@@ -663,6 +966,35 @@ pub fn write_vxobj_v3(
     container.write(w)
 }
 
+// ==================== VXCO Writer (Cross-Platform Intermediate Format) ====================
+
+pub fn write_vxco(
+    w: &mut dyn Write,
+    target_triple: &str,
+    type_ir_data: &[u8],
+    debug_data: &[u8],
+    source_map_data: &[u8],
+    external_deps: &[ExternalDependency],
+) -> io::Result<()> {
+    let mut container = VxcoContainer::new(target_triple);
+
+    if !type_ir_data.is_empty() {
+        container.set_section(VXCO_SECTION_TYPE_IR, type_ir_data.to_vec());
+    }
+    if !debug_data.is_empty() {
+        container.set_section(VXCO_SECTION_DEBUG, debug_data.to_vec());
+    }
+    if !source_map_data.is_empty() {
+        container.set_section(VXCO_SECTION_SOURCE_MAP, source_map_data.to_vec());
+    }
+    if !external_deps.is_empty() {
+        container.set_section(VXCO_SECTION_EXTERNAL_DEPS, serialize_external_deps(external_deps));
+        container.set_external_deps_flag(true);
+    }
+
+    container.write(w)
+}
+
 // ==================== Section Size Stats ====================
 
 pub fn dump_section_stats(data: &[u8]) {
@@ -731,7 +1063,7 @@ mod tests {
         ];
         let instructions = vec![(0x01, 1, Some(1), None), (0x09, 0, None, None)];
         let functions: Vec<VxobjFunctionRef<'_>> =
-            vec![("__main__", 0, false, &[], &instructions)];
+            vec![("__main__", 0u32, false, &[], &instructions)];
         let struct_defs = HashMap::new();
         let mut buf = Vec::new();
         write_vxobj(&mut buf, &constants, &functions, &struct_defs).unwrap();

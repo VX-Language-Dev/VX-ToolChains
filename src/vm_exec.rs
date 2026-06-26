@@ -165,6 +165,10 @@ impl VM {
                     self.exec_syscall(op, sarg)
                 }
 
+                OpCode::Iterate | OpCode::Next => {
+                    self.exec_iterator(op)
+                }
+
                 _ => DispatchResult::Error(format!("Unimplemented opcode: {:?}", op)),
             };
 

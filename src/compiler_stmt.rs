@@ -55,6 +55,7 @@ impl Compiler {
                     start,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    label: None,
                 });
                 self.compile_expr(cond)?;
                 let exit_j = self.emit(OpCode::JumpIfFalse, BytecodeArg::None);
@@ -94,6 +95,7 @@ impl Compiler {
                     start,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    label: None,
                 });
                 let idx_slot2 = self.allocate_slot(&idx_var);
                 self.emit(OpCode::LoadVar, BytecodeArg::Int(idx_slot2 as i32));
@@ -139,23 +141,65 @@ impl Compiler {
                 }
                 self.loop_stack.pop();
             }
-            Expr::BreakStmt(line, col) => {
-                if self.loop_stack.is_empty() {
-                    return Err(format!("VX Error [line {}, col {}]: break outside loop", line, col));
+            Expr::LoopStmt(label, body, _, _) => {
+                let start = self.instructions.len();
+                self.loop_stack.push(LoopInfo {
+                    start,
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                    label: label.clone(),
+                });
+                for x in body {
+                    self.compile_stmt(x)?;
+                }
+                self.emit(OpCode::Jump, BytecodeArg::None);
+                let exit_pc = self.instructions.len();
+                self.patch(self.instructions.len() - 1, start);
+                let (break_jumps, continue_jumps) = {
+                    let info = self.loop_stack.last().unwrap();
+                    (info.break_jumps.clone(), info.continue_jumps.clone())
+                };
+                for bj in &break_jumps {
+                    self.patch(*bj, exit_pc);
+                }
+                for cj in &continue_jumps {
+                    self.patch(*cj, start);
+                }
+                self.loop_stack.pop();
+            }
+            Expr::BreakStmt(label, line, col) => {
+                let idx = match label {
+                    Some(ref l) => self
+                        .loop_stack
+                        .iter()
+                        .rposition(|info| info.label.as_ref() == Some(l)),
+                    None => self.loop_stack.len().checked_sub(1),
+                };
+                if idx.is_none() {
+                    return Err(format!(
+                        "VX Error [line {}, col {}]: break outside loop",
+                        line, col
+                    ));
                 }
                 let bj = self.emit(OpCode::Jump, BytecodeArg::None);
-                self.loop_stack.last_mut().unwrap().break_jumps.push(bj);
+                self.loop_stack[idx.unwrap()].break_jumps.push(bj);
             }
-            Expr::ContinueStmt(line, col) => {
-                if self.loop_stack.is_empty() {
-                    return Err(format!("VX Error [line {}, col {}]: continue outside loop", line, col));
+            Expr::ContinueStmt(label, line, col) => {
+                let idx = match label {
+                    Some(ref l) => self
+                        .loop_stack
+                        .iter()
+                        .rposition(|info| info.label.as_ref() == Some(l)),
+                    None => self.loop_stack.len().checked_sub(1),
+                };
+                if idx.is_none() {
+                    return Err(format!(
+                        "VX Error [line {}, col {}]: continue outside loop",
+                        line, col
+                    ));
                 }
                 let cj = self.emit(OpCode::Jump, BytecodeArg::None);
-                self.loop_stack
-                    .last_mut()
-                    .unwrap()
-                    .continue_jumps
-                    .push(cj);
+                self.loop_stack[idx.unwrap()].continue_jumps.push(cj);
             }
             Expr::ReturnStmt(val, _, _) => {
                 if let Some(v) = val {

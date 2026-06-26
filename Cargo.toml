@@ -1,6 +1,6 @@
 [package]
-name = "vx_language_compiler"
-version = "1.3.4"
+name = "vx_language_toolkit"
+version = "1.4.0-beta"
 edition = "2021"
 authors = ["VX Language Team"]
 description = "A complete toolchain for the adVanced eXecutable (VX) programming language: compiler, linker, VM runtime, package manager, LSP server, and debugger"

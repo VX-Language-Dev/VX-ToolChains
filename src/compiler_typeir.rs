@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::type_ir::{TypedInstruction, StructLayoutId};
+use crate::type_ir::{TypedInstruction, StructLayoutId, FuncId};
 use crate::compiler_bytecode::{BytecodeArg, Instruction, ConstantValue};
 use crate::OpCode;
 
@@ -14,6 +14,10 @@ pub(crate) struct TypeIRSimulator {
     body: Vec<TypedInstruction>,
     slot_to_var: HashMap<u32, u32>,
     stack: Vec<u32>,
+    /// 跟踪字符串常量 VarId → 函数名，用于解析 Call 的 callee
+    const_strings: HashMap<u32, String>,
+    /// 函数名 → TypeIR FuncId
+    func_name_to_id: HashMap<String, FuncId>,
 }
 
 impl TypeIRSimulator {
@@ -22,6 +26,18 @@ impl TypeIRSimulator {
             body: Vec::new(),
             slot_to_var: HashMap::new(),
             stack: Vec::new(),
+            const_strings: HashMap::new(),
+            func_name_to_id: HashMap::new(),
+        }
+   }
+
+    pub(crate) fn with_function_map(func_name_to_id: HashMap<String, FuncId>) -> Self {
+        Self {
+            body: Vec::new(),
+            slot_to_var: HashMap::new(),
+            stack: Vec::new(),
+            const_strings: HashMap::new(),
+            func_name_to_id,
         }
     }
 
@@ -64,7 +80,11 @@ impl TypeIRSimulator {
                     Some(ConstantValue::Int(v)) => ConstInt(*v),
                     Some(ConstantValue::Float(v)) => ConstFloat(*v),
                     Some(ConstantValue::Bool(v)) => ConstBool(*v),
-                    Some(ConstantValue::String(s)) => ConstString(s.clone()),
+                    Some(ConstantValue::String(s)) => {
+                        let vid = self.body.len() as u32;
+                        self.const_strings.insert(vid, s.clone());
+                        ConstString(s.clone())
+                    }
                     _ => ConstNil,
                 };
                 let vid = self.emit(typed);
@@ -331,8 +351,13 @@ impl TypeIRSimulator {
                 let num_args = match inst.arg { BytecodeArg::Int(n) => n as usize, _ => 0 };
                 let mut args = Vec::with_capacity(num_args);
                 for _ in 0..num_args { args.push(self.pop_val()); }
-                let _callee = self.pop_val();
-                let vid = self.emit(Call(0, args));
+                let callee_vid = self.pop_val();
+                // 根据 callee 字符串常量解析函数 ID
+                let callee_id = self.const_strings.get(&callee_vid)
+                    .and_then(|name| self.func_name_to_id.get(name))
+                    .copied()
+                    .unwrap_or(0);
+                let vid = self.emit(Call(callee_id, args));
                 self.push_val(vid);
             }
             OpCode::Return => {

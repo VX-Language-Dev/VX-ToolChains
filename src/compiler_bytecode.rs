@@ -73,4 +73,6 @@ pub struct CompiledModule {
     pub classes: Vec<(String, Vec<String>)>,
     pub type_ir_data: Vec<u8>,
     pub target_triple: String,
+    /// 外部依赖信息，用于静态链接时的动态库链接
+    pub external_deps: Vec<String>,
 }
