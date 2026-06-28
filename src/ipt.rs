@@ -1,6 +1,4 @@
-// VX Language Compiler v3.0 (Rust Port)
-// Token 处理和 AST 解析模块已拆分到 token.rs 和 parser.rs
-// 编译器模块已拆分到 compiler_opcode / compiler_bytecode / compiler_ownership / compiler_core
+// VX Language Compiler CLI
 
 use std::collections::HashMap;
 use std::env;
@@ -19,7 +17,7 @@ use vx_vm::compiler_core::Compiler;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: vxcompiler <input.vx> [-o output.vxobj] [--dump-bytecode] [--dump-sections] [--target triple]");
+        eprintln!("Usage: vxcompiler <input.vx> [-o output.vxco] [--vxobj] [--dump-bytecode] [--dump-sections] [--target triple]");
         process::exit(1);
     }
     let input = &args[1];
@@ -27,6 +25,8 @@ fn main() {
     let mut dump_bytecode = false;
     let mut dump_sections = false;
     let mut target_triple = String::new();
+    // 默认输出 VXCO 格式；指定 --vxobj 时输出旧的 VXOBJ v3 格式（向后兼容）
+    let mut output_vxobj = false;
     // 优化等级 (由 vpm 构建器透传, 编译核心暂作记录)
     let mut opt_level: u8 = 20;
     let mut warn_dead_code = false;
@@ -67,6 +67,10 @@ fn main() {
                 error_dead_code = true;
                 i += 1;
             }
+            "--vxobj" => {
+                output_vxobj = true;
+                i += 1;
+            }
             _ => {
                 eprintln!("Unknown argument: {}", args[i]);
                 process::exit(1);
@@ -92,7 +96,11 @@ fn main() {
     let final_error_dc = env_error_dc || error_dead_code;
     // final_* 在下面构造 Compiler 时通过 with_options 注入
     if output.is_empty() {
-        output = input.replacen(".vx", ".vxobj", 1);
+        if output_vxobj {
+            output = input.replacen(".vx", ".vxobj", 1);
+        } else {
+            output = input.replacen(".vx", ".vxco", 1);
+        }
     }
 
     let source_dir = fs::canonicalize(input)
@@ -105,33 +113,33 @@ fn main() {
     let vxmodel_toml_path = Path::new(&source_dir).join("vxmodel.toml");
 
     if vxmodel_path.exists() || vxmodel_toml_path.exists() {
-        eprintln!("[VX 废弃警告] 检测到旧版配置文件 vxmodel / vxmodel.toml。");
-        eprintln!("  该配置格式已废弃，请迁移至 vxsetting.toml。");
-        eprintln!("  参考格式：");
+        eprintln!("[VX Deprecation Warning] Legacy config file detected: vxmodel / vxmodel.toml");
+        eprintln!("  This format is deprecated. Please migrate to vxsetting.toml.");
+        eprintln!("  Reference format:");
         eprintln!("    [libraries]");
         eprintln!("    stdlib = \"/path/to/stdlib\"");
         process::exit(1);
     }
 
     if !vxsetting_path.exists() {
-        eprintln!("VX Error: 缺少 vxsetting.toml 文件: {}", vxsetting_path.display());
+        eprintln!("VX Error: Missing vxsetting.toml: {}", vxsetting_path.display());
         process::exit(1);
     }
 
     let settings = vx_vm::VxSettings::from_file(
         vxsetting_path.to_str().unwrap_or_else(|| {
-            eprintln!("VX Error: 配置文件路径包含非 UTF-8 字符");
+            eprintln!("VX Error: Config file path contains non-UTF-8 characters");
             process::exit(1);
         }),
     )
         .unwrap_or_else(|e| {
-            eprintln!("VX Error: 解析 vxsetting.toml 失败: {}", e);
+            eprintln!("VX Error: Failed to parse vxsetting.toml: {}", e);
             process::exit(1);
         });
 
     let src = match fs::read_to_string(input) {
         Err(e) => {
-            eprintln!("读取失败: {}", e);
+            eprintln!("Read failed: {}", e);
             process::exit(1);
         }
         Ok(s) => s,
@@ -160,7 +168,7 @@ fn main() {
             eprintln!("[Ownership Warning] {}", err);
         }
         eprintln!(
-            "所有权检查发现 {} 个问题，请修复后重新编译",
+            "Ownership checker found {} issue(s). Please fix and recompile.",
             checker.errors.len()
         );
         process::exit(1);
@@ -208,25 +216,32 @@ fn main() {
         let target = if der.target_triple.is_empty() { "x86_64-unknown-linux-gnu" } else { &der.target_triple };
         let mut bytecode_buf = Vec::new();
         if let Err(e) = vx_vm::bytecode::write_vxobj(&mut bytecode_buf, &constants, &[], &HashMap::new()) {
-            eprintln!("写入字节码失败: {}", e);
+            eprintln!("Write bytecode failed: {}", e);
             process::exit(1);
         }
         if let Err(e) = vx_vm::bytecode::write_vxobj_v3(&mut buf, target, &der.type_ir_data, &bytecode_buf, &[], &[], &[]) {
-            eprintln!("写入 VXOBJ v3 失败: {}", e);
+            eprintln!("Write VXOBJ v3 failed: {}", e);
             process::exit(1);
         }
         vx_vm::bytecode::dump_section_stats(&buf);
         process::exit(0);
     }
 
-    match comp.save(&der, &output) {
-        Ok(_) => println!("Compiled: {} (VXOBJ v3)", output),
-        Err(e) => {
-            eprintln!("保存失败: {}", e);
-            process::exit(1);
+    if output_vxobj {
+        match comp.save(&der, &output) {
+            Ok(_) => println!("[OK] Compiled: {} (VXOBJ v3)", output),
+            Err(e) => {
+                eprintln!("[Error] Save failed: {}", e);
+                process::exit(1);
+            }
+        }
+    } else {
+        match comp.save_vxco(&der, &output) {
+            Ok(_) => println!("[OK] Compiled: {} (VXCO v1)", output),
+            Err(e) => {
+                eprintln!("[Error] Save failed: {}", e);
+                process::exit(1);
+            }
         }
     }
-    println!("已内置 VPM 系统接口：sys_argv / os_system / file_read / file_write / file_exists");
-    println!("已启用内存安全模式：new(堆分配) / move(所有权转移) / &(借用检查)");
-    println!("关键字精简: 27 核心关键字, string/vector 入库, free/newz 标准化, and/or/not→&&/||/!");
 }

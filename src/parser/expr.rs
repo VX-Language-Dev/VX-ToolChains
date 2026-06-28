@@ -43,7 +43,22 @@ impl Parser {
     fn parse_or(&mut self) -> Result<Expr, VXError> {
         let mut l = self.parse_and()?;
         while self.current().kind == TokenType::Or {
+            // 窥探 or 后是否有合法表达式延续; 多行 if/while 条件中
+            // `... or\n   ...:` 当下一行是 Dedent+Indent+Identifier 时, 也算延续
+            if !self.peek_continuation_after_binary_op() {
+                break;
+            }
             let op = self.advance().value;
+            // 消费 or 后若后续是 Newline/Dedent/Indent (多行续行), 静默跳过
+            self.skip_newlines();
+            while self.current().kind == TokenType::Dedent {
+                self.advance();
+                self.skip_newlines();
+            }
+            while self.current().kind == TokenType::Indent {
+                self.advance();
+                self.skip_newlines();
+            }
             l = Expr::BinaryOp(
                 op,
                 Box::new(l.clone()),
@@ -58,7 +73,19 @@ impl Parser {
     fn parse_and(&mut self) -> Result<Expr, VXError> {
         let mut l = self.parse_equality()?;
         while self.current().kind == TokenType::And {
+            if !self.peek_continuation_after_binary_op() {
+                break;
+            }
             let op = self.advance().value;
+            self.skip_newlines();
+            while self.current().kind == TokenType::Dedent {
+                self.advance();
+                self.skip_newlines();
+            }
+            while self.current().kind == TokenType::Indent {
+                self.advance();
+                self.skip_newlines();
+            }
             l = Expr::BinaryOp(
                 op,
                 Box::new(l.clone()),
@@ -171,11 +198,13 @@ impl Parser {
                 e = self.parse_index(e)?;
             } else if self.current().kind == TokenType::Dot {
                 self.advance();
-                let p = self.expect(TokenType::Identifier, None)?;
+                // 属性名: 接受 Identifier 或关键字 token (如 .new / .int)
+                let p = self.expect_identifier_or_keyword()?;
                 e = Expr::PropertyAccess(Box::new(e), p.value, p.line, p.col);
             } else if self.current().kind == TokenType::Arrow {
                 self.advance();
-                let m = self.expect(TokenType::Identifier, None)?;
+                // 指针成员名: 接受 Identifier 或关键字 token
+                let m = self.expect_identifier_or_keyword()?;
                 e = Expr::PointerMember(Box::new(e), m.value, m.line, m.col);
             } else {
                 break;
@@ -188,12 +217,39 @@ impl Parser {
         let (l, c) = (self.current().line, self.current().col);
         self.advance();
         let mut a = vec![];
+        self.skip_newlines();
+        // 跳过参数列表换行产生的 Indent/Dedent
+        while self.current().kind == TokenType::Indent || self.current().kind == TokenType::Dedent {
+            self.advance();
+            self.skip_newlines();
+        }
         if !self.match_kind(&[TokenType::RParen]) {
             a.push(Box::new(self.parse_expression()?));
-            while self.current().kind == TokenType::Comma {
-                self.advance();
+            while self.current().kind == TokenType::Comma
+                || self.current().kind == TokenType::Newline
+            {
+                if self.current().kind == TokenType::Comma {
+                    self.advance();
+                } else {
+                    self.skip_newlines();
+                }
+                self.skip_newlines();
+                while self.current().kind == TokenType::Indent
+                    || self.current().kind == TokenType::Dedent
+                {
+                    self.advance();
+                    self.skip_newlines();
+                }
+                if self.current().kind == TokenType::RParen {
+                    break;
+                }
                 a.push(Box::new(self.parse_expression()?));
             }
+        }
+        self.skip_newlines();
+        while self.current().kind == TokenType::Dedent {
+            self.advance();
+            self.skip_newlines();
         }
         self.expect(TokenType::RParen, None)?;
         Ok(Expr::CallExpr(Box::new(callee), a, l, c))
@@ -208,6 +264,10 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, VXError> {
+        // 注意: 不在 parse_primary 中静默 skip Newline, 因为 Newline 之后可能
+        // 是 Indent/Dedent, 而这些是结构边界 token, 不应被表达式吞掉。
+        // 多行 if/while 条件 (or/and 续行) 的 Newline 处理在 parse_or/parse_and
+        // 中通过 peek_continuation_after_binary_op 显式跳过。
         let t = self.current().clone();
         match t.kind {
             TokenType::Int => {
@@ -263,7 +323,7 @@ impl Parser {
     fn parse_new_expr(&mut self) -> Result<Expr, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
-        let tn = self.expect(TokenType::Identifier, None)?.value;
+        let tn = self.expect_identifier_or_keyword()?.value;
         let mut ta = vec![];
         if self.current().kind == TokenType::Lt {
             self.advance();

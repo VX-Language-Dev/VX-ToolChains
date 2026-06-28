@@ -17,6 +17,10 @@
 use std::collections::HashMap;
 use target_lexicon::Triple;
 
+use cranelift_codegen::ir::{InstBuilder, UserExternalNameRef, UserFuncName};
+use cranelift_codegen::settings::Configurable;
+use cranelift_module::Module;
+
 use crate::type_ir::*;
 
 // ==================== CLIF 类型映射 ====================
@@ -52,13 +56,14 @@ mod types {
 /// AOT 编译器：TypeIR → 原生机器码对象文件
 pub struct AotBackend {
     /// Cranelift 模块管理器 (对象文件后端)
-    module: clm::Module<clo::ObjectProduct>,
+    /// 使用 Option 以便 finish 时取出所有权
+    module: Option<clo::ObjectModule>,
     /// FunctionBuilder 重用上下文
     builder_ctx: clf::FunctionBuilderContext,
     /// 编译上下文
     ctx: cl::Context,
     /// 完整的 ISA 实例
-    isa: Box<dyn cl::isa::TargetIsa>,
+    isa: cl::isa::OwnedTargetIsa,
 }
 
 impl AotBackend {
@@ -78,7 +83,7 @@ impl AotBackend {
             .map_err(|e| format!("Failed to set verifier: {}", e))?;
 
         let flags = cl::settings::Flags::new(flag_builder);
-        let isa = isa_builder
+        let isa: cl::isa::OwnedTargetIsa = isa_builder
             .finish(flags)
             .map_err(|e| format!("Failed to create host ISA: {}", e))?;
 
@@ -86,13 +91,12 @@ impl AotBackend {
         let obj_builder = clo::ObjectBuilder::new(
             isa.clone(),
             "vx_aot_module".to_string(),
-            clm::default_libcall_names()
-                .map_err(|e| format!("Failed to init libcalls: {}", e))?,
+            clm::default_libcall_names(),
         )
         .map_err(|e| format!("Failed to create object builder: {}", e))?;
 
         Ok(AotBackend {
-            module: clm::Module::new(obj_builder),
+            module: Some(clo::ObjectModule::new(obj_builder)),
             builder_ctx: clf::FunctionBuilderContext::new(),
             ctx: cl::Context::new(),
             isa,
@@ -114,21 +118,21 @@ impl AotBackend {
 
         let isa = match triple.architecture {
             target_lexicon::Architecture::X86_64 => {
-                let mut ib = cl::isa::lookup(triple.clone())
+                let ib = cl::isa::lookup(triple.clone())
                     .map_err(|e| format!("x86_64 ISA lookup for '{}': {}", target_triple, e))?;
                 ib.finish(cl::settings::Flags::new(flag_builder))
                     .map_err(|e| format!("x86_64 ISA: {}", e))?
             }
             target_lexicon::Architecture::Aarch64(_) => {
                 // ARM64 交叉编译: 需要 cranelift-codegen "all-arch" feature
-                let mut ib = cl::isa::lookup(triple.clone())
+                let ib = cl::isa::lookup(triple.clone())
                     .map_err(|e| format!("aarch64 ISA lookup for '{}': {}", target_triple, e))?;
                 ib.finish(cl::settings::Flags::new(flag_builder))
                     .map_err(|e| format!("aarch64 ISA: {}", e))?
             }
             _ => {
                 // 尝试通用 ISA 查找
-                let mut ib = cl::isa::lookup(triple)
+                let ib = cl::isa::lookup(triple)
                     .map_err(|e| format!("Unsupported architecture '{}': {}", target_triple, e))?;
                 ib.finish(cl::settings::Flags::new(flag_builder))
                     .map_err(|e| format!("ISA finish: {}", e))?
@@ -138,13 +142,12 @@ impl AotBackend {
         let obj_builder = clo::ObjectBuilder::new(
             isa.clone(),
             format!("vx_aot_{}", target_triple),
-            clm::default_libcall_names()
-                .map_err(|e| format!("libcalls: {}", e))?,
+            clm::default_libcall_names(),
         )
         .map_err(|e| format!("Object builder: {}", e))?;
 
         Ok(AotBackend {
-            module: clm::Module::new(obj_builder),
+            module: Some(clo::ObjectModule::new(obj_builder)),
             builder_ctx: clf::FunctionBuilderContext::new(),
             ctx: cl::Context::new(),
             isa,
@@ -177,9 +180,17 @@ impl AotBackend {
                     .push(cl::ir::AbiParam::new(type_to_clif(&func.return_type)));
             }
 
+            // main / __main__ 作为导出符号，便于链接器定位入口点
+            let linkage = if func.name == "main" || func.name == "__main__" {
+                clm::Linkage::Export
+            } else {
+                clm::Linkage::Local
+            };
             let cl_func_id = self
                 .module
-                .declare_function(&func.name, clm::Linkage::Local, &sig)
+                .as_mut()
+                .unwrap()
+                .declare_function(&func.name, linkage, &sig)
                 .map_err(|e| format!("Failed to declare '{}': {}", func.name, e))?;
 
             declared_ids.insert(func.id, cl_func_id);
@@ -192,7 +203,7 @@ impl AotBackend {
         }
 
         // ===== 阶段 3: 生成对象文件 =====
-        let product = self.module.finish();
+        let product = self.module.take().unwrap().finish();
         let obj_data = product
             .emit()
             .map_err(|e| format!("Object emit failed: {}", e))?;
@@ -208,7 +219,7 @@ impl AotBackend {
         all_func_ids: &HashMap<FuncId, clm::FuncId>,
         type_module: &TypeModule,
     ) -> Result<(), String> {
-        use cl::ir::{AbiParam, ExternalName, InstBuilder, Signature, StackSlotData, StackSlotKind};
+        use cl::ir::{AbiParam, Signature};
 
         // 构建 CLIF 函数签名
         let mut sig = Signature::new(self.isa.default_call_conv());
@@ -220,7 +231,7 @@ impl AotBackend {
                 .push(AbiParam::new(type_to_clif(&func.return_type)));
         }
 
-        let name = ExternalName::user(0, module_func_id.as_u32());
+        let name = UserFuncName::user(0, module_func_id.as_u32());
         let mut clif_func = cl::ir::Function::with_name_signature(name, sig);
 
         // ===== 使用 FunctionBuilder 构建 IR =====
@@ -233,11 +244,10 @@ impl AotBackend {
 
         // 变量映射: TypeIR VarId → CLIF Variable
         let mut var_map: HashMap<VarId, clf::Variable> = HashMap::new();
-        let mut next_var = func.var_count.max(func.params.len() as u32);
 
         // 注册参数变量
         for (i, (_pname, _pty)) in func.params.iter().enumerate() {
-            let var = clf::Variable::new(i);
+            let var = clf::Variable::from_u32(i as u32);
             builder.declare_var(var, type_to_clif(&_pty));
             let val = builder.block_params(entry_block)[i];
             builder.def_var(var, val);
@@ -247,14 +257,15 @@ impl AotBackend {
         // 为函数体中的所有局部变量声明 CLIF Variable
         for (vid, vty) in &func.local_types {
             if let std::collections::hash_map::Entry::Vacant(e) = var_map.entry(*vid) {
-                let var = clf::Variable::new(*vid);
+                let var = clf::Variable::from_u32(*vid);
                 builder.declare_var(var, type_to_clif(vty));
                 e.insert(var);
             }
         }
 
         // ===== 逐指令翻译 TypeIR → CLIF IR =====
-        let result = self.compile_body(&mut builder, func, &var_map, all_func_ids, type_module);
+        let module_ref = self.module.as_mut().unwrap();
+        let result = compile_body(&mut builder, func, &mut var_map, all_func_ids, type_module, module_ref);
 
         builder.finalize();
 
@@ -263,43 +274,34 @@ impl AotBackend {
         }
 
         // ===== 编译到机器码并写入对象文件 =====
-        for (vid, var) in &var_map {
-            let _ = (vid, var); // 静默未使用警告
-        }
-
         self.ctx.func = clif_func;
 
-        let mut trap_sink = cl::binemit::NullTrapSink {};
-        let mut stack_map_sink = cl::binemit::NullStackMapSink {};
-
-        self.module
-            .define_function(module_func_id, &mut self.ctx, &mut trap_sink, &mut stack_map_sink)
+        module_ref
+            .define_function(module_func_id, &mut self.ctx)
             .map_err(|e| format!("Define '{}': {}", func.name, e))?;
 
-        self.module
+        module_ref
             .clear_context(&mut self.ctx);
 
         Ok(())
     }
+}
 
-    /// 翻译 TypeIR 指令体到 CLIF IR
-    fn compile_body(
-        &self,
-        builder: &mut clf::FunctionBuilder,
-        func: &TypeFunction,
-        var_map: &HashMap<VarId, clf::Variable>,
-        all_func_ids: &HashMap<FuncId, clm::FuncId>,
-        type_module: &TypeModule,
-    ) -> Result<(), String> {
+/// 翻译 TypeIR 指令体到 CLIF IR
+fn compile_body(
+    builder: &mut clf::FunctionBuilder,
+    func: &TypeFunction,
+    var_map: &mut HashMap<VarId, clf::Variable>,
+    all_func_ids: &HashMap<FuncId, clm::FuncId>,
+    type_module: &TypeModule,
+    module: &mut clo::ObjectModule,
+) -> Result<(), String> {
         use TypedInstruction::*;
 
         // 块映射: TypeIR 跳转目标 → CLIF Block
         let mut block_map: HashMap<u32, cl::ir::Block> = HashMap::new();
         // 残留值栈: 用于函数内操作数传递
         let mut value_stack: Vec<cl::ir::Value> = Vec::new();
-
-        // 单个临时变量 (用于操作结果)
-        let tmp_var = clf::Variable::new(u32::MAX);
 
         // 第一遍: 为所有跳转目标预创建块
         for inst in &func.body {
@@ -311,7 +313,7 @@ impl AotBackend {
             }
         }
 
-        for inst in &func.body {
+        for inst in func.body.iter() {
             match inst {
                 // ---- 常量 ----
                 ConstInt(v) => {
@@ -340,8 +342,6 @@ impl AotBackend {
                 LoadVar(vid) => {
                     if let Some(var) = var_map.get(vid) {
                         let val = builder.use_var(*var);
-                        builder.declare_var(tmp_var, types::I64);
-                        builder.def_var(tmp_var, val);
                         value_stack.push(val);
                     } else {
                         return Err(format!("LoadVar: unknown var {}", vid));
@@ -353,153 +353,154 @@ impl AotBackend {
                             builder.def_var(*var, val);
                         } else {
                             // 目标变量未注册 → 声明并定义
-                            let var = clf::Variable::new(*vid);
+                            let var = clf::Variable::from_u32(*vid);
                             builder.declare_var(var, type_to_clif(
                                 func.local_types.get(vid).unwrap_or(&Type::Unknown)
                             ));
                             builder.def_var(var, val);
+                            var_map.insert(*vid, var);
                         }
                     }
                 }
 
                 // ---- 整数算术 ----
                 I32Add(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().iadd(va, vb);
                     value_stack.push(r);
                 }
                 I32Sub(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().isub(va, vb);
                     value_stack.push(r);
                 }
                 I32Mul(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().imul(va, vb);
                     value_stack.push(r);
                 }
                 I32Div(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().sdiv(va, vb);
                     value_stack.push(r);
                 }
                 I32Mod(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().srem(va, vb);
                     value_stack.push(r);
                 }
 
                 // ---- 浮点算术 ----
                 F64Add(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().fadd(va, vb);
                     value_stack.push(r);
                 }
                 F64Sub(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().fsub(va, vb);
                     value_stack.push(r);
                 }
                 F64Mul(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().fmul(va, vb);
                     value_stack.push(r);
                 }
                 F64Div(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let r = builder.ins().fdiv(va, vb);
                     value_stack.push(r);
                 }
 
                 // ---- 整数比较 ----
                 I32Eq(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::Equal, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 I32Ne(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::NotEqual, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 I32Lt(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::SignedLessThan, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 I32Gt(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::SignedGreaterThan, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 I32Le(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::SignedLessThanOrEqual, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 I32Ge(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::SignedGreaterThanOrEqual, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
 
                 // ---- 浮点比较 ----
                 F64Eq(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::Equal, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 F64Ne(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::NotEqual, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 F64Lt(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::LessThan, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 F64Gt(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::GreaterThan, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 F64Le(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::LessThanOrEqual, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
                 F64Ge(a, b) => {
-                    let (va, vb) = self.binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::GreaterThanOrEqual, va, vb);
-                    let r = builder.ins().bint(types::I64, cmp);
+                    let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
                 }
 
                 // ---- 一元运算 ----
                 I32Neg(vid) => {
-                    let v = self.get_var_value(builder, var_map, *vid, &mut value_stack)?;
+                    let v = get_var_value(builder, var_map, *vid, &mut value_stack)?;
                     let r = builder.ins().ineg(v);
                     value_stack.push(r);
                 }
                 F64Neg(vid) => {
-                    let v = self.get_var_value(builder, var_map, *vid, &mut value_stack)?;
+                    let v = get_var_value(builder, var_map, *vid, &mut value_stack)?;
                     let r = builder.ins().fneg(v);
                     value_stack.push(r);
                 }
                 BoolNot(vid) => {
-                    let v = self.get_var_value(builder, var_map, *vid, &mut value_stack)?;
+                    let v = get_var_value(builder, var_map, *vid, &mut value_stack)?;
                     // bool_not: v == 0 ? 1 : 0
                     let zero = builder.ins().iconst(types::I64, 0);
                     let one = builder.ins().iconst(types::I64, 1);
@@ -511,44 +512,49 @@ impl AotBackend {
                 // ---- 控制流 ----
                 Jump(target) => {
                     let target_block = *block_map.get(target).unwrap_or(&builder.create_block());
+                    let current_block = builder.current_block().unwrap();
                     builder.ins().jump(target_block, &[]);
+                    builder.seal_block(current_block);
                     // 在新块上继续
                     builder.switch_to_block(target_block);
                 }
                 JumpIfFalse(cond_var, target) => {
-                    let cond = self.get_var_value(builder, var_map, *cond_var, &mut value_stack)?;
+                    let cond = get_var_value(builder, var_map, *cond_var, &mut value_stack)?;
                     let target_block = *block_map.get(target).unwrap_or(&builder.create_block());
                     let fallthrough = builder.create_block();
 
                     let zero = builder.ins().iconst(types::I64, 0);
                     let is_false = builder.ins().icmp(cl::ir::condcodes::IntCC::Equal, cond, zero);
-                    builder.ins().brnz(is_false, target_block, &[]);
-                    builder.ins().jump(fallthrough, &[]);
+                    let current_block = builder.current_block().unwrap();
+                    builder.ins().brif(is_false, target_block, &[], fallthrough, &[]);
+                    builder.seal_block(current_block);
                     builder.switch_to_block(fallthrough);
+                    builder.seal_block(target_block);
                 }
                 JumpIfTrue(cond_var, target) => {
-                    let cond = self.get_var_value(builder, var_map, *cond_var, &mut value_stack)?;
+                    let cond = get_var_value(builder, var_map, *cond_var, &mut value_stack)?;
                     let target_block = *block_map.get(target).unwrap_or(&builder.create_block());
                     let fallthrough = builder.create_block();
 
                     let zero = builder.ins().iconst(types::I64, 0);
                     let is_true = builder.ins().icmp(cl::ir::condcodes::IntCC::NotEqual, cond, zero);
-                    builder.ins().brnz(is_true, target_block, &[]);
-                    builder.ins().jump(fallthrough, &[]);
+                    let current_block = builder.current_block().unwrap();
+                    builder.ins().brif(is_true, target_block, &[], fallthrough, &[]);
+                    builder.seal_block(current_block);
                     builder.switch_to_block(fallthrough);
+                    builder.seal_block(target_block);
                 }
 
                 // ---- 函数调用 ----
                 Call(callee_id, args) => {
                     if let Some(&cl_callee_id) = all_func_ids.get(callee_id) {
-                        let callee_ref = self
-                            .module
+                        let callee_ref = module
                             .declare_func_in_func(cl_callee_id, builder.func);
 
                         // 收集参数
                         let mut arg_vals: Vec<cl::ir::Value> = Vec::new();
                         for arg_vid in args {
-                            let v = self.get_var_value(builder, var_map, *arg_vid, &mut value_stack)?;
+                            let v = get_var_value(builder, var_map, *arg_vid, &mut value_stack)?;
                             arg_vals.push(v);
                         }
 
@@ -559,17 +565,17 @@ impl AotBackend {
                         }
                     } else {
                         // 外部函数: 尝试通过名称在模块中查找
-                        if let Some(callee_name) = type_module.function_map.get(callee_id) {
+                        if let Some(_callee_name) = type_module.function_map.get(callee_id) {
                             let mut arg_vals = Vec::new();
                             for arg_vid in args {
-                                let v = self.get_var_value(builder, var_map, *arg_vid, &mut value_stack)?;
+                                let v = get_var_value(builder, var_map, *arg_vid, &mut value_stack)?;
                                 arg_vals.push(v);
                             }
+                            let sig_ref = builder.import_signature(builder.func.signature.clone());
                             let callee_ref = builder
-                                .func
                                 .import_function(cl::ir::ExtFuncData {
-                                    name: cl::ir::ExternalName::user(1, *callee_id),
-                                    signature: builder.func.signature.clone(),
+                                    name: cl::ir::ExternalName::user(UserExternalNameRef::from_u32(*callee_id)),
+                                    signature: sig_ref,
                                     colocated: false,
                                 });
                             let call_inst = builder.ins().call(callee_ref, &arg_vals);
@@ -589,11 +595,16 @@ impl AotBackend {
                 // ---- 返回 ----
                 Return(ret_val) => {
                     if let Some(vid) = ret_val {
-                        let v = self.get_var_value(builder, var_map, *vid, &mut value_stack)?;
+                        let v = get_var_value(builder, var_map, *vid, &mut value_stack)?;
                         builder.ins().return_(&[v]);
                     } else {
                         builder.ins().return_(&[]);
                     }
+                    // return_ 是块终结指令，封闭当前块并切换到新块
+                    let current_block = builder.current_block().unwrap();
+                    builder.seal_block(current_block);
+                    let next_block = builder.create_block();
+                    builder.switch_to_block(next_block);
                 }
 
                 // ---- 数据结构 (简化: 指针占位) ----
@@ -646,52 +657,54 @@ impl AotBackend {
             }
         }
 
-        Ok(())
-    }
-
-    // ==================== 辅助方法 ====================
-
-    /// 获取二元操作的操作数值
-    fn binary_operands(
-        &self,
-        builder: &mut clf::FunctionBuilder,
-        var_map: &HashMap<VarId, clf::Variable>,
-        a: VarId,
-        b: VarId,
-        stack: &mut Vec<cl::ir::Value>,
-    ) -> Result<(cl::ir::Value, cl::ir::Value), String> {
-        let va = if let Some(var) = var_map.get(&a) {
-            builder.use_var(*var)
-        } else if let Some(v) = stack.pop() {
-            v
-        } else {
-            return Err(format!("Binary op: unknown operand var {}", a));
-        };
-        let vb = if let Some(var) = var_map.get(&b) {
-            builder.use_var(*var)
-        } else if let Some(v) = stack.pop() {
-            v
-        } else {
-            return Err(format!("Binary op: unknown operand var {}", b));
-        };
-        Ok((va, vb))
-    }
-
-    /// 获取指定变量的 CLIF Value
-    fn get_var_value(
-        &self,
-        builder: &mut clf::FunctionBuilder,
-        var_map: &HashMap<VarId, clf::Variable>,
-        vid: VarId,
-        stack: &mut Vec<cl::ir::Value>,
-    ) -> Result<cl::ir::Value, String> {
-        if let Some(var) = var_map.get(&vid) {
-            Ok(builder.use_var(*var))
-        } else if let Some(v) = stack.pop() {
-            Ok(v)
-        } else {
-            Err(format!("Unknown variable {}", vid))
+        // 确保所有基本块都被封闭 (seal)
+        if let Some(current_block) = builder.current_block() {
+            builder.seal_block(current_block);
         }
+
+        Ok(())
+}
+
+// ==================== 辅助函数 ====================
+
+/// 获取二元操作的操作数值
+fn binary_operands(
+    builder: &mut clf::FunctionBuilder,
+    var_map: &HashMap<VarId, clf::Variable>,
+    a: VarId,
+    b: VarId,
+    stack: &mut Vec<cl::ir::Value>,
+) -> Result<(cl::ir::Value, cl::ir::Value), String> {
+    let va = if let Some(var) = var_map.get(&a) {
+        builder.use_var(*var)
+    } else if let Some(v) = stack.pop() {
+        v
+    } else {
+        return Err(format!("Binary op: unknown operand var {}", a));
+    };
+    let vb = if let Some(var) = var_map.get(&b) {
+        builder.use_var(*var)
+    } else if let Some(v) = stack.pop() {
+        v
+    } else {
+        return Err(format!("Binary op: unknown operand var {}", b));
+    };
+    Ok((va, vb))
+}
+
+/// 获取指定变量的 CLIF Value
+fn get_var_value(
+    builder: &mut clf::FunctionBuilder,
+    var_map: &HashMap<VarId, clf::Variable>,
+    vid: VarId,
+    stack: &mut Vec<cl::ir::Value>,
+) -> Result<cl::ir::Value, String> {
+    if let Some(var) = var_map.get(&vid) {
+        Ok(builder.use_var(*var))
+    } else if let Some(v) = stack.pop() {
+        Ok(v)
+    } else {
+        Err(format!("Unknown variable {}", vid))
     }
 }
 

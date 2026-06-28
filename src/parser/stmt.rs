@@ -8,6 +8,11 @@ use super::Parser;
 impl Parser {
     pub fn parse_statement(&mut self) -> Result<Stmt, VXError> {
         self.skip_newlines();
+        // 自举兼容: 跳过残留的 Indent/Dedent token (嵌套块结束时)
+        while matches!(self.current().kind, TokenType::Indent | TokenType::Dedent) {
+            self.advance();
+            self.skip_newlines();
+        }
         match self.current().kind {
             TokenType::Struct => self.parse_struct_decl(),
             TokenType::Class => self.parse_class_decl(),
@@ -19,17 +24,44 @@ impl Parser {
             TokenType::Import => self.parse_import_stmt(),
             TokenType::Func => self.parse_func_decl(),
             TokenType::If => self.parse_if_stmt(),
+            TokenType::Else | TokenType::Elif => {
+                // 自举兼容: else/elif 出现在 parse_block while 循环中通常表示
+                // 缩进跟踪错误; 这里跳过以让上层 parse_if_stmt 正确处理
+                // (但 parse_if_stmt 自身在调用 parse_block 后会处理 else/elif,
+                // 所以这里走到 default 是异常路径)
+                return Err(VXError {
+                    msg: format!("意外的 {:?} (else/elif 必须紧跟 if/elif 块)", self.current().kind),
+                    line: self.current().line,
+                    col: self.current().col,
+                    source: Some(self.source.clone()),
+                });
+            }
             TokenType::Identifier if self.current().value == "match" => self.parse_match_stmt(),
             TokenType::While => self.parse_while_stmt(),
             TokenType::For => self.parse_for_stmt(),
             TokenType::Return => self.parse_return_stmt(),
+            TokenType::Loop => self.parse_loop_stmt(),
             TokenType::Break => {
                 let t = self.advance();
-                Ok(Expr::BreakStmt(t.line, t.col))
+                let label = if self.current().kind == TokenType::Identifier
+                    || self.current().kind == TokenType::Loop
+                {
+                    Some(self.advance().value)
+                } else {
+                    None
+                };
+                Ok(Expr::BreakStmt(label, t.line, t.col))
             }
             TokenType::Continue => {
                 let t = self.advance();
-                Ok(Expr::ContinueStmt(t.line, t.col))
+                let label = if self.current().kind == TokenType::Identifier
+                    || self.current().kind == TokenType::Loop
+                {
+                    Some(self.advance().value)
+                } else {
+                    None
+                };
+                Ok(Expr::ContinueStmt(label, t.line, t.col))
             }
             // Free 已裁减 → mem::free(ptr) 标准库函数调用, 作为普通函数调用处理
             TokenType::VarT => self.parse_var_decl_inferred(),
@@ -43,7 +75,7 @@ impl Parser {
     fn parse_struct_decl(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
+        let n = self.expect_identifier_or_keyword()?.value;
         let gp = self.parse_generic_params()?;
         self.expect(TokenType::Colon, None)?;
         self.skip_newlines();
@@ -58,33 +90,44 @@ impl Parser {
             if self.current().kind == TokenType::Func {
                 m.push(Box::new(self.parse_func_decl()?));
             } else {
-                let fn_name = self.expect(TokenType::Identifier, None)?.value;
+                let fn_name = self.expect_identifier_or_keyword()?.value;
                 self.expect(TokenType::Colon, None)?;
                 let ft = self.parse_type()?;
                 f.push((expr_to_type_name(&ft), fn_name));
             }
         }
-        self.expect(TokenType::Dedent, None)?;
+        // 自举兼容: 消费所有连续 Dedent
+        while self.current().kind == TokenType::Dedent {
+            self.advance();
+        }
         Ok(Expr::StructDecl(n, gp, f, m, l, c))
     }
 
     fn parse_class_decl(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
+        let n = self.expect_identifier_or_keyword()?.value;
         let gp = self.parse_generic_params()?;
-        // 冒号继承语法: class Dog : Animal, Canine { ... }
-        // 冒号后跟父类名，逗号分隔接口列表
+        // 冒号继承语法: class Dog : Animal, Canine :
+        // 单冒号形式: class Foo :        (无父类，紧跟字段缩进块)
+        // 双冒号形式: class Foo : Base : (父类 Base + 字段缩进块)
         let (mut p, mut ii) = (None, vec![]);
         if self.current().kind == TokenType::Colon {
-            self.advance(); // 跳过冒号
-            p = Some(self.expect(TokenType::Identifier, None)?.value);
-            while self.current().kind == TokenType::Comma {
-                self.advance();
-                ii.push(self.expect(TokenType::Identifier, None)?.value);
+            self.advance(); // 消费第一个冒号
+            self.skip_newlines();
+            if self.current().kind == TokenType::Identifier {
+                // 父类列表: class Foo : Base, Trait :
+                p = Some(self.expect_identifier_or_keyword()?.value);
+                while self.current().kind == TokenType::Comma {
+                    self.advance();
+                    ii.push(self.expect_identifier_or_keyword()?.value);
+                }
+                if self.current().kind == TokenType::Colon {
+                    self.advance();
+                }
             }
+            // 否则单冒号无父类，已消费冒号，直接进入缩进块
         }
-        self.expect(TokenType::Colon, None)?;
         self.skip_newlines();
         self.expect(TokenType::Indent, None)?;
         let mut f = vec![];
@@ -99,20 +142,44 @@ impl Parser {
             if self.current().kind == TokenType::Func {
                 m.push(Box::new(self.parse_func_decl()?));
             } else {
-                let fn_name = self.expect(TokenType::Identifier, None)?.value;
-                self.expect(TokenType::Colon, None)?;
-                let ft = self.parse_type()?;
-                f.push((expr_to_type_name(&ft), fn_name, acc));
+                // 字段: 支持 name: Type / name = expr / name: Type = expr
+                let fn_name = self.expect_identifier_or_keyword()?.value;
+                if self.current().kind == TokenType::Colon {
+                    self.advance();
+                    let ft = self.parse_type()?;
+                    // 可选 = 默认值
+                    if self.current().kind == TokenType::Assign {
+                        self.advance();
+                        let _init = self.parse_expression()?;
+                    }
+                    f.push((expr_to_type_name(&ft), fn_name, acc));
+                } else if self.current().kind == TokenType::Assign {
+                    // 默认值初始化 (无类型注解)
+                    self.advance();
+                    let _init = self.parse_expression()?;
+                    // 无类型注解的字段在 codegen 中按 var 类型处理
+                    f.push(("var".to_string(), fn_name, acc));
+                } else {
+                    return Err(VXError {
+                        msg: "类字段声明需要类型注解或默认值".to_string(),
+                        line: self.current().line,
+                        col: self.current().col,
+                        source: Some(self.source.clone()),
+                    });
+                }
             }
         }
-        self.expect(TokenType::Dedent, None)?;
+        // 自举兼容: 消费所有连续 Dedent token (class body 可能嵌套多级缩进)
+        while self.current().kind == TokenType::Dedent {
+            self.advance();
+        }
         Ok(Expr::ClassDecl(n, gp, f, m, p, ii, l, c))
     }
 
     fn parse_enum_decl(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
+        let n = self.expect_identifier_or_keyword()?.value;
         self.expect(TokenType::Colon, None)?;
         self.skip_newlines();
         self.expect(TokenType::Indent, None)?;
@@ -123,7 +190,7 @@ impl Parser {
             if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
                 break;
             }
-            let vn = self.expect(TokenType::Identifier, None)?.value;
+            let vn = self.expect_identifier_or_keyword()?.value;
             let mut vv = auto;
             if self.current().kind == TokenType::Assign {
                 self.advance();
@@ -132,14 +199,16 @@ impl Parser {
             v.push((vn, vv));
             auto = vv + 1;
         }
-        self.expect(TokenType::Dedent, None)?;
+        while self.current().kind == TokenType::Dedent {
+            self.advance();
+        }
         Ok(Expr::EnumDecl(n, v, l, c))
     }
 
     fn parse_union_decl(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
+        let n = self.expect_identifier_or_keyword()?.value;
         self.expect(TokenType::Colon, None)?;
         self.skip_newlines();
         self.expect(TokenType::Indent, None)?;
@@ -149,16 +218,18 @@ impl Parser {
             if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
                 break;
             }
-            let fn_name = self.expect(TokenType::Identifier, None)?.value;
+            let fn_name = self.expect_identifier_or_keyword()?.value;
             self.expect(TokenType::Colon, None)?;
             f.push((expr_to_type_name(&self.parse_type()?), fn_name));
         }
-        self.expect(TokenType::Dedent, None)?;
+        while self.current().kind == TokenType::Dedent {
+            self.advance();
+        }
         Ok(Expr::UnionDecl(n, f, l, c))
     }
 
     fn parse_var_decl(&mut self) -> Result<Stmt, VXError> {
-        let nm = self.expect(TokenType::Identifier, None)?.value;
+        let nm = self.expect_identifier_or_keyword()?.value;
         self.expect(TokenType::Colon, None)?;
         let mut th = self.parse_type()?;
         let (l, c) = (e_line(&th), e_col(&th));
@@ -183,7 +254,7 @@ impl Parser {
 
     fn parse_var_decl_inferred(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance(); // consume 'var'
-        let nm = self.expect(TokenType::Identifier, None)?.value;
+        let nm = self.expect_identifier_or_keyword()?.value;
         let mut v = Expr::NilLiteral(t.line, t.col);
         if self.current().kind == TokenType::Assign {
             self.advance();
@@ -196,18 +267,18 @@ impl Parser {
     fn parse_func_decl(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
-        let n = self.expect(TokenType::Identifier, None)?.value;
+        let n = self.expect_identifier_or_keyword()?.value;
         let gp = self.parse_generic_params()?;
         self.expect(TokenType::LParen, None)?;
         let mut p = vec![];
         if !self.match_kind(&[TokenType::RParen]) {
-            let pn = self.expect(TokenType::Identifier, None)?.value;
+            let pn = self.expect_identifier_or_keyword()?.value;
             self.expect(TokenType::Colon, None)?;
             let pt = expr_to_type_name(&self.parse_type()?);
             p.push((pn, pt));
             while self.current().kind == TokenType::Comma {
                 self.advance();
-                let pn = self.expect(TokenType::Identifier, None)?.value;
+                let pn = self.expect_identifier_or_keyword()?.value;
                 self.expect(TokenType::Colon, None)?;
                 let pt = expr_to_type_name(&self.parse_type()?);
                 p.push((pn, pt));
@@ -226,6 +297,8 @@ impl Parser {
     fn parse_if_stmt(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
+        // 多行 if 条件由 parse_or/parse_and 中的 peek_continuation_after_binary_op
+        // 机制处理, 这里直接调用 parse_expression 即可。
         let cond = self.parse_expression()?;
         let body = self.parse_block()?;
         let mut elifs: Vec<(Box<Expr>, Vec<Box<Stmt>>)> = vec![];
@@ -284,7 +357,7 @@ impl Parser {
     fn parse_for_stmt(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
-        let var = self.expect(TokenType::Identifier, None)?.value;
+        let var = self.expect_identifier_or_keyword()?.value;
         self.expect(TokenType::In, None)?;
         let it = self.parse_expression()?;
         let body = self.parse_block()?;
@@ -297,6 +370,19 @@ impl Parser {
         let cond = self.parse_expression()?;
         let body = self.parse_block()?;
         Ok(Expr::WhileStmt(Box::new(cond), body, l, c))
+    }
+
+    fn parse_loop_stmt(&mut self) -> Result<Stmt, VXError> {
+        let t = self.advance();
+        let (l, c) = (t.line, t.col);
+        let label = if self.current().kind == TokenType::Identifier {
+            Some(self.advance().value)
+        } else {
+            None
+        };
+        self.expect(TokenType::Colon, Some("期望 ':'"))?;
+        let body = self.parse_block()?;
+        Ok(Expr::LoopStmt(label, body, l, c))
     }
 
     fn parse_return_stmt(&mut self) -> Result<Stmt, VXError> {
@@ -315,7 +401,15 @@ impl Parser {
     fn parse_import_stmt(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();
         let (l, c) = (t.line, t.col);
-        let nm = self.expect(TokenType::Identifier, None)?.value;
+        // 支持点分路径: import std.error / import bootstrap.lexer / import std.collections.vec
+        // 在原生 lexer 中, 'std' 是 Identifier, '.' 是 Dot, 'error' 是 Identifier。
+        // 这里循环吞掉 "Identifier ('.' Identifier)*" 序列, 合并为单一名 'std.error'。
+        let mut nm = self.expect_identifier_or_keyword()?.value;
+        while self.current().kind == TokenType::Dot {
+            self.advance(); // 消费 '.'
+            let next = self.expect_identifier_or_keyword()?.value;
+            nm = format!("{}.{}", nm, next);
+        }
         let mut al = None;
         // dirs 已裁减 → import 支持可变路径列表:
         //   import("a","b") as mod  → 多路径导入
@@ -323,7 +417,7 @@ impl Parser {
         // 移除 dirs 关键字检查, 仅保留 as 别名
         if self.current().kind == TokenType::As {
             self.advance();
-            al = Some(self.expect(TokenType::Identifier, None)?.value);
+            al = Some(self.expect_identifier_or_keyword()?.value);
         }
         // 如果导入名后跟有字符串字面量，收集为路径列表（旧 dirs 替代）
         while self.current().kind == TokenType::String {
@@ -344,13 +438,15 @@ impl Parser {
             }
             self.advance();
         }
-        while !self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
+        while !self.match_kind(&[TokenType::Dedent, TokenType::EOF, TokenType::Else, TokenType::Elif]) {
             self.skip_newlines();
-            if self.match_kind(&[TokenType::Dedent, TokenType::EOF]) {
+            if self.match_kind(&[TokenType::Dedent, TokenType::EOF, TokenType::Else, TokenType::Elif]) {
                 break;
             }
             st.push(Box::new(self.parse_statement()?));
         }
+        // parse_block 只应消费本层 block 结束的那一个 Dedent;
+        // 外层 (class/func/if 等) 的 Dedent 留给调用者处理。
         if self.current().kind == TokenType::Dedent {
             self.advance();
         }
@@ -361,6 +457,10 @@ impl Parser {
         let mut st = vec![];
         while !self.match_kind(&[TokenType::EOF]) {
             self.skip_newlines();
+            // 自举兼容: 顶层循环跳过残留的 Dedent (嵌套块结束时缩进回退)
+            while self.current().kind == TokenType::Dedent {
+                self.advance();
+            }
             if self.match_kind(&[TokenType::EOF]) {
                 break;
             }
@@ -375,27 +475,27 @@ impl Parser {
     fn parse_macro_def(&mut self) -> Result<Stmt, VXError> {
         let t = self.advance();  // 跳过 'macro' 关键字
         let (l, c) = (t.line, t.col);
-        
+
         // 解析宏名称
-        let name = self.expect(TokenType::Identifier, Some("期望宏名称"))?.value;
-        
+        let name = self.expect_identifier_or_keyword()?.value;
+
         // 解析参数列表 (...)
         self.expect(TokenType::LParen, Some("期望 '('"))?;
-        
+
         let mut params = Vec::new();
         if self.current().kind != TokenType::RParen {
             loop {
-                let param_token = self.expect(TokenType::Identifier, Some("期望参数名"))?;
+                let param_token = self.expect_identifier_or_keyword()?;
                 params.push(param_token.value);
-                
+
                 if self.current().kind == TokenType::RParen {
                     break;
                 }
-                
+
                 self.expect(TokenType::Comma, Some("期望 ',' 或 ')'"))?;
             }
         }
-        
+
         self.expect(TokenType::RParen, Some("期望 ')'"))?;
         
         // 解析宏体 {...}
@@ -418,21 +518,21 @@ impl Parser {
         let (l, c) = (t.line, t.col);
         
         // 解析宏名称
-        let name = self.expect(TokenType::Identifier, Some("期望宏名称"))?.value;
-        
+        let name = self.expect_identifier_or_keyword()?.value;
+
         // 解析参数列表 (...)
         self.expect(TokenType::LParen, Some("期望 '('"))?;
-        
+
         let mut args = Vec::new();
         if self.current().kind != TokenType::RParen {
             loop {
                 let arg = self.parse_expression()?;
                 args.push(Box::new(arg));
-                
+
                 if self.current().kind == TokenType::RParen {
                     break;
                 }
-                
+
                 self.expect(TokenType::Comma, Some("期望 ',' 或 ')'"))?;
             }
         }

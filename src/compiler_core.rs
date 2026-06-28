@@ -15,6 +15,7 @@ pub struct LoopInfo {
     pub start: usize,
     pub break_jumps: Vec<usize>,
     pub continue_jumps: Vec<usize>,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +76,8 @@ pub struct Compiler {
     pub error_dead_code: bool,
     /// 宏注册表，用于编译时宏展开
     pub(crate) macros: crate::macros::MacroRegistry,
+    /// 外部依赖（import 语句），用于静态链接时的动态库链接
+    pub(crate) external_deps: Vec<String>,
 }
 
 impl Compiler {
@@ -94,6 +97,7 @@ impl Compiler {
             warn_dead_code: false,
             error_dead_code: false,
             macros: crate::macros::MacroRegistry::new(),
+            external_deps: Vec::new(),
         }
     }
 
@@ -293,7 +297,7 @@ impl Compiler {
         match (op, operand) {
             ("-", KnownType::Int) => Some(OpCode::NegInt),
             ("-", KnownType::Float) => Some(OpCode::NegFloat),
-            ("!", KnownType::Bool) => Some(OpCode::Not),
+            ("!" | "not", KnownType::Bool) => Some(OpCode::Not),
             _ => None,
         }
     }

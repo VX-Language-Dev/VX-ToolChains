@@ -1,0 +1,212 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "VX",
+  "scopeName": "source.vx",
+  "fileTypes": [
+    ".vx"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#classes"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#identifiers"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.vx",
+          "match": "#.*$"
+        },
+        {
+          "name": "comment.line.double-slash.vx",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.vx",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.vx",
+              "match": "\\\\(n|r|t|\\\\|\"|')"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.vx",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.vx",
+              "match": "\\\\(n|r|t|\\\\|\"|')"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.vx",
+          "match": "\\b\\d+\\.\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.vx",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.vx",
+          "match": "\\b(if|else|while|for|break|continue|return|pass)\\b"
+        },
+        {
+          "name": "keyword.other.vx",
+          "match": "\\b(func|var|import|new|is|in|not|and|or)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.vx",
+          "match": "\\b(class|struct|enum|union)\\b"
+        },
+        {
+          "name": "support.type.primitive.vx",
+          "match": "\\b(int|bool|float|string|var|void)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.vx",
+          "match": "\\b(true|false|nil)\\b"
+        },
+        {
+          "name": "variable.language.self.vx",
+          "match": "\\b(self|this)\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "meta.function.vx",
+          "begin": "\\b(func)\\s+(\\w+)",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.function.vx"
+            },
+            "2": {
+              "name": "entity.name.function.vx"
+            }
+          },
+          "end": "(?=:)",
+          "patterns": [
+            {
+              "include": "#parameters"
+            }
+          ]
+        },
+        {
+          "name": "entity.name.function.vx",
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()"
+        }
+      ]
+    },
+    "parameters": {
+      "patterns": [
+        {
+          "name": "variable.parameter.vx",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\s*(?=:)"
+        }
+      ]
+    },
+    "classes": {
+      "patterns": [
+        {
+          "name": "meta.class.vx",
+          "begin": "\\b(class|struct|enum|union)\\s+(\\w+)",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.vx"
+            },
+            "2": {
+              "name": "entity.name.type.vx"
+            }
+          },
+          "end": "(?=:)",
+          "patterns": []
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.vx",
+          "match": "(\\+|-)?="
+        },
+        {
+          "name": "keyword.operator.comparison.vx",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.vx",
+          "match": "(\\+|-\\*|/|%)"
+        },
+        {
+          "name": "keyword.operator.logical.vx",
+          "match": "\\b(not|and|or)\\b"
+        },
+        {
+          "name": "keyword.operator.pointer.vx",
+          "match": "(&|\\*|\\.)"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.vx",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

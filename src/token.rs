@@ -68,6 +68,8 @@ pub enum TokenType {
     // 函数
     Func,
     Return,
+    // 循环
+    Loop,
     // 所有权
     Move,
     // 字面量
@@ -97,7 +99,7 @@ pub enum TokenType {
     PowerAssign,
     Ampersand,
     Arrow,
-    // 逻辑运算符 (仅 && || ! 符号形式, 不再有关键字 and/or/not)
+    // 逻辑运算符 (自举兼容: and/or/not 关键字 + 符号形式 &&/||/! 并存)
     And,
     Or,
     Not,
@@ -162,6 +164,7 @@ pub const KEYWORDS: &[( &str, TokenType)] = &[
     ("continue", TokenType::Continue),
     ("func", TokenType::Func),
     ("return", TokenType::Return),
+    ("loop", TokenType::Loop),
     ("true", TokenType::True),
     ("false", TokenType::False),
     ("nil", TokenType::Nil),
@@ -182,10 +185,13 @@ pub const KEYWORDS: &[( &str, TokenType)] = &[
     ("double", TokenType::DoubleT),
     ("bool", TokenType::BoolT),
     ("void", TokenType::VoidT),
+    // 逻辑运算符关键字 (与符号形式 &&/||/! 并存, 自举代码大量使用)
+    ("and", TokenType::And),
+    ("or", TokenType::Or),
+    ("not", TokenType::Not),
     // --- 以下关键字已裁减 (移至标准库/注解/语法糖) ---
     // string  → std::String, 字符串字面量自动展开
     // vector  → std::Vec<T>, 数组字面量自动展开
-    // and/or/not → && / || / ! 符号运算符
     // public/private/protected → #[pub] / #[priv] 注解
     // extends/implements → 冒号语法 class A : Parent, Trait
     // dirs   → import("a","b") as mod 可变参数导入
@@ -222,6 +228,8 @@ pub struct Lexer {
     col: usize,
     pub tokens: Vec<Token>,
     indent_stack: Vec<usize>,
+    /// 上一行以可续行运算符结尾（如 or/and/+ 等），下一行的缩进变化不应产生 Indent/Dedent。
+    continuation_pending: bool,
 }
 
 impl Lexer {
@@ -233,6 +241,7 @@ impl Lexer {
             col: 1,
             tokens: Vec::new(),
             indent_stack: vec![0],
+            continuation_pending: false,
         }
     }
 
@@ -390,14 +399,20 @@ impl Lexer {
             }
             let last = *self.indent_stack.last().unwrap();
             if indent > last {
-                self.indent_stack.push(indent);
-                self.tokens.push(Token {
-                    kind: TokenType::Indent,
-                    value: indent.to_string(),
-                    line: self.line,
-                    col: self.col,
-                });
+                // 若上一行以续行运算符结尾，则当前行属于表达式续行，不产生 Indent。
+                if self.continuation_pending {
+                    self.continuation_pending = false;
+                } else {
+                    self.indent_stack.push(indent);
+                    self.tokens.push(Token {
+                        kind: TokenType::Indent,
+                        value: indent.to_string(),
+                        line: self.line,
+                        col: self.col,
+                    });
+                }
             } else if indent < last {
+                self.continuation_pending = false;
                 while indent < *self.indent_stack.last().unwrap() {
                     self.indent_stack.pop();
                     self.tokens.push(Token {
@@ -410,9 +425,27 @@ impl Lexer {
                 if indent != *self.indent_stack.last().unwrap() {
                     vx_error!("缩进不匹配", self.line, self.col, &self.source);
                 }
+            } else {
+                self.continuation_pending = false;
             }
             return Ok(());
         }
+    }
+
+    /// 判断某类 token 是否可作为行尾续行运算符。
+    fn is_continuation_operator(kind: TokenType) -> bool {
+        matches!(
+            kind,
+            TokenType::Or
+                | TokenType::And
+                | TokenType::Plus
+                | TokenType::Minus
+                | TokenType::Star
+                | TokenType::Slash
+                | TokenType::Percent
+                | TokenType::Power
+                | TokenType::Comma
+        )
     }
 
     pub fn tokenize(mut self) -> Result<Vec<Token>, VXError> {
@@ -425,12 +458,14 @@ impl Lexer {
                 if c == '\r' && self.peek(1) == '\n' {
                     self.advance();
                 }
+                let prev_kind = self.tokens.last().map(|t| t.kind);
                 self.tokens.push(Token {
                     kind: TokenType::Newline,
                     value: String::new(),
                     line: sl,
                     col: sc,
                 });
+                self.continuation_pending = prev_kind.map_or(false, Self::is_continuation_operator);
                 self.advance();
                 self.handle_indent()?;
                 continue;

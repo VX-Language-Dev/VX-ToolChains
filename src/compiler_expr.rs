@@ -81,8 +81,8 @@ impl Compiler {
                         ">" => OpCode::BinaryGt,
                         "<=" => OpCode::BinaryLe,
                         ">=" => OpCode::BinaryGe,
-                        "&&" => OpCode::BinaryAnd,
-                        "||" => OpCode::BinaryOr,
+                        "&&" | "and" => OpCode::BinaryAnd,
+                        "||" | "or" => OpCode::BinaryOr,
                         _ => return Err(format!("VX Error: 未知的二元操作符: {}", op)),
                     },
                 };
@@ -99,7 +99,7 @@ impl Compiler {
                     ("%", KnownType::Int, KnownType::Int) => KnownType::Int,
                     ("==" | "!=" | "<" | ">" | "<=" | ">=", KnownType::Int, KnownType::Int) => KnownType::Bool,
                     ("==" | "!=" | "<" | ">" | "<=" | ">=", KnownType::Float, KnownType::Float) => KnownType::Bool,
-                    ("&&" | "||", KnownType::Bool, KnownType::Bool) => KnownType::Bool,
+                    ("&&" | "||" | "and" | "or", KnownType::Bool, KnownType::Bool) => KnownType::Bool,
                     _ => KnownType::Unknown,
                 };
                 self.push_stack_type(result_type);
@@ -119,7 +119,7 @@ impl Compiler {
                 let result_type = match (&**op, operand_type) {
                     ("-", KnownType::Int) => KnownType::Int,
                     ("-", KnownType::Float) => KnownType::Float,
-                    ("!", KnownType::Bool) => KnownType::Bool,
+                    ("!" | "not", KnownType::Bool) => KnownType::Bool,
                     _ => KnownType::Unknown,
                 };
                 self.push_stack_type(result_type);
@@ -247,6 +247,7 @@ impl Compiler {
             | Expr::MatchStmt(..)
             | Expr::WhileStmt(..)
             | Expr::ForStmt(..)
+            | Expr::LoopStmt(..)
             | Expr::BreakStmt(..)
             | Expr::ContinueStmt(..)
             | Expr::ReturnStmt(..) => {}

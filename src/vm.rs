@@ -196,6 +196,70 @@ impl VM {
             }
         });
 
+        // ---- 反射内建函数（自举所需） ----
+        vm.define_builtin("typeof", |args| {
+            if args.is_empty() {
+                return Value::string("Nil");
+            }
+            Value::string(args[0].type_name())
+        });
+
+        vm.define_builtin("is_int", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            Value::bool(matches!(args[0], Value::Int(_)))
+        });
+
+        vm.define_builtin("is_float", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            Value::bool(matches!(args[0], Value::Float(_)))
+        });
+
+        vm.define_builtin("is_bool", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            Value::bool(matches!(args[0], Value::Bool(_)))
+        });
+
+        vm.define_builtin("is_string", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            Value::bool(matches!(args[0], Value::String(_)))
+        });
+
+        vm.define_builtin("is_array", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            Value::bool(matches!(args[0], Value::Array(_)))
+        });
+
+        vm.define_builtin("is_map", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            Value::bool(matches!(args[0], Value::Map(_)))
+        });
+
+        vm.define_builtin("is_nil", |args| {
+            if args.is_empty() {
+                return Value::bool(true);
+            }
+            Value::bool(matches!(args[0], Value::Nil))
+        });
+
+        vm.define_builtin("is_instance", |args| {
+            if args.is_empty() {
+                return Value::bool(false);
+            }
+            Value::bool(matches!(args[0], Value::Instance { .. }))
+        });
+
         vm.define_builtin("file_read_bytes", |args| {
             if args.is_empty() {
                 return Value::nil();
@@ -375,6 +439,137 @@ impl VM {
                     Value::Array(Arc::new(vec![Value::int(status), Value::string(stdout), Value::string(stderr)]))
                 }
                 Err(e) => Value::Array(Arc::new(vec![Value::int(-1), Value::string("".to_string()), Value::string(e.to_string())])),
+            }
+        });
+
+        // ---- 迭代器内建函数（for 循环支持）----
+        vm.define_builtin("iterate", |args| {
+            if args.is_empty() {
+                return Value::nil();
+            }
+            // 返回迭代器状态：数组 [items, index]
+            match &args[0] {
+                Value::Array(arr) => {
+                    let idx = if args.len() > 1 {
+                        match &args[1] {
+                            Value::Int(i) => *i as usize,
+                            _ => 0,
+                        }
+                    } else {
+                        0
+                    };
+                    // 存储原始数组和当前位置
+                    let iter_state = Value::Array(Arc::new(vec![
+                        args[0].clone(),
+                        Value::int(idx as i64),
+                    ]));
+                    Value::Array(Arc::new(vec![iter_state, Value::int(arr.len() as i64)]))
+                }
+                Value::String(s) => {
+                    // 字符串迭代器
+                    let idx = if args.len() > 1 {
+                        match &args[1] {
+                            Value::Int(i) => *i as usize,
+                            _ => 0,
+                        }
+                    } else {
+                        0
+                    };
+                    let iter_state = Value::Array(Arc::new(vec![
+                        args[0].clone(),
+                        Value::int(idx as i64),
+                    ]));
+                    Value::Array(Arc::new(vec![iter_state, Value::int(s.len() as i64)]))
+                }
+                Value::Map(m) => {
+                    // Map 迭代器：返回键数组
+                    let keys: Vec<Value> = m.keys().map(|k| Value::String(k.clone().into())).collect();
+                    let keys_len = keys.len();
+                    let idx = if args.len() > 1 {
+                        match &args[1] {
+                            Value::Int(i) => *i as usize,
+                            _ => 0,
+                        }
+                    } else {
+                        0
+                    };
+                    let iter_state = Value::Array(Arc::new(vec![
+                        Value::Array(Arc::new(keys)),
+                        Value::int(idx as i64),
+                    ]));
+                    Value::Array(Arc::new(vec![iter_state, Value::int(keys_len as i64)]))
+                }
+                _ => Value::nil(),
+            }
+        });
+
+        vm.define_builtin("range", |args| {
+            if args.is_empty() {
+                return Value::Array(Arc::new(vec![]));
+            }
+            let start: i64 = if args.len() > 1 {
+                match &args[0] {
+                    Value::Int(i) => *i,
+                    _ => 0,
+                }
+            } else {
+                0
+            };
+            let end: i64 = if args.len() > 1 {
+                match &args[1] {
+                    Value::Int(i) => *i,
+                    _ => start,
+                }
+            } else {
+                match &args[0] {
+                    Value::Int(i) => *i,
+                    _ => 0,
+                }
+            };
+            let step: i64 = if args.len() > 2 {
+                match &args[2] {
+                    Value::Int(i) => *i,
+                    _ => 1,
+                }
+            } else {
+                1
+            };
+            let mut result = Vec::new();
+            if step > 0 {
+                let mut i = start;
+                while i < end {
+                    result.push(Value::int(i));
+                    i += step;
+                }
+            } else if step < 0 {
+                let mut i = start;
+                while i > end {
+                    result.push(Value::int(i));
+                    i += step;
+                }
+            }
+            Value::Array(Arc::new(result))
+        });
+
+        vm.define_builtin("enumerate", |args| {
+            if args.is_empty() {
+                return Value::nil();
+            }
+            let container = &args[0];
+            match container {
+                Value::Array(arr) => {
+                    let result: Vec<Value> = arr.iter().enumerate()
+                        .map(|(i, v)| Value::Array(Arc::new(vec![Value::int(i as i64), v.clone()])))
+                        .collect();
+                    Value::Array(Arc::new(result))
+                }
+                Value::String(s) => {
+                    let result: Vec<Value> = s.chars().enumerate()
+                        .map(|(i, c)| Value::Array(Arc::new(vec![Value::int(i as i64), Value::string(c.to_string())])))
+                        .collect();
+                    Value::Array(Arc::new(result))
+                }
+                _ => Value::nil(),
             }
         });
 

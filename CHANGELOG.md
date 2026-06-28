@@ -1,5 +1,55 @@
 # CHANGELOG
 
+## v1.4.0 — 原生编译增强 (2026-06-26)
+
+### 原生编译系统
+
+- **VXCO 中间文件格式**：新增跨平台中间文件格式，支持编译器与链接器解耦
+  - 编译器输出 `.vxco` 文件，包含 TypeIR 和外部依赖信息
+  - 链接器自动检测外部依赖，智能选择静态/动态链接策略
+  - 支持 Linux、macOS、Windows 三平台自动适配
+
+- **链接器优化**：
+  - **Linux**：静态链接使用 `_start` 入口点 + `exit` syscall，动态链接使用 `cc` 并自动链接 C 运行时库
+  - **macOS**：静态链接使用 `_main` 入口点，动态链接自动链接 `-lSystem`
+  - **Windows**：静态链接使用 `mainCRTStartup` 入口点，动态链接使用 MSVC 运行时库
+  - 所有平台均添加 `-O2` 优化选项，Linux 静态链接添加 `--gc-sections` 移除未使用段
+
+- **外部依赖追踪**：编译器自动识别 `import` 语句，将外部库依赖信息写入 VXCO 文件
+  - 无外部依赖：默认静态链接，生成完全独立的可执行文件
+  - 有外部依赖：自动切换动态链接，链接相应系统库
+
+- **CLI 输出保持英文**：编译器和链接器 CLI 输出保持英文风格，统一国际化体验
+  - `[OK] Compiled: xxx.vxco (VXCO v1)`
+  - `[*] Native compilation: N functions`
+  - `[+] Native linked: xxx (static=true/false)`
+
+### 编译器改进
+
+- **TypeIR 函数调用修复**：修复 `Call` 指令目标函数 ID 解析错误，通过函数名映射正确解析调用目标
+- **返回类型推断**：函数有返回值但未指定类型时，默认推断为 `Int` 类型
+
+### 验证结果
+
+- 静态链接测试：`test_static.vx` (add(10, 20)) → 退出码 30 ✓
+- 动态链接测试：`test_dynamic.vx` (import libc) → 退出码 42 ✓
+- 跨平台适配：Linux 平台验证通过，macOS/Windows 代码已实现待验证
+
+### 修改文件列表（8 文件，+450 / −120）
+
+```
+src/bytecode.rs           — 新增 VXCO 格式定义和序列化/反序列化
+src/compiler_typeir.rs    — 修复 Call 指令函数 ID 解析
+src/compiler_module.rs    — 添加外部依赖追踪和 TypeIR 生成优化
+src/vxlinker.rs           — 跨平台链接器实现和 CLI 输出英文化
+src/aot_backend.rs        — 清理调试输出
+src/ipt.rs                — 编译器 CLI 输出英文化
+README.md                 — 更新原生编译文档
+CHANGELOG.md              — 新增 v1.4.0 条目
+```
+
+---
+
 ## v1.3.4 — 性能优化与语言扩展 (2026-06-23)
 
 ### 性能优化

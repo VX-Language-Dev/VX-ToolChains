@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use crate::parser::Expr;
@@ -47,11 +48,9 @@ impl Compiler {
     ) {
         let save = std::mem::replace(&mut self.instructions, Vec::new());
         self.emit(ctor_op, BytecodeArg::String(name.to_string()));
-        for fname in field_names {
-            self.emit(OpCode::Dup, BytecodeArg::None);
-            self.emit(OpCode::LoadVar, BytecodeArg::String(fname.clone()));
+        for (i, fname) in field_names.iter().enumerate() {
+            self.emit(OpCode::LoadVar, BytecodeArg::Int(i as i32));
             self.emit(OpCode::PropertySet, BytecodeArg::String(fname.clone()));
-            self.emit(OpCode::Pop, BytecodeArg::None);
         }
         self.emit(OpCode::Return, BytecodeArg::None);
         self.functions.push(BytecodeFunction {
@@ -130,6 +129,10 @@ impl Compiler {
                 Expr::UnionDecl(_, _, _, _) => {}
                 Expr::ImportStmt(name, alias, dirs, _, _) => {
                     let lib_path = self.settings.library_path(&name);
+                    // 跟踪外部依赖
+                    if !self.external_deps.contains(&name) {
+                        self.external_deps.push(name.clone());
+                    }
                     // dirs 现在为 Vec<String> 多路径列表, 合并为逗号分隔的 Option<String>
                     let combined_dirs = if dirs.is_empty() {
                         lib_path.clone()
@@ -217,20 +220,30 @@ impl Compiler {
             classes,
             type_ir_data,
             target_triple: String::new(),
+            external_deps: std::mem::replace(&mut self.external_deps, Vec::new()),
         })
     }
 
     fn generate_type_ir(&self, functions: &[BytecodeFunction]) -> Vec<u8> {
         let mut type_mod = TypeModule::new();
+        // 预先构建函数名 → FuncId 映射，供 TypeIRSimulator 解析 Call callee
+        let mut func_name_to_id: HashMap<String, FuncId> = HashMap::new();
+        for (i, func) in functions.iter().enumerate() {
+            func_name_to_id.insert(func.name.clone(), i as FuncId);
+        }
         for (i, func) in functions.iter().enumerate() {
             let mut tf = TypeFunction::new(&func.name, i as FuncId);
             tf.param_count = func.num_params as u32;
             tf.has_return = func.has_return;
+            // 若函数有返回值但未指定返回类型，默认按 Int 处理
+            if tf.has_return && tf.return_type == Type::Void {
+                tf.return_type = Type::Int;
+            }
             for param_name in &func.param_names {
                 let ptype = self.get_var_type(param_name);
                 tf.params.push((param_name.clone(), self.known_to_type(ptype)));
             }
-            let mut sim = TypeIRSimulator::new();
+            let mut sim = TypeIRSimulator::with_function_map(func_name_to_id.clone());
             for inst in &func.instructions {
                 sim.translate_inst(inst, &self.constants);
             }
@@ -284,5 +297,42 @@ impl Compiler {
             // V2 模式: 直接从 CompiledModule 序列化
             bytecode::write_vxobj_from_module(&mut f, der)
         }
+    }
+
+    /// 将编译产物保存为 VXCO 格式（跨平台中间文件）
+    ///
+    /// VXCO 格式不包含任何可执行文件特征，仅包含:
+    /// - TypeIR: 类型化中间表示
+    /// - DebugInfo: 调试信息（可选）
+    /// - SourceMap: 源码映射（可选）
+    /// - ExternalDeps: 外部依赖信息（用于动态链接）
+    ///
+    /// 链接器接收 VXCO 文件后负责生成目标平台的原生可执行文件。
+    pub fn save_vxco(&self, der: &CompiledModule, path: &str) -> io::Result<()> {
+        use std::io::BufWriter;
+
+        let mut f = BufWriter::new(fs::File::create(path)?);
+
+        let target = if der.target_triple.is_empty() {
+            "x86_64-unknown-linux-gnu"
+        } else {
+            &der.target_triple
+        };
+
+        // 构建外部依赖信息
+        let external_deps: Vec<crate::bytecode::ExternalDependency> = der
+            .external_deps
+            .iter()
+            .map(|name| crate::bytecode::ExternalDependency::new(name))
+            .collect();
+
+        bytecode::write_vxco(
+            &mut f,
+            target,
+            &der.type_ir_data,
+            &[], // debug_data (预留)
+            &[], // source_map_data (预留)
+            &external_deps,
+        )
     }
 }

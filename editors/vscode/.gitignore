@@ -1,0 +1,7 @@
+node_modules/
+out/
+*.vsix
+.vscode-test/
+
+# Override parent *.json ignore so extension manifest, grammar and configs are tracked
+!*.json

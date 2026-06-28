@@ -97,10 +97,13 @@ pub enum OpCode {
     Not = 0x55,
     And = 0x56,
     Or = 0x57,
+    // Iterator ops (for-in support)
+    Iterate = 0x60,
+    Next = 0x61,
 }
 
 /// 最大 opcode 值 + 1，用于确定查找表大小。
-const OP_CODE_MAX: u8 = 0x58; // 88
+const OP_CODE_MAX: u8 = 0x62; // 98
 
 /// 查找表：将 u8 字节码映射到 Option<OpCode>。
 /// 新增 OpCode 时，在对应索引位置添加 Some(OpCode::Xxx) 即可。
@@ -201,6 +204,10 @@ const OP_LOOKUP_TABLE: [Option<OpCode>; OP_CODE_MAX as usize] = {
     fill!(table, OpCode::Not);
     fill!(table, OpCode::And);
     fill!(table, OpCode::Or);
+    // Iterator ops (0x60-0x61)
+    // Skip 0x58-0x5F for future use
+    table[0x60] = Some(OpCode::Iterate);
+    table[0x61] = Some(OpCode::Next);
     table
 };
 
