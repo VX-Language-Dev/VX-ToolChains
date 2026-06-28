@@ -1,5 +1,119 @@
 # CHANGELOG
 
+## v1.6.0 — 原生编译路径唯一化 + LSP 增强 (2026-06-29)
+
+### 原生编译路径
+
+- **移除字节码-VM 解释执行路径**：彻底删除 `src/vm.rs`、`src/vm_dispatch.rs`、`src/vm_exec.rs`、`src/value.rs`、`src/instruction.rs`、`src/debugger/` 等 VM 相关文件
+- **VXOBJ v4 替代 VXCO v1**：中间文件格式升级为 `VXOBJ V4`，magic 为 `VXOBJ`，version 为 4
+  - 编译器默认输出 `.vxobj` 文件
+  - 链接器仅支持 `native` 模式，自动适配目标平台并添加可执行文件特征
+- **链接器外部函数处理**：未解析函数调用使用 `u32::MAX` 标记，外部函数声明在 AOT 阶段被跳过并动态导入
+- **CLI 工具静默输出**：`vxcompiler`、`vxlinker`、`builder`、`vpm` 正常运行时不再输出调试/状态信息，仅保留错误与帮助
+
+### LSP 与 IDE 支持增强
+
+- **自动补全**：
+  - 函数签名 snippet（参数占位符）
+  - `struct` / `class` 的 `new Type(...)` 模板
+  - `.` 和 `->` 成员访问补全
+  - `import` 模块路径补全
+  - 基于作用域深度的符号排序（局部变量优先）
+- **悬停提示**：
+  - 精确的 token range 高亮
+  - 结构体/类字段与方法悬停
+  - 调用点函数签名悬停
+  - 内置函数（`out`、`sys_argv`、`len`、`panic`）hover 兜底
+- **跳转定义**：
+  - 作用域内最近定义查找
+  - 支持函数参数、局部变量、`import` 别名、方法内精确跳转
+
+### 文档
+
+- `README.md` 更新为仅描述原生编译路径、VXOBJ v4、Rust 内存模型
+- `CHANGELOG.md` 新增 v1.6.0 条目
+- 新增 `CONTRIBUTING.md` 贡献指南
+
+### 验证结果
+
+- `cargo check` 通过
+- `cargo test --features aot` 全部通过
+- `test_native_compilation.sh` 10/10 通过
+
+### 修改文件列表
+
+```
+Cargo.toml                — 移除 VM/调试器二进制目标与 lz4_flex 依赖
+src/bytecode.rs           — VXOBJ v4 容器格式
+src/compiler_module.rs    — 输出 .vxobj，外部依赖写入 VXOBJ v4
+src/compiler_typeir.rs    — 未解析调用使用 u32::MAX
+src/aot_backend.rs        — 跳过外部函数声明，动态导入外部符号
+src/vxlinker.rs           — 仅保留 native 模式，静默输出
+src/builder.rs            — 静默输出
+src/pm.rs                 — 静默输出
+src/ipt.rs                — 静默输出，支持 --target
+src/lsp/backend.rs        — 补全触发字符扩展为 . 和 ->
+src/lsp/completion.rs     — snippet、成员补全、import 补全、作用域排序
+src/lsp/hover.rs          — 精确 range、字段/方法/调用 hover、内置函数
+src/lsp/goto.rs           — 作用域内精确跳转定义
+README.md                 — 原生编译路径与 VXOBJ v4 文档
+CHANGELOG.md              — 新增 v1.6.0 条目
+CONTRIBUTING.md           — 新增贡献指南
+```
+
+---
+
+## v1.5.0 — 纯静态类型系统 (2026-06-28)
+
+### 类型系统
+
+- **移除 `var` 动态类型与类型推断**
+  - `var x = ...` 语法现在产生编译错误
+  - `x: var = ...` 类型注解被禁止
+  - 类字段仅支持 `name: Type = value`，不再允许无类型默认值
+
+- **强制显式类型声明**
+  - 所有变量声明必须带 `: Type` 注解：`x: int = 1`
+  - 函数参数必须显式声明类型：`func add(a: int, b: int) -> int`
+  - 结构体/类/联合字段必须显式声明类型
+  - 编译器 `VarDecl` 分支拒绝缺失类型注解的 AST
+
+- **类型名映射统一**
+  - 新增 `Compiler::type_name_to_known_type` 统一解析 `int`/`float`/`double`/`bool`/`string`/`pointer`/`void`
+  - `compiler_module::parse_param_type` 复用该映射
+
+### LSP 适配
+
+- 内置类型补全移除 `var`，新增 `pointer`
+- `var` 关键字悬停/补全提示标记为“已移除”
+- 变量符号导航现在展示显式类型注解
+- 变量悬停信息格式改为 `name: Type`
+
+### 文档
+
+- `README.md` 新增“静态类型系统”章节，更新内存模型示例为显式类型
+- `CHANGELOG.md` 新增 v1.5.0 条目
+
+### 修改文件列表
+
+```
+src/parser/expr.rs        — parse_type 拒绝 var 类型
+src/parser/stmt.rs        — 移除 parse_var_decl_inferred；类字段必须带类型；var 语句报错
+src/compiler_core.rs      — 新增 type_name_to_known_type
+src/compiler_stmt.rs      — VarDecl 强制使用显式声明类型，拒绝缺失注解
+src/compiler_module.rs    — parse_param_type 复用统一映射
+src/compiler_ownership.rs — 默认类型 fallback 改为 unknown；for 循环变量类型改为 int
+src/lsp/completion.rs     — 移除 var 类型补全，更新 var 关键字说明
+src/lsp/hover.rs          — var 悬停提示更新，变量悬停格式更新
+src/lsp/symbols.rs        — 变量符号携带类型注解，for 循环变量类型 int
+README.md                 — 新增静态类型系统章节，修正示例
+CHANGELOG.md              — 新增 v1.5.0 条目
+tests/fixtures/*.vx       — 将 var 推断改为显式类型
+tests/integration_test.rs — 新增 var 拒绝测试
+```
+
+---
+
 ## v1.4.0 — 原生编译增强 (2026-06-26)
 
 ### 原生编译系统
