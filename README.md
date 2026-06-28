@@ -1,3 +1,9 @@
+# License Statement
+This project is fully independently developed. The entire compiler codebase is written from scratch without forking, modifying or repackaging any third-party compiler source code.
+The project uses AGPL-3.0 license and is only used for compiler principle research and open source co-construction, and will not be deployed as online SaaS services.
+
+本项目为完全独立自研项目，编译器全部代码从零编写，没有复刻、修改、打包任何第三方编译器源码。
+项目采用 AGPL-3.0 开源协议，仅用于编译原理学术研究与开源协作，不会封装为线上SaaS服务对外运营。
 # VX-ToolChains
 
 VX 编程语言的完整工具链——编译器、链接器、运行时虚拟机、包管理器、语言服务器、调试器。
