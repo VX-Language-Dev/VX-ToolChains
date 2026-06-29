@@ -12,6 +12,17 @@ const LANGUAGE_ID = 'vx';
 const LSP_BINARY_NAME = 'vx-lsp';
 const OUTPUT_CHANNEL_NAME = 'VX Language';
 
+/**
+ * 向 VS Code 注册 VX 语言服务器的 LSP 能力。
+ * 当前激活的能力包括：
+ * - 文本同步（全量）
+ * - 自动补全（触发字符：. 和 ->）
+ * - 悬停提示
+ * - 跳转到定义
+ * - 文档符号 / 工作区符号
+ * - 诊断信息
+ */
+
 let client: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {

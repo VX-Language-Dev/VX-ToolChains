@@ -9,7 +9,7 @@ mod stmt;
 mod tests;
 
 // 对外公开 AST 类型
-pub use ast::{Expr, Stmt, get_src_line};
+pub use ast::{Expr, Stmt, get_src_line, expr_to_type_name};
 
 use crate::token::{Token, TokenType, VXError};
 use std::sync::OnceLock;

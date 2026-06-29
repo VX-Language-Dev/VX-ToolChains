@@ -1,12 +1,11 @@
 // VX Language Compiler CLI
 
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process;
 
-// token/parser/compiler_ownership/opcode/compiler 已迁移到 vx_vm 库中共享给 LSP 等其他目标
+// token/parser/compiler_ownership/compiler 已迁移到 vx_vm 库中共享给 LSP 等其他目标
 
 use vx_vm::token::Lexer;
 use vx_vm::parser::Parser;
@@ -17,16 +16,12 @@ use vx_vm::compiler_core::Compiler;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: vxcompiler <input.vx> [-o output.vxco] [--vxobj] [--dump-bytecode] [--dump-sections] [--target triple]");
+        eprintln!("Usage: vxcompiler <input.vx> [-o output.vxobj] [--target triple]");
         process::exit(1);
     }
     let input = &args[1];
     let mut output = String::new();
-    let mut dump_bytecode = false;
-    let mut dump_sections = false;
     let mut target_triple = String::new();
-    // 默认输出 VXCO 格式；指定 --vxobj 时输出旧的 VXOBJ v3 格式（向后兼容）
-    let mut output_vxobj = false;
     // 优化等级 (由 vpm 构建器透传, 编译核心暂作记录)
     let mut opt_level: u8 = 20;
     let mut warn_dead_code = false;
@@ -43,14 +38,6 @@ fn main() {
                     process::exit(1);
                 }
             }
-            "--dump-bytecode" => {
-                dump_bytecode = true;
-                i += 1;
-            }
-            "--dump-sections" => {
-                dump_sections = true;
-                i += 1;
-            }
             "--target" if i + 1 < args.len() => {
                 target_triple = args[i + 1].clone();
                 i += 2;
@@ -65,10 +52,6 @@ fn main() {
             }
             "--error-dead-code" => {
                 error_dead_code = true;
-                i += 1;
-            }
-            "--vxobj" => {
-                output_vxobj = true;
                 i += 1;
             }
             _ => {
@@ -96,11 +79,7 @@ fn main() {
     let final_error_dc = env_error_dc || error_dead_code;
     // final_* 在下面构造 Compiler 时通过 with_options 注入
     if output.is_empty() {
-        if output_vxobj {
-            output = input.replacen(".vx", ".vxobj", 1);
-        } else {
-            output = input.replacen(".vx", ".vxco", 1);
-        }
+        output = input.replacen(".vx", ".vxobj", 1);
     }
 
     let source_dir = fs::canonicalize(input)
@@ -186,62 +165,8 @@ fn main() {
         der.target_triple = target_triple;
     }
 
-    if dump_bytecode {
-        println!("=== Constants ===");
-        for (i, c) in der.constants.iter().enumerate() {
-            println!("  [{}] {:?}", i, c);
-        }
-        println!("=== Functions ===");
-        for (i, f) in der.functions.iter().enumerate() {
-            println!("  [{}] {} ({} instrs, {} params):", i, f.name, f.instructions.len(), f.num_params);
-            for (j, inst) in f.instructions.iter().enumerate() {
-                println!("    {:3}: {:?} {:?}", j, inst.op, inst.arg);
-            }
-        }
-    }
-
-    if dump_sections {
-        // Write to temp buffer first to get v3 section data
-        let mut buf = Vec::new();
-        let constants: Vec<vx_vm::bytecode::SerializedConstant> = der
-            .constants.iter()
-            .map(|c| match c {
-                vx_vm::compiler_bytecode::ConstantValue::Nil => vx_vm::bytecode::SerializedConstant::nil(),
-                vx_vm::compiler_bytecode::ConstantValue::Bool(b) => vx_vm::bytecode::SerializedConstant::bool(*b),
-                vx_vm::compiler_bytecode::ConstantValue::Int(v) => vx_vm::bytecode::SerializedConstant::int(*v),
-                vx_vm::compiler_bytecode::ConstantValue::Float(v) => vx_vm::bytecode::SerializedConstant::float(*v),
-                vx_vm::compiler_bytecode::ConstantValue::String(s) => vx_vm::bytecode::SerializedConstant::string(s),
-            })
-            .collect();
-        let target = if der.target_triple.is_empty() { "x86_64-unknown-linux-gnu" } else { &der.target_triple };
-        let mut bytecode_buf = Vec::new();
-        if let Err(e) = vx_vm::bytecode::write_vxobj(&mut bytecode_buf, &constants, &[], &HashMap::new()) {
-            eprintln!("Write bytecode failed: {}", e);
-            process::exit(1);
-        }
-        if let Err(e) = vx_vm::bytecode::write_vxobj_v3(&mut buf, target, &der.type_ir_data, &bytecode_buf, &[], &[], &[]) {
-            eprintln!("Write VXOBJ v3 failed: {}", e);
-            process::exit(1);
-        }
-        vx_vm::bytecode::dump_section_stats(&buf);
-        process::exit(0);
-    }
-
-    if output_vxobj {
-        match comp.save(&der, &output) {
-            Ok(_) => println!("[OK] Compiled: {} (VXOBJ v3)", output),
-            Err(e) => {
-                eprintln!("[Error] Save failed: {}", e);
-                process::exit(1);
-            }
-        }
-    } else {
-        match comp.save_vxco(&der, &output) {
-            Ok(_) => println!("[OK] Compiled: {} (VXCO v1)", output),
-            Err(e) => {
-                eprintln!("[Error] Save failed: {}", e);
-                process::exit(1);
-            }
-        }
+    if let Err(e) = comp.save(&der, &output) {
+        eprintln!("[Error] Save failed: {}", e);
+        process::exit(1);
     }
 }

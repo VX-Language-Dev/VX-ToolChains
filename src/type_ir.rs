@@ -248,52 +248,87 @@ pub fn serialize_type_module(module: &TypeModule) -> Vec<u8> {
             serialize_instruction(&mut buf, inst);
         }
     }
+    // Linkage table (external symbols like built-ins)
+    buf.extend(&(module.linkage.len() as u32).to_be_bytes());
+    for (func_id, linkage) in &module.linkage {
+        buf.extend(&func_id.to_be_bytes());
+        match linkage {
+            Linkage::Internal => buf.push(0),
+            Linkage::External(name) => {
+                buf.push(1);
+                write_str(&mut buf, name);
+            }
+        }
+    }
     buf
 }
 
 pub fn deserialize_type_module(data: &[u8]) -> Option<TypeModule> {
+    deserialize_type_module_result(data).ok()
+}
+
+pub fn deserialize_type_module_result(data: &[u8]) -> Result<TypeModule, String> {
     let mut pos = 0;
-    if data.len() < 8 { return None; }
-    let num_funcs = read_u32_be_at(data, &mut pos)?;
-    let num_layouts = read_u32_be_at(data, &mut pos)?;
+    if data.len() < 8 { return Err("data too short".into()); }
+    let num_funcs = read_u32_be_at(data, &mut pos).ok_or("failed to read num_funcs")?;
+    let num_layouts = read_u32_be_at(data, &mut pos).ok_or("failed to read num_layouts")?;
     let mut module = TypeModule::new();
     for _ in 0..num_layouts {
-        let name = read_str_at(data, &mut pos)?;
-        let num_fields = read_u32_be_at(data, &mut pos)? as usize;
+        let name = read_str_at(data, &mut pos).ok_or("failed to read layout name")?;
+        let num_fields = read_u32_be_at(data, &mut pos).ok_or("failed to read num_fields")? as usize;
         let mut fields = Vec::with_capacity(num_fields);
         for _ in 0..num_fields {
-            let fname = read_str_at(data, &mut pos)?;
-            let ftype = deserialize_type(data, &mut pos)?;
+            let fname = read_str_at(data, &mut pos).ok_or("failed to read field name")?;
+            let ftype = deserialize_type(data, &mut pos).ok_or("failed to deserialize field type")?;
             fields.push((fname, ftype));
         }
         module.struct_layouts.push((name, fields));
     }
     for _ in 0..num_funcs {
-        let name = read_str_at(data, &mut pos)?;
-        let id = read_u32_be_at(data, &mut pos)?;
-        let param_count = read_u32_be_at(data, &mut pos)?;
-        let has_return = data.get(pos).copied()? != 0;
+        let name = read_str_at(data, &mut pos).ok_or("failed to read func name")?;
+        let id = read_u32_be_at(data, &mut pos).ok_or("failed to read func id")?;
+        let param_count = read_u32_be_at(data, &mut pos).ok_or("failed to read param_count")?;
+        let has_return = data.get(pos).copied().ok_or("missing has_return byte")? != 0;
         pos += 1;
-        let return_type = deserialize_type(data, &mut pos)?;
+        let return_type = deserialize_type(data, &mut pos).ok_or("failed to deserialize return type")?;
         let mut func = TypeFunction::new(&name, id);
         func.param_count = param_count;
         func.has_return = has_return;
         func.return_type = return_type;
         for _ in 0..param_count {
-            let pname = read_str_at(data, &mut pos)?;
-            let ptype = deserialize_type(data, &mut pos)?;
+            let pname = read_str_at(data, &mut pos).ok_or("failed to read param name")?;
+            let ptype = deserialize_type(data, &mut pos).ok_or("failed to deserialize param type")?;
             let _vid = func.add_local(ptype.clone());
             func.params.push((pname, ptype));
         }
-        let num_insts = read_u32_be_at(data, &mut pos)? as usize;
-        for _ in 0..num_insts {
-            let inst = deserialize_instruction(data, &mut pos)?;
+        let num_insts = read_u32_be_at(data, &mut pos).ok_or("failed to read num_insts")? as usize;
+        for i in 0..num_insts {
+            let inst = deserialize_instruction(data, &mut pos)
+                .ok_or_else(|| format!("failed to deserialize instruction {} of func {} at pos {}", i, name, pos))?;
             func.body.push(inst);
         }
         module.functions.push(func);
         module.function_map.insert(id, name);
     }
-    Some(module)
+    // Linkage table (optional for backward compatibility)
+    if pos < data.len() {
+        let num_linkages = read_u32_be_at(data, &mut pos).ok_or("failed to read num_linkages")?;
+        for _ in 0..num_linkages {
+            let func_id = read_u32_be_at(data, &mut pos).ok_or("failed to read linkage func_id")?;
+            let tag = data.get(pos).copied().ok_or("missing linkage tag")?;
+            pos += 1;
+            let linkage = match tag {
+                0 => Linkage::Internal,
+                1 => {
+                    let name = read_str_at(data, &mut pos).ok_or("failed to read linkage name")?;
+                    Linkage::External(name)
+                }
+                _ => return Err(format!("unknown linkage tag {}", tag)),
+            };
+            module.linkage.insert(func_id, linkage);
+        }
+    }
+    Ok(module)
 }
 
 fn serialize_type(buf: &mut Vec<u8>, ty: &Type) {
@@ -418,7 +453,7 @@ fn serialize_instruction(buf: &mut Vec<u8>, inst: &TypedInstruction) {
             let s = format!("vi{}{}", v, args.iter().map(|a| format!(",{}", a)).collect::<String>());
             (51, Some(s))
         }
-        Return(v) => match v { Some(id) => (52, Some(format!("{}", id))), None => (52, None) },
+        Return(v) => match v { Some(id) => (52, Some(format!("{}", id))), None => (52, Some("".to_string())) },
         MakeStruct(id, args) => {
             let s = format!("s{}{}", id.0, args.iter().map(|a| format!(",{}", a)).collect::<String>());
             (60, Some(s))

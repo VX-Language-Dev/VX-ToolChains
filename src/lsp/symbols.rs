@@ -8,6 +8,7 @@ use tower_lsp::lsp_types::{
 };
 use vx_vm::parser::Expr;
 use vx_vm::parser::Stmt;
+use vx_vm::parser::expr_to_type_name;
 
 /// 从 AST 提取文档符号（支持层级结构）
 pub fn document_symbols(ast: &[Stmt]) -> Vec<DocumentSymbol> {
@@ -270,11 +271,12 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                 },
             })
         }
-        Expr::VarDecl(name, _type_ann, _value, _is_mut, line, col) => {
-            Some(make_var_symbol(name, None, *line, *col))
+        Expr::VarDecl(name, type_ann, _value, _is_mut, line, col) => {
+            let type_str = type_ann.as_ref().map(|t| expr_to_type_name(t));
+            Some(make_var_symbol(name, type_str.as_deref(), *line, *col))
         }
         Expr::ForStmt(var, _iter, _body, line, col) => {
-            Some(make_var_symbol(var, Some("loop var"), *line, *col))
+            Some(make_var_symbol(var, Some("int"), *line, *col))
         }
         _ => None,
     }

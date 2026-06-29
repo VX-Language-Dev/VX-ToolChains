@@ -13,20 +13,10 @@ use crate::compiler_typeir::TypeIRSimulator;
 impl Compiler {
     /// 将参数类型字符串解析为 KnownType。
     ///
-    /// 历史说明：v1.1.1 之前 `string` 是关键字，因此参数签名接受小写 `string`。
-    /// 自 v1.1.1 起 `string` 已从关键字中移除并降级为标准库 `std::String` 类型标识符，
-    /// 此处改为：
-    ///   - 优先匹配大写 `String`（标准库类型签名，运行时动态解析为 KnownType::String）
-    ///   - 仍兼容小写 `string`（向后兼容 v1.1.0 之前的源代码）
-    ///   - 其他内置类型保持小写（与关键字一致）
+    /// VX 现为纯静态类型语言，参数必须显式声明类型。
+    /// 兼容大写 `String` 标准库签名以及 `pointer`、`double` 等类型。
     fn parse_param_type(type_str: &str) -> KnownType {
-        match type_str {
-            "int" => KnownType::Int,
-            "float" => KnownType::Float,
-            "bool" => KnownType::Bool,
-            "string" | "String" => KnownType::String,
-            _ => KnownType::Unknown,
-        }
+        Self::type_name_to_known_type(type_str)
     }
 
     /// 为 struct/class 生成构造函数字节码（去重自 StructDecl/ClassDecl 分支）
@@ -226,10 +216,32 @@ impl Compiler {
 
     fn generate_type_ir(&self, functions: &[BytecodeFunction]) -> Vec<u8> {
         let mut type_mod = TypeModule::new();
-        // 预先构建函数名 → FuncId 映射，供 TypeIRSimulator 解析 Call callee
         let mut func_name_to_id: HashMap<String, FuncId> = HashMap::new();
         for (i, func) in functions.iter().enumerate() {
             func_name_to_id.insert(func.name.clone(), i as FuncId);
+        }
+        // 注册内建函数为外部 stub，避免未解析调用错误映射到 FuncId 0
+        let mut next_builtin_id = functions.len() as FuncId;
+        let builtin_stubs: Vec<(&str, Vec<(String, Type)>, bool)> = vec![
+            ("out", vec![("value".to_string(), Type::Int)], false),
+        ];
+        for (name, params, has_return) in &builtin_stubs {
+            if !func_name_to_id.contains_key(*name) {
+                let id = next_builtin_id;
+                next_builtin_id += 1;
+                func_name_to_id.insert(name.to_string(), id);
+                let mut tf = TypeFunction::new(name, id);
+                tf.param_count = params.len() as u32;
+                tf.has_return = *has_return;
+                tf.return_type = Type::Void;
+                for (pname, ptype) in params {
+                    tf.params.push((pname.clone(), ptype.clone()));
+                }
+                tf.body.push(type_ir::TypedInstruction::Return(None));
+                type_mod.functions.push(tf);
+                type_mod.function_map.insert(id, name.to_string());
+                type_mod.linkage.insert(id, type_ir::Linkage::External(format!("vx_{}", name)));
+            }
         }
         for (i, func) in functions.iter().enumerate() {
             let mut tf = TypeFunction::new(&func.name, i as FuncId);
@@ -273,42 +285,16 @@ impl Compiler {
         }
     }
 
-    pub fn save(&self, der: &CompiledModule, path: &str) -> io::Result<()> {
-        use std::io::BufWriter;
-
-        let mut f = BufWriter::new(fs::File::create(path)?);
-
-        // Write v3 format if TypeIR is present
-        if !der.type_ir_data.is_empty() {
-            // V3 模式: 先把 v2 字节码写入中间缓冲，再作为 Bytecode section 嵌入 v3
-            let mut bytecode_buf = Vec::new();
-            bytecode::write_vxobj_from_module(&mut bytecode_buf, der)?;
-            let target = if der.target_triple.is_empty() {
-                "x86_64-unknown-linux-gnu"
-            } else {
-                &der.target_triple
-            };
-            bytecode::write_vxobj_v3(
-                &mut f, target,
-                &der.type_ir_data, &bytecode_buf,
-                &[], &[], &[],
-            )
-        } else {
-            // V2 模式: 直接从 CompiledModule 序列化
-            bytecode::write_vxobj_from_module(&mut f, der)
-        }
-    }
-
-    /// 将编译产物保存为 VXCO 格式（跨平台中间文件）
+    /// 将编译产物保存为 VXOBJ v4 格式（跨平台中间文件）
     ///
-    /// VXCO 格式不包含任何可执行文件特征，仅包含:
+    /// VXOBJ v4 不包含任何可执行文件特征，仅包含:
     /// - TypeIR: 类型化中间表示
     /// - DebugInfo: 调试信息（可选）
     /// - SourceMap: 源码映射（可选）
     /// - ExternalDeps: 外部依赖信息（用于动态链接）
     ///
-    /// 链接器接收 VXCO 文件后负责生成目标平台的原生可执行文件。
-    pub fn save_vxco(&self, der: &CompiledModule, path: &str) -> io::Result<()> {
+    /// 链接器接收 VXOBJ v4 文件后负责生成目标平台的原生可执行文件。
+    pub fn save(&self, der: &CompiledModule, path: &str) -> io::Result<()> {
         use std::io::BufWriter;
 
         let mut f = BufWriter::new(fs::File::create(path)?);
@@ -326,7 +312,7 @@ impl Compiler {
             .map(|name| crate::bytecode::ExternalDependency::new(name))
             .collect();
 
-        bytecode::write_vxco(
+        bytecode::write_vxobj_v4(
             &mut f,
             target,
             &der.type_ir_data,

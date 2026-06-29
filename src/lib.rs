@@ -2,17 +2,10 @@
 // 各子模块定义见对应文件
 
 mod opcode;
-mod value;
-mod instruction;
-mod vm;
-mod vm_dispatch;
-mod vm_exec;
-mod memory_safety;
-
-pub mod bytecode;
-pub mod type_ir;
 
 // 编译器模块：供 vxcompiler CLI、LSP、构建器、集成测试共享使用
+pub mod bytecode;
+pub mod type_ir;
 pub mod compiler_bytecode;
 pub mod compiler_typeir;
 pub mod compiler_core;
@@ -39,10 +32,6 @@ pub mod macros;
 
 // Re-export public API
 pub use opcode::OpCode;
-pub use value::Value;
-pub use instruction::{Instruction, Function, Module, CallFrame};
-pub use vm::{VM, DebugAction, StepMode};
-pub use memory_safety::AllocRecord;
 pub use vxsetting::VxSettings;
 pub use builder::{VxBuilder, BuildError};
 pub use cache::BuildCache;

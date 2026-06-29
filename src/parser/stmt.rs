@@ -21,6 +21,7 @@ impl Parser {
             TokenType::Macro => self.parse_macro_def(),  // 宏定义
             TokenType::Hash => self.parse_macro_call_stmt(),  // 宏调用（作为语句）
             TokenType::Identifier if self.peek(1).kind == TokenType::Colon => self.parse_var_decl(),
+            TokenType::Mut => self.parse_var_decl(),
             TokenType::Import => self.parse_import_stmt(),
             TokenType::Func => self.parse_func_decl(),
             TokenType::If => self.parse_if_stmt(),
@@ -64,7 +65,15 @@ impl Parser {
                 Ok(Expr::ContinueStmt(label, t.line, t.col))
             }
             // Free 已裁减 → mem::free(ptr) 标准库函数调用, 作为普通函数调用处理
-            TokenType::VarT => self.parse_var_decl_inferred(),
+            TokenType::VarT => {
+                let t = self.advance();
+                Err(VXError {
+                    msg: "var 类型推断已移除，VX 为纯静态类型语言，请使用 `name: Type = value` 语法".to_string(),
+                    line: t.line,
+                    col: t.col,
+                    source: Some(self.source.clone()),
+                })
+            }
             _ => {
                 let e = self.parse_expression()?;
                 Ok(Expr::ExprStmt(Box::new(e.clone()), e_line(&e), e_col(&e)))
@@ -154,11 +163,13 @@ impl Parser {
                     }
                     f.push((expr_to_type_name(&ft), fn_name, acc));
                 } else if self.current().kind == TokenType::Assign {
-                    // 默认值初始化 (无类型注解)
-                    self.advance();
-                    let _init = self.parse_expression()?;
-                    // 无类型注解的字段在 codegen 中按 var 类型处理
-                    f.push(("var".to_string(), fn_name, acc));
+                    // VX 为纯静态类型语言，类字段必须显式声明类型
+                    return Err(VXError {
+                        msg: "类字段必须提供类型注解（VX 已移除 var 动态类型）".to_string(),
+                        line: self.current().line,
+                        col: self.current().col,
+                        source: Some(self.source.clone()),
+                    });
                 } else {
                     return Err(VXError {
                         msg: "类字段声明需要类型注解或默认值".to_string(),
@@ -229,6 +240,10 @@ impl Parser {
     }
 
     fn parse_var_decl(&mut self) -> Result<Stmt, VXError> {
+        let is_mut = self.current().kind == TokenType::Mut;
+        if is_mut {
+            self.advance();
+        }
         let nm = self.expect_identifier_or_keyword()?.value;
         self.expect(TokenType::Colon, None)?;
         let mut th = self.parse_type()?;
@@ -246,22 +261,10 @@ impl Parser {
             nm,
             Some(Box::new(th)),
             Box::new(v),
-            false,
+            is_mut,
             l,
             c,
         ))
-    }
-
-    fn parse_var_decl_inferred(&mut self) -> Result<Stmt, VXError> {
-        let t = self.advance(); // consume 'var'
-        let nm = self.expect_identifier_or_keyword()?.value;
-        let mut v = Expr::NilLiteral(t.line, t.col);
-        if self.current().kind == TokenType::Assign {
-            self.advance();
-            v = self.parse_expression()?;
-        }
-        let (l, c) = (t.line, t.col);
-        Ok(Expr::VarDecl(nm, None, Box::new(v), false, l, c))
     }
 
     fn parse_func_decl(&mut self) -> Result<Stmt, VXError> {

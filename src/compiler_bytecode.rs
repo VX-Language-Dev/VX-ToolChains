@@ -1,6 +1,8 @@
 // ==================== 编译器字节码格式 ====================
+// 注意：此处的字节码仅为编译器内部用于推导 TypeIR 的临时表示，
+// 不再作为可持久化或执行的输出格式。
 
-use crate::{OpCode, Instruction as VmInstruction};
+use crate::OpCode;
 
 #[derive(Debug, Clone)]
 pub enum BytecodeArg {
@@ -11,7 +13,6 @@ pub enum BytecodeArg {
 }
 
 impl BytecodeArg {
-    #[allow(dead_code)]
     pub fn to_vm_args(&self) -> (Option<i32>, Option<String>) {
         match self {
             BytecodeArg::None => (None, None),
@@ -37,13 +38,12 @@ pub struct Instruction {
 }
 
 impl Instruction {
-    #[allow(dead_code)]
-    pub fn to_vm_instruction(&self) -> VmInstruction {
-        let (iarg, sarg) = self.arg.to_vm_args();
-        let mut inst = VmInstruction::new(self.op);
-        inst.iarg = iarg;
-        inst.sarg = sarg.map(|s| s.into_boxed_str());
-        inst
+    pub fn new(op: OpCode) -> Self {
+        Self { op, arg: BytecodeArg::None }
+    }
+
+    pub fn with_arg(op: OpCode, arg: BytecodeArg) -> Self {
+        Self { op, arg }
     }
 }
 
@@ -57,7 +57,6 @@ pub struct BytecodeFunction {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ConstantValue {
     Nil,
     Bool(bool),

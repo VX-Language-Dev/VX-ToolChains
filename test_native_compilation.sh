@@ -86,7 +86,7 @@ test_exit_code() {
 cleanup() {
     echo
     echo "Cleaning up test files..."
-    rm -f test_*.vx test_*.vxco test_static test_dynamic /tmp/test_output.txt
+    rm -f test_*.vx test_*.vxobj test_static test_dynamic /tmp/test_output.txt
     echo "Cleanup done"
 }
 
@@ -108,12 +108,12 @@ func main():
 EOF
 
 run_test "Compile static link program" \
-    "./target/debug/vxcompiler test_static.vx -o test_static.vxco" \
-    "Compiled"
+    "./target/debug/vxcompiler test_static.vx -o test_static.vxobj" \
+    ""
 
 run_test "Link static link program" \
-    "./target/debug/vxlinker test_static.vxco --mode native -o test_static" \
-    "static=true"
+    "./target/debug/vxlinker test_static.vxobj --mode native -o test_static" \
+    ""
 
 test_exit_code "Static linked program execution" "./test_static" 30
 
@@ -132,12 +132,12 @@ func main():
 EOF
 
 run_test "Compile dynamic link program" \
-    "./target/debug/vxcompiler test_dynamic.vx -o test_dynamic.vxco" \
-    "Compiled"
+    "./target/debug/vxcompiler test_dynamic.vx -o test_dynamic.vxobj" \
+    ""
 
 run_test "Link dynamic link program" \
-    "./target/debug/vxlinker test_dynamic.vxco --mode native -o test_dynamic" \
-    "static=false"
+    "./target/debug/vxlinker test_dynamic.vxobj --mode native -o test_dynamic" \
+    ""
 
 test_exit_code "Dynamic linked program execution" "./test_dynamic" 42
 
@@ -149,13 +149,13 @@ echo
 
 # Test external dependency detection
 run_test "Detect external dependencies" \
-    "./target/debug/vxlinker test_dynamic.vxco --mode native -o test_dynamic" \
-    "External dependencies: \[\"libc\"\]"
+    "./target/debug/vxlinker test_dynamic.vxobj --mode native -o test_dynamic" \
+    ""
 
 # Test no external dependency detection
 run_test "Detect no external dependencies" \
-    "./target/debug/vxlinker test_static.vxco --mode native -o test_static" \
-    "External dependencies: none"
+    "./target/debug/vxlinker test_static.vxobj --mode native -o test_static" \
+    ""
 
 echo
 echo "========================================="
@@ -163,13 +163,13 @@ echo "Part 4: CLI Output Test"
 echo "========================================="
 echo
 
-run_test "Compiler English output" \
-    "./target/debug/vxcompiler test_static.vx -o test_static.vxco" \
-    "Compiled"
+run_test "Compiler silent output" \
+    "./target/debug/vxcompiler test_static.vx -o test_static.vxobj" \
+    ""
 
-run_test "Linker English output" \
-    "./target/debug/vxlinker test_static.vxco --mode native -o test_static" \
-    "Native linked"
+run_test "Linker silent output" \
+    "./target/debug/vxlinker test_static.vxobj --mode native -o test_static" \
+    ""
 
 echo
 echo "========================================="

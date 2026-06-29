@@ -214,7 +214,7 @@ impl Compiler {
                 self.compile_expr(target)?;
                 self.emit(OpCode::OwnershipMove, BytecodeArg::None);
             }
-            Expr::AddressOf(operand, _, _) => {
+            Expr::AddressOf(operand, _, _, _) => {
                 self.compile_expr(operand)?;
                 self.emit(OpCode::BorrowCheck, BytecodeArg::None);
                 self.emit(OpCode::AddressOf, BytecodeArg::None);

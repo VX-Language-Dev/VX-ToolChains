@@ -99,12 +99,20 @@ impl BuildCache {
             Err(e) => {
                 // 损坏: 备份原文件后降级为空缓存
                 let bak = cache_path.with_extension("toml.bak");
-                let _ = fs::write(&bak, &content);
-                eprintln!(
-                    "[VXBUILD 警告] 缓存文件损坏, 已备份至 {} 并降级为全量构建 ({})",
-                    bak.display(),
-                    e
-                );
+                if let Err(write_err) = fs::write(&bak, &content) {
+                    eprintln!(
+                        "[VXBUILD 警告] 缓存文件损坏, 但备份至 {} 失败: {}; 降级为全量构建 ({})",
+                        bak.display(),
+                        write_err,
+                        e
+                    );
+                } else {
+                    eprintln!(
+                        "[VXBUILD 警告] 缓存文件损坏, 已备份至 {} 并降级为全量构建 ({})",
+                        bak.display(),
+                        e
+                    );
+                }
                 Self::empty(cache_path)
             }
         }

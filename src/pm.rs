@@ -278,8 +278,6 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
         return Err(VpmError::ExtractionFailed(stderr.to_string()));
     }
 
-    println!("[VPM] 解压完成，正在验证包结构...");
-
     // 4.5 安全性：拒绝路径穿越条目（绝对路径、..、隐藏目录）
     if let Err(e) = validate_no_path_traversal(&temp_dir) {
         let _ = fs::remove_dir_all(&temp_dir);
@@ -301,10 +299,9 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
     let pkg_version = info.get("version").ok_or_else(|| {
         VpmError::InvalidVack("info.toml 中缺少 'version' 字段".to_string())
     })?;
-    let pkg_author = info.get("author").ok_or_else(|| {
+    info.get("author").ok_or_else(|| {
         VpmError::InvalidVack("info.toml 中缺少 'author' 字段".to_string())
     })?;
-    let pkg_desc = info.get("description").unwrap_or(&String::new()).clone();
     let pkg_toolchain = info.get("toolchain").ok_or_else(|| {
         VpmError::InvalidVack("info.toml 中缺少 'toolchain' 字段".to_string())
     })?;
@@ -347,25 +344,8 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
 
     copy_dir_all(&pkg_source_dir, &target_dir)?;
 
-    println!(
-        "[VPM] 包 '{}' v{} 安装成功 -> {}",
-        pkg_name,
-        pkg_version,
-        target_dir.display()
-    );
-    println!("[VPM] 作者: {}", pkg_author);
-    if !pkg_desc.is_empty() {
-        println!("[VPM] 描述: {}", pkg_desc);
-    }
-    println!(
-        "[VPM] 语言: {} (标准化为: {})",
-        pkg_lang,
-        normalize_language(pkg_lang)
-    );
-
     // 11. 更新 vxmod.tmol
     append_to_vxmod(&workspace_root, pkg_name, pkg_version, pkg_lang)?;
-    println!("[VPM] 已更新 {} 配置文件", VXMOD_FILE);
 
     // 12. 清理临时目录
     let _ = fs::remove_dir_all(&temp_dir);
@@ -544,11 +524,9 @@ fn cmd_rm(package_name: &str) -> Result<(), VpmError> {
 
     // 删除包目录
     fs::remove_dir_all(&target_dir)?;
-    println!("[VPM] 已删除包目录: {}", target_dir.display());
 
     // 从 vxmod.tmol 移除配置
     remove_from_vxmod(&workspace_root, package_name)?;
-    println!("[VPM] 已从 {} 移除 '{}' 的配置", VXMOD_FILE, package_name);
 
     // 如果 package 目录为空，也一并清理
     let pkg_root = workspace_root.join(PACKAGE_DIR);
@@ -556,7 +534,6 @@ fn cmd_rm(package_name: &str) -> Result<(), VpmError> {
         if let Ok(entries) = fs::read_dir(&pkg_root) {
             if entries.count() == 0 {
                 fs::remove_dir(&pkg_root)?;
-                println!("[VPM] 已清理空的 {} 目录", PACKAGE_DIR);
             }
         }
     }
@@ -673,7 +650,6 @@ fn cmd_build(args: &[String]) -> Result<(), VpmError> {
         )));
     }
 
-    println!("[VPM] 加载配置: {}", setting_path.display());
     let settings = VxSettings::from_file(
         setting_path.to_str().unwrap_or_else(|| {
             eprintln!("[VPM 错误] 配置文件路径包含非 UTF-8 字符");
@@ -687,7 +663,6 @@ fn cmd_build(args: &[String]) -> Result<(), VpmError> {
         VpmError::InvalidVack(format!("构建失败: {}", e))
     })?;
 
-    println!("[VPM] 构建完成");
     Ok(())
 }
 

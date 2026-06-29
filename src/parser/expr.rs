@@ -176,7 +176,11 @@ impl Parser {
         let (l, c) = (self.current().line, self.current().col);
         if self.current().kind == TokenType::Ampersand {
             self.advance();
-            return Ok(Expr::AddressOf(Box::new(self.parse_unary()?), l, c));
+            let is_mut = self.current().kind == TokenType::Mut;
+            if is_mut {
+                self.advance();
+            }
+            return Ok(Expr::AddressOf(Box::new(self.parse_unary()?), is_mut, l, c));
         }
         if self.current().kind == TokenType::Star {
             self.advance();
@@ -408,19 +412,28 @@ impl Parser {
 
     pub fn parse_type(&mut self) -> Result<Expr, VXError> {
         let (l, c) = (self.current().line, self.current().col);
-        // 5 原生标量类型 (int/float/double/bool/void) + var 保留为关键字类型
+        // 5 原生标量类型 (int/float/double/bool/void)
         // string/vector 已裁减 → 作为标准库标识符 std::String / std::Vec<T>
+        // var 动态类型已移除：VX 为纯静态类型语言
+        if self.current().kind == TokenType::VarT {
+            self.advance();
+            return Err(VXError {
+                msg: "var 动态类型已移除，VX 为纯静态类型语言，请使用具体类型（如 int、bool、pointer）".to_string(),
+                line: l,
+                col: c,
+                source: Some(self.source.clone()),
+            });
+        }
         let nm = if self.match_kind(&[
             TokenType::IntT,
             TokenType::FloatT,
             TokenType::DoubleT,
-            TokenType::VarT,
             TokenType::BoolT,
             TokenType::VoidT,
         ]) {
             let t = self.advance().value;
             match t.as_str() {
-                "int" | "float" | "double" | "var" | "bool" | "void" => t,
+                "int" | "float" | "double" | "bool" | "void" => t,
                 _ => {
                     return Err(VXError {
                         msg: format!("未知类型: {}", t),

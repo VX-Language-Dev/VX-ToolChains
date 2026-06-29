@@ -266,6 +266,21 @@ impl Compiler {
     pub(crate) fn set_var_type(&mut self, name: &str, t: KnownType) { self.var_types.insert(name.to_string(), t); }
     pub(crate) fn get_var_type(&self, name: &str) -> KnownType { self.var_types.get(name).copied().unwrap_or(KnownType::Unknown) }
 
+    /// 将类型名字符串解析为 KnownType。VX 为纯静态类型，所有声明必须有显式类型。
+    pub(crate) fn type_name_to_known_type(type_str: &str) -> KnownType {
+        match type_str {
+            "int" => KnownType::Int,
+            "float" | "double" => KnownType::Float,
+            "bool" => KnownType::Bool,
+            "string" | "String" => KnownType::String,
+            "pointer" => KnownType::Pointer,
+            "void" | "nil" => KnownType::Nil,
+            "array" => KnownType::Array,
+            "map" => KnownType::Map,
+            _ => KnownType::Unknown,
+        }
+    }
+
     pub(crate) fn binary_op_specialized(&self, op: &str, left: KnownType, right: KnownType) -> Option<OpCode> {
         match (op, left, right) {
             ("+", KnownType::Int, KnownType::Int) => Some(OpCode::AddInt),

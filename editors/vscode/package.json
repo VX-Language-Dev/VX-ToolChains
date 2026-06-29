@@ -10,7 +10,9 @@
   },
   "categories": [
     "Programming Languages",
-    "Language Packs"
+    "Language Packs",
+    "Debuggers",
+    "Formatters"
   ],
   "keywords": [
     "vx",

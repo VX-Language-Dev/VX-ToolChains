@@ -157,18 +157,6 @@ impl VxBuilder {
 
     /// 构建主入口: 自动判断多文件 / 单文件路径
     pub fn build(&self) -> Result<(), BuildError> {
-        println!(
-            "[VXBUILD] 配置目录: {} | 多文件项目: {}",
-            self.settings.source_dir,
-            self.settings.is_multi_file_project()
-        );
-        println!(
-            "[VXBUILD] 优化等级: {} | 允许死代码: {} | 缓存: {}",
-            self.settings.vxset.optimization,
-            self.settings.vxset.deadcode,
-            self.settings.vxset.cache
-        );
-
         if self.settings.is_multi_file_project() {
             self.build_multi_file()
         } else {
@@ -181,11 +169,9 @@ impl VxBuilder {
     /// 单文件构建: 无缝回退至 ipt (vxcompiler) 直接编译
     fn build_single_file(&self) -> Result<(), BuildError> {
         let entry = self.resolve_single_entry()?;
-        println!("[VXBUILD] 单文件模式: 回退至 vxcompiler 编译 {}", entry);
 
         // 调用 vxcompiler <entry> (ipt 读取同目录 vxsetting.toml 处理 [libraries])
-        let output = self.run_vxcompiler(&entry, None)?;
-        println!("[VXBUILD] 单文件编译完成: {}", output);
+        let _output = self.run_vxcompiler(&entry, None)?;
         Ok(())
     }
 
@@ -234,12 +220,6 @@ impl VxBuilder {
     fn build_multi_file(&self) -> Result<(), BuildError> {
         // 1. 解析 [[module]] 依赖 (通过 vpm 包查询 vxmod.toml)
         let module_libs = self.resolve_module_dependencies()?;
-        if !module_libs.is_empty() {
-            println!("[VXBUILD] 解析到 {} 个模块依赖:", module_libs.len());
-            for (name, path) in &module_libs {
-                println!("    {} -> {}", name, path);
-            }
-        }
 
         let opt = self.settings.vxset.optimization;
         let cache_enabled = self.settings.vxset.cache && !self.no_cache;
@@ -256,11 +236,8 @@ impl VxBuilder {
 
         if read_cache {
             if !cache.is_globally_valid(&vxsetting_hash, vxmod_hash.as_deref(), TOOLCHAIN_VERSION) {
-                println!("[VXBUILD] 配置或工具链版本变更 → 失效全部缓存");
                 cache.invalidate_all();
             }
-        } else if self.force_rebuild {
-            println!("[VXBUILD] --force: 忽略缓存新鲜度, 强制全量构建");
         }
 
         // 记录当前配置指纹 (供下次构建校验)
@@ -279,9 +256,7 @@ impl VxBuilder {
                 .iter()
                 .map(|s| self.resolve_source_path(s))
                 .collect();
-            if read_cache && cache.is_target_fresh("bin", &sources_abs, opt) {
-                println!("[VXBUILD] [bin] cached (跳过编译与链接)");
-            } else {
+            if !(read_cache && cache.is_target_fresh("bin", &sources_abs, opt)) {
                 let (obj, output) = self.build_target(bin, TargetKind::Bin, &module_libs)?;
                 if cache_enabled {
                     cache.update_entry(
@@ -300,9 +275,7 @@ impl VxBuilder {
                 .iter()
                 .map(|s| self.resolve_source_path(s))
                 .collect();
-            if read_cache && cache.is_target_fresh("vxlib", &sources_abs, opt) {
-                println!("[VXBUILD] [vxlib] cached (跳过编译与链接)");
-            } else {
+            if !(read_cache && cache.is_target_fresh("vxlib", &sources_abs, opt)) {
                 let (obj, output) =
                     self.build_target(vxlib, TargetKind::VxLib, &module_libs)?;
                 if cache_enabled {
@@ -322,9 +295,7 @@ impl VxBuilder {
                 .iter()
                 .map(|s| self.resolve_source_path(s))
                 .collect();
-            if read_cache && cache.is_target_fresh("lib", &sources_abs, opt) {
-                println!("[VXBUILD] [lib] cached (跳过编译与链接)");
-            } else {
+            if !(read_cache && cache.is_target_fresh("lib", &sources_abs, opt)) {
                 let (obj, output) = self.build_target(lib, TargetKind::Lib, &module_libs)?;
                 if cache_enabled {
                     cache.update_entry(
@@ -346,9 +317,7 @@ impl VxBuilder {
                 .iter()
                 .map(|s| self.resolve_source_path(s))
                 .collect();
-            if read_cache && cache.is_target_fresh(&key, &sources_abs, opt) {
-                println!("[VXBUILD] 模块 '{}' cached (跳过编译)", m.name);
-            } else {
+            if !(read_cache && cache.is_target_fresh(&key, &sources_abs, opt)) {
                 let obj = self.build_module(m, &module_libs)?;
                 if cache_enabled {
                     // 模块产物即 .vxobj; 用其同时作为 obj_path 与 output,
@@ -361,13 +330,8 @@ impl VxBuilder {
 
         // 5. 持久化缓存 (原子写入)
         if cache_enabled {
-            match cache.save() {
-                Ok(()) => println!(
-                    "[VXBUILD] 缓存已写入 {} ({} 个目标)",
-                    cache_path.display(),
-                    cache.target_count()
-                ),
-                Err(e) => eprintln!("[VXBUILD 警告] 保存构建缓存失败: {}", e),
+            if let Err(e) = cache.save() {
+                eprintln!("[VXBUILD 警告] 保存构建缓存失败: {}", e);
             }
         }
 
@@ -388,13 +352,6 @@ impl VxBuilder {
         kind: TargetKind,
         module_libs: &HashMap<String, String>,
     ) -> Result<(String, PathBuf), BuildError> {
-        println!(
-            "[VXBUILD] 构建 [{}] 目标 ({} 个源文件, 版本 {})",
-            kind.as_str(),
-            target.sources.len(),
-            target.version
-        );
-
         if target.sources.is_empty() {
             return Err(BuildError::Config(format!(
                 "[{}] sources 为空",
@@ -421,13 +378,6 @@ impl VxBuilder {
         }
         self.run_vxlinker(&vxobj_path, &output.to_string_lossy())?;
 
-        println!(
-            "[VXBUILD] [{}] 构建完成 -> {} (入口 {}, 共 {} 个源文件)",
-            kind.as_str(),
-            output.display(),
-            entry,
-            target.sources.len()
-        );
         Ok((vxobj_path, output))
     }
 
@@ -439,12 +389,6 @@ impl VxBuilder {
         m: &ModuleDecl,
         module_libs: &HashMap<String, String>,
     ) -> Result<String, BuildError> {
-        println!(
-            "[VXBUILD] 构建模块 '{}' (import 名: {}, {} 个源文件)",
-            m.name,
-            m.name,
-            m.sources.len()
-        );
         // 入口源: sources[0]; 其余源由入口 import 引入, 不单独编译 (避免孤儿 .vxobj)
         let entry = &m.sources[0];
         let entry_abs = self.resolve_source_path(entry);
@@ -453,7 +397,6 @@ impl VxBuilder {
             &entry_abs.to_string_lossy(),
             Some(&extra_libs_env),
         )?;
-        println!("[VXBUILD] 模块 '{}' 编译完成 (入口 {})", m.name, entry);
         Ok(obj)
     }
 
@@ -578,7 +521,7 @@ impl VxBuilder {
         Ok(output_obj)
     }
 
-    /// 调用 vxlinker 链接 .vxobj 为可执行文件
+    /// 调用 vxlinker 将 .vxobj 静态编译为原生可执行文件
     fn run_vxlinker(&self, vxobj: &str, output: &str) -> Result<(), BuildError> {
         let tool = "vxlinker";
         let mut cmd = Command::new(tool);
@@ -586,7 +529,7 @@ impl VxBuilder {
             .arg("-o")
             .arg(output)
             .arg("--mode")
-            .arg("interpret")
+            .arg("native")
             // 优化等级透传 (链接器侧记录, 供后续优化通路)
             // 与编译器一致使用 effective_opt_level, 避免 CLI 覆盖时链接器仍取 toml 值
             .arg("--opt-level")

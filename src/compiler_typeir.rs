@@ -21,16 +21,6 @@ pub(crate) struct TypeIRSimulator {
 }
 
 impl TypeIRSimulator {
-    pub(crate) fn new() -> Self {
-        Self {
-            body: Vec::new(),
-            slot_to_var: HashMap::new(),
-            stack: Vec::new(),
-            const_strings: HashMap::new(),
-            func_name_to_id: HashMap::new(),
-        }
-   }
-
     pub(crate) fn with_function_map(func_name_to_id: HashMap<String, FuncId>) -> Self {
         Self {
             body: Vec::new(),
@@ -355,8 +345,17 @@ impl TypeIRSimulator {
                 // 根据 callee 字符串常量解析函数 ID
                 let callee_id = self.const_strings.get(&callee_vid)
                     .and_then(|name| self.func_name_to_id.get(name))
-                    .copied()
-                    .unwrap_or(0);
+                    .copied();
+                let callee_id = match callee_id {
+                    Some(id) => id,
+                    None => {
+                        // 未解析的函数名（内建函数或外部函数）用哨兵值标记
+                        let _unknown_name = self.const_strings.get(&callee_vid).cloned();
+                        let vid = self.emit(Call(u32::MAX, args));
+                        self.push_val(vid);
+                        return;
+                    }
+                };
                 let vid = self.emit(Call(callee_id, args));
                 self.push_val(vid);
             }

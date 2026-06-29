@@ -72,6 +72,7 @@ pub enum TokenType {
     Loop,
     // 所有权
     Move,
+    Mut,
     // 字面量
     Int,
     Float,
@@ -178,6 +179,7 @@ pub const KEYWORDS: &[( &str, TokenType)] = &[
     ("union", TokenType::Union),
     ("new", TokenType::New),
     ("move", TokenType::Move),
+    ("mut", TokenType::Mut),
     ("macro", TokenType::Macro),  // 宏定义关键字
     // 5 原生标量类型 (硬件基础类型, 保留)
     ("int", TokenType::IntT),

@@ -71,6 +71,30 @@ fn test_binary_add() {
 }
 
 #[test]
+fn test_var_type_rejected() {
+    let src = "func main():\n    x: var = 1\n";
+    let tokens = Lexer::new(src).tokenize().expect("lex failed");
+    let mut parser = Parser::new(tokens, src);
+    assert!(parser.parse().is_err(), "var 类型应被拒绝");
+}
+
+#[test]
+fn test_var_decl_rejected() {
+    let src = "func main():\n    var x = 1\n";
+    let tokens = Lexer::new(src).tokenize().expect("lex failed");
+    let mut parser = Parser::new(tokens, src);
+    assert!(parser.parse().is_err(), "var 推断声明应被拒绝");
+}
+
+#[test]
+fn test_explicit_type_var_decl_ok() {
+    let src = "func main():\n    x: int = 1\n";
+    let tokens = Lexer::new(src).tokenize().expect("lex failed");
+    let mut parser = Parser::new(tokens, src);
+    assert!(parser.parse().is_ok(), "显式类型声明应通过");
+}
+
+#[test]
 fn test_operator_precedence() {
     // 1 + 2 * 3  应解析为  1 + (2 * 3)
     let e = parse_expr("1 + 2 * 3");

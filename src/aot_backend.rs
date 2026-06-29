@@ -167,6 +167,7 @@ impl AotBackend {
         let mut declared_ids: HashMap<FuncId, clm::FuncId> = HashMap::new();
 
         for func in &type_module.functions {
+            let is_external = matches!(type_module.linkage.get(&func.id), Some(Linkage::External(_)));
             let mut sig = cl::ir::Signature::new(self.isa.default_call_conv());
 
             // 参数
@@ -180,24 +181,39 @@ impl AotBackend {
                     .push(cl::ir::AbiParam::new(type_to_clif(&func.return_type)));
             }
 
-            // main / __main__ 作为导出符号，便于链接器定位入口点
-            let linkage = if func.name == "main" || func.name == "__main__" {
+            // main / __main__ 作为导出符号；外部函数作为导入符号；其余为本地符号
+            let linkage = if is_external {
+                clm::Linkage::Import
+            } else if func.name == "main" || func.name == "__main__" {
                 clm::Linkage::Export
             } else {
                 clm::Linkage::Local
+            };
+            let symbol_name = if is_external {
+                // 外部函数使用 linkage 中记录的符号名（如 vx_out）
+                match type_module.linkage.get(&func.id).unwrap() {
+                    Linkage::External(name) => name.as_str(),
+                    _ => &func.name,
+                }
+            } else {
+                &func.name
             };
             let cl_func_id = self
                 .module
                 .as_mut()
                 .unwrap()
-                .declare_function(&func.name, linkage, &sig)
-                .map_err(|e| format!("Failed to declare '{}': {}", func.name, e))?;
+                .declare_function(symbol_name, linkage, &sig)
+                .map_err(|e| format!("Failed to declare '{}': {}", symbol_name, e))?;
 
             declared_ids.insert(func.id, cl_func_id);
         }
 
         // ===== 阶段 2: 定义每个函数 (编译 TypeIR → CLIF) =====
         for func in &type_module.functions {
+            // 跳过外部函数（内建函数），它们不需要定义
+            if let Some(Linkage::External(_)) = type_module.linkage.get(&func.id) {
+                continue;
+            }
             let cl_id = declared_ids[&func.id];
             self.compile_function(func, cl_id, &declared_ids, type_module)?;
         }
@@ -302,8 +318,55 @@ fn compile_body(
         let mut block_map: HashMap<u32, cl::ir::Block> = HashMap::new();
         // 残留值栈: 用于函数内操作数传递
         let mut value_stack: Vec<cl::ir::Value> = Vec::new();
+        // 栈值 → 源变量映射: 记录每个栈值来自哪个变量 (用于跨块边界时刷新回写)
+        let mut stack_homes: Vec<Option<VarId>> = Vec::new();
+        // 临时变量计数器: 用于生成唯一的临时变量 ID
+        let mut temp_var_counter: u32 = 1000; // 从一个较大的数字开始，避免与用户变量冲突
+        // 基本块栈高度映射: 记录每个基本块入口处的栈高度 (用于跨块传递值)
+        let mut block_stack_heights: HashMap<u32, u32> = HashMap::new();
 
-        // 第一遍: 为所有跳转目标预创建块
+        // 辅助闭包: 在跳转前将栈值刷新回变量
+        let flush_stack_to_vars = |builder: &mut clf::FunctionBuilder,
+                                   value_stack: &[cl::ir::Value],
+                                   stack_homes: &[Option<VarId>],
+                                   var_map: &HashMap<VarId, clf::Variable>,
+                                   func: &TypeFunction| {
+            for (i, (val, home)) in value_stack.iter().zip(stack_homes.iter()).enumerate() {
+                if let Some(vid) = home {
+                    if let Some(var) = var_map.get(vid) {
+                        builder.def_var(*var, *val);
+                    }
+                } else {
+                    // 栈值没有源变量 → 分配一个临时变量
+                    let temp_vid = (func.body.len() + i) as VarId;
+                    let var = clf::Variable::from_u32(temp_vid);
+                    let ty = types::I64; // 默认类型
+                    builder.declare_var(var, ty);
+                    builder.def_var(var, *val);
+                }
+            }
+        };
+
+        // 辅助闭包: 在跳转后从变量重新加载栈值
+        let reload_stack_from_vars = |builder: &mut clf::FunctionBuilder,
+                                      stack_homes: &[Option<VarId>],
+                                      var_map: &HashMap<VarId, clf::Variable>|
+         -> Vec<cl::ir::Value> {
+            stack_homes
+                .iter()
+                .map(|home| {
+                    if let Some(vid) = home {
+                        if let Some(var) = var_map.get(vid) {
+                            return builder.use_var(*var);
+                        }
+                    }
+                    // 如果找不到变量, 返回一个占位值 (这不应该发生)
+                    builder.ins().iconst(types::I64, 0)
+                })
+                .collect()
+        };
+
+        // 第一遍: 为所有跳转目标预创建块, 并计算目标栈高度
         for inst in &func.body {
             match inst {
                 Jump(target) | JumpIfFalse(_, target) | JumpIfTrue(_, target) => {
@@ -313,29 +376,117 @@ fn compile_body(
             }
         }
 
+        // 第二遍: 计算每个基本块入口处的栈高度 (用于跨块传递值)
+        // 使用工作列表算法模拟栈状态传播
+        {
+            let mut worklist: Vec<u32> = vec![0]; // 从入口块开始
+            let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            let mut current_stack_height: u32 = 0;
+            
+            while let Some(pc) = worklist.pop() {
+                if visited.contains(&pc) {
+                    continue;
+                }
+                visited.insert(pc);
+                
+                // 模拟执行指令，跟踪栈高度
+                for inst in func.body.iter().skip(pc as usize) {
+                    match inst {
+                        ConstInt(_) | ConstFloat(_) | ConstBool(_) | ConstString(_) | ConstNil => {
+                            current_stack_height += 1;
+                        }
+                        LoadVar(_) => {
+                            current_stack_height += 1;
+                        }
+                        StoreVar(_) => {
+                            if current_stack_height > 0 {
+                                current_stack_height -= 1;
+                            }
+                        }
+                        I32Add(_, _) | I32Sub(_, _) | I32Mul(_, _) | I32Div(_, _) | I32Mod(_, _) |
+                        F64Add(_, _) | F64Sub(_, _) | F64Mul(_, _) | F64Div(_, _) |
+                        I32Eq(_, _) | I32Ne(_, _) | I32Lt(_, _) | I32Gt(_, _) | I32Le(_, _) | I32Ge(_, _) => {
+                            // 二元操作: 弹出 2 个，压入 1 个
+                            if current_stack_height >= 2 {
+                                current_stack_height -= 1;
+                            }
+                        }
+                        I32Neg(_) | F64Neg(_) | BoolNot(_) => {
+                            // 一元操作: 弹出 1 个，压入 1 个 (栈高度不变)
+                        }
+                        Call(_, args) => {
+                            // 调用: 参数通过变量 ID 传递，不从栈中弹出
+                            // 但会压入返回值
+                            current_stack_height += 1;
+                        }
+                        Jump(target) => {
+                            // 记录目标块的入口栈高度
+                            if !block_stack_heights.contains_key(target) {
+                                block_stack_heights.insert(*target, current_stack_height);
+                            }
+                            worklist.push(*target);
+                            break; // 跳转后不再继续执行当前块
+                        }
+                        JumpIfFalse(_, target) | JumpIfTrue(_, target) => {
+                            // 条件跳转: 弹出条件值
+                            if current_stack_height > 0 {
+                                current_stack_height -= 1;
+                            }
+                            // 记录目标块的入口栈高度
+                            if !block_stack_heights.contains_key(target) {
+                                block_stack_heights.insert(*target, current_stack_height);
+                            }
+                            worklist.push(*target);
+                            // 继续执行 fallthrough
+                        }
+                        Return(_) => {
+                            break; // 返回后不再继续
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // 第三遍: 为每个基本块声明需要的参数
+        // 参数数量等于该块入口处的栈高度
+        for (target_pc, &stack_height) in &block_stack_heights {
+            if let Some(block) = block_map.get(target_pc) {
+                // 为每个栈值声明一个参数
+                for _ in 0..stack_height {
+                    builder.append_block_param(*block, types::I64);
+                }
+            }
+        }
+
         for inst in func.body.iter() {
             match inst {
                 // ---- 常量 ----
                 ConstInt(v) => {
                     let r = builder.ins().iconst(types::I64, *v);
                     value_stack.push(r);
+                    stack_homes.push(None); // 常量没有源变量
                 }
                 ConstFloat(v) => {
                     let r = builder.ins().f64const(*v);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 ConstBool(v) => {
                     let r = builder.ins().iconst(types::I64, if *v { 1 } else { 0 });
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 ConstString(_s) => {
                     // 字符串常量: 暂用指针占位
                     let r = builder.ins().iconst(types::I64, 0);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 ConstNil => {
                     let r = builder.ins().iconst(types::I64, 0);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
 
                 // ---- 变量存取 ----
@@ -343,12 +494,14 @@ fn compile_body(
                     if let Some(var) = var_map.get(vid) {
                         let val = builder.use_var(*var);
                         value_stack.push(val);
+                        stack_homes.push(Some(*vid)); // 记录源变量
                     } else {
                         return Err(format!("LoadVar: unknown var {}", vid));
                     }
                 }
                 StoreVar(vid) => {
                     if let Some(val) = value_stack.pop() {
+                        stack_homes.pop(); // 同步弹出
                         if let Some(var) = var_map.get(vid) {
                             builder.def_var(*var, val);
                         } else {
@@ -365,225 +518,313 @@ fn compile_body(
 
                 // ---- 整数算术 ----
                 I32Add(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().iadd(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Sub(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().isub(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Mul(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().imul(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Div(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().sdiv(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Mod(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().srem(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
 
                 // ---- 浮点算术 ----
                 F64Add(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().fadd(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Sub(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().fsub(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Mul(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().fmul(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Div(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().fdiv(va, vb);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
 
                 // ---- 整数比较 ----
                 I32Eq(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::Equal, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Ne(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::NotEqual, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Lt(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::SignedLessThan, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Gt(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::SignedGreaterThan, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Le(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::SignedLessThanOrEqual, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 I32Ge(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::SignedGreaterThanOrEqual, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
 
                 // ---- 浮点比较 ----
                 F64Eq(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::Equal, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Ne(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::NotEqual, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Lt(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::LessThan, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Gt(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::GreaterThan, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Le(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::LessThanOrEqual, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Ge(a, b) => {
-                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack)?;
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let cmp = builder.ins().fcmp(cl::ir::condcodes::FloatCC::GreaterThanOrEqual, va, vb);
                     let r = builder.ins().uextend(types::I64, cmp);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
 
                 // ---- 一元运算 ----
                 I32Neg(vid) => {
-                    let v = get_var_value(builder, var_map, *vid, &mut value_stack)?;
+                    let v = get_var_value(builder, var_map, *vid, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().ineg(v);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 F64Neg(vid) => {
-                    let v = get_var_value(builder, var_map, *vid, &mut value_stack)?;
+                    let v = get_var_value(builder, var_map, *vid, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().fneg(v);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 BoolNot(vid) => {
-                    let v = get_var_value(builder, var_map, *vid, &mut value_stack)?;
+                    let v = get_var_value(builder, var_map, *vid, &mut value_stack, &mut stack_homes)?;
                     // bool_not: v == 0 ? 1 : 0
                     let zero = builder.ins().iconst(types::I64, 0);
                     let one = builder.ins().iconst(types::I64, 1);
                     let cmp = builder.ins().icmp(cl::ir::condcodes::IntCC::Equal, v, zero);
                     let r = builder.ins().select(cmp, one, zero);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
 
                 // ---- 控制流 ----
                 Jump(target) => {
                     let target_block = *block_map.get(target).unwrap_or(&builder.create_block());
+                    
+                    // 跳转前: 将栈值作为参数传递给目标基本块
+                    let mut block_params: Vec<cl::ir::Value> = Vec::new();
+                    for (val, home) in value_stack.iter().zip(stack_homes.iter()) {
+                        if let Some(vid) = home {
+                            if let Some(var) = var_map.get(vid) {
+                                builder.def_var(*var, *val);
+                            }
+                        } else {
+                            // 没有 home 的栈值 → 分配临时变量
+                            let temp_vid = temp_var_counter;
+                            temp_var_counter += 1;
+                            let var = clf::Variable::from_u32(temp_vid);
+                            builder.declare_var(var, types::I64);
+                            builder.def_var(var, *val);
+                        }
+                        block_params.push(*val);
+                    }
+                    
+                    // 执行跳转,传递参数
+                    builder.ins().jump(target_block, &block_params);
                     let current_block = builder.current_block().unwrap();
-                    builder.ins().jump(target_block, &[]);
                     builder.seal_block(current_block);
-                    // 在新块上继续
+                    
+                    // 切换到目标块
                     builder.switch_to_block(target_block);
+                    
+                    // 从参数中恢复栈状态
+                    let block_params_slice = builder.block_params(target_block);
+                    value_stack.clear();
+                    stack_homes.clear();
+                    for (i, param_val) in block_params_slice.iter().enumerate() {
+                        value_stack.push(*param_val);
+                        stack_homes.push(None); // 参数没有明确的源变量
+                    }
                 }
                 JumpIfFalse(cond_var, target) => {
-                    let cond = get_var_value(builder, var_map, *cond_var, &mut value_stack)?;
+                    let cond = get_var_value(builder, var_map, *cond_var, &mut value_stack, &mut stack_homes)?;
                     let target_block = *block_map.get(target).unwrap_or(&builder.create_block());
                     let fallthrough = builder.create_block();
+
+                    // 跳转前: 将栈值作为参数传递给目标基本块
+                    let mut block_params: Vec<cl::ir::Value> = Vec::new();
+                    for (val, home) in value_stack.iter().zip(stack_homes.iter()) {
+                        if let Some(vid) = home {
+                            if let Some(var) = var_map.get(vid) {
+                                builder.def_var(*var, *val);
+                            }
+                        } else {
+                            let temp_vid = temp_var_counter;
+                            temp_var_counter += 1;
+                            let var = clf::Variable::from_u32(temp_vid);
+                            builder.declare_var(var, types::I64);
+                            builder.def_var(var, *val);
+                        }
+                        block_params.push(*val);
+                    }
 
                     let zero = builder.ins().iconst(types::I64, 0);
                     let is_false = builder.ins().icmp(cl::ir::condcodes::IntCC::Equal, cond, zero);
                     let current_block = builder.current_block().unwrap();
-                    builder.ins().brif(is_false, target_block, &[], fallthrough, &[]);
+                    builder.ins().brif(is_false, target_block, &block_params, fallthrough, &block_params);
                     builder.seal_block(current_block);
                     builder.switch_to_block(fallthrough);
-                    builder.seal_block(target_block);
+                    
+                    // 从参数中恢复栈状态
+                    let block_params_slice = builder.block_params(fallthrough);
+                    value_stack.clear();
+                    stack_homes.clear();
+                    for param_val in block_params_slice.iter() {
+                        value_stack.push(*param_val);
+                        stack_homes.push(None);
+                    }
                 }
                 JumpIfTrue(cond_var, target) => {
-                    let cond = get_var_value(builder, var_map, *cond_var, &mut value_stack)?;
+                    let cond = get_var_value(builder, var_map, *cond_var, &mut value_stack, &mut stack_homes)?;
                     let target_block = *block_map.get(target).unwrap_or(&builder.create_block());
                     let fallthrough = builder.create_block();
+
+                    // 跳转前: 将栈值作为参数传递给目标基本块
+                    let mut block_params: Vec<cl::ir::Value> = Vec::new();
+                    for (val, home) in value_stack.iter().zip(stack_homes.iter()) {
+                        if let Some(vid) = home {
+                            if let Some(var) = var_map.get(vid) {
+                                builder.def_var(*var, *val);
+                            }
+                        } else {
+                            let temp_vid = temp_var_counter;
+                            temp_var_counter += 1;
+                            let var = clf::Variable::from_u32(temp_vid);
+                            builder.declare_var(var, types::I64);
+                            builder.def_var(var, *val);
+                        }
+                        block_params.push(*val);
+                    }
 
                     let zero = builder.ins().iconst(types::I64, 0);
                     let is_true = builder.ins().icmp(cl::ir::condcodes::IntCC::NotEqual, cond, zero);
                     let current_block = builder.current_block().unwrap();
-                    builder.ins().brif(is_true, target_block, &[], fallthrough, &[]);
+                    builder.ins().brif(is_true, target_block, &block_params, fallthrough, &block_params);
                     builder.seal_block(current_block);
                     builder.switch_to_block(fallthrough);
-                    builder.seal_block(target_block);
+                    
+                    // 从参数中恢复栈状态
+                    let block_params_slice = builder.block_params(fallthrough);
+                    value_stack.clear();
+                    stack_homes.clear();
+                    for param_val in block_params_slice.iter() {
+                        value_stack.push(*param_val);
+                        stack_homes.push(None);
+                    }
                 }
 
                 // ---- 函数调用 ----
                 Call(callee_id, args) => {
+                    // 收集参数
+                    let mut arg_vals: Vec<cl::ir::Value> = Vec::new();
+                    for arg_vid in args {
+                        let v = get_var_value(builder, var_map, *arg_vid, &mut value_stack, &mut stack_homes)?;
+                        arg_vals.push(v);
+                    }
+
                     if let Some(&cl_callee_id) = all_func_ids.get(callee_id) {
+                        // 内部函数或已声明的导入函数
                         let callee_ref = module
                             .declare_func_in_func(cl_callee_id, builder.func);
-
-                        // 收集参数
-                        let mut arg_vals: Vec<cl::ir::Value> = Vec::new();
-                        for arg_vid in args {
-                            let v = get_var_value(builder, var_map, *arg_vid, &mut value_stack)?;
-                            arg_vals.push(v);
-                        }
 
                         let call_inst = builder.ins().call(callee_ref, &arg_vals);
                         let results = builder.inst_results(call_inst);
                         if !results.is_empty() {
                             value_stack.push(results[0]);
+                            stack_homes.push(None);
                         }
-                    } else {
-                        // 外部函数: 尝试通过名称在模块中查找
-                        if let Some(_callee_name) = type_module.function_map.get(callee_id) {
-                            let mut arg_vals = Vec::new();
-                            for arg_vid in args {
-                                let v = get_var_value(builder, var_map, *arg_vid, &mut value_stack)?;
-                                arg_vals.push(v);
-                            }
-                            let sig_ref = builder.import_signature(builder.func.signature.clone());
-                            let callee_ref = builder
-                                .import_function(cl::ir::ExtFuncData {
-                                    name: cl::ir::ExternalName::user(UserExternalNameRef::from_u32(*callee_id)),
-                                    signature: sig_ref,
-                                    colocated: false,
-                                });
-                            let call_inst = builder.ins().call(callee_ref, &arg_vals);
-                            let results = builder.inst_results(call_inst);
-                            if !results.is_empty() {
-                                value_stack.push(results[0]);
-                            }
-                        }
+                    } else if *callee_id == u32::MAX {
+                        // 未解析的函数调用，生成 trap
+                        builder.ins().trap(cl::ir::TrapCode::UnreachableCodeReached);
                     }
                 }
                 CallIndirect(_func_ptr_var, args) => {
@@ -595,7 +836,7 @@ fn compile_body(
                 // ---- 返回 ----
                 Return(ret_val) => {
                     if let Some(vid) = ret_val {
-                        let v = get_var_value(builder, var_map, *vid, &mut value_stack)?;
+                        let v = get_var_value(builder, var_map, *vid, &mut value_stack, &mut stack_homes)?;
                         builder.ins().return_(&[v]);
                     } else {
                         builder.ins().return_(&[]);
@@ -605,54 +846,73 @@ fn compile_body(
                     builder.seal_block(current_block);
                     let next_block = builder.create_block();
                     builder.switch_to_block(next_block);
+                    value_stack.clear();
+                    stack_homes.clear();
                 }
 
                 // ---- 数据结构 (简化: 指针占位) ----
                 MakeStruct(_, _) => {
                     let r = builder.ins().iconst(types::I64, 0);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 GetField(_, _) => {
                     let _ = value_stack.pop();
+                    stack_homes.pop();
                     let r = builder.ins().iconst(types::I64, 0);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 SetField(_, _, _) => {
                     let _ = value_stack.pop();
+                    stack_homes.pop();
                 }
                 MakeArray(_, _) | MakeMap(_) => {
                     let r = builder.ins().iconst(types::I64, 0);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 IndexGet(_, _) => {
                     let _ = value_stack.pop();
+                    stack_homes.pop();
                     let _ = value_stack.pop();
+                    stack_homes.pop();
                     let r = builder.ins().iconst(types::I64, 0);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 IndexSet(_, _, _) => {
                     let _ = value_stack.pop();
+                    stack_homes.pop();
                     let _ = value_stack.pop();
+                    stack_homes.pop();
                     let _ = value_stack.pop();
+                    stack_homes.pop();
                 }
 
                 // ---- 所有权/Memory (AOT 模式静默忽略) ----
                 Alloc(_) => {
                     let r = builder.ins().iconst(types::I64, 0);
                     value_stack.push(r);
+                    stack_homes.push(None);
                 }
                 Free(_) | OwnershipMove(_) | Borrow(_) | Deref(_) | AliveCheck(_) => {
                     let _ = value_stack.pop();
+                    stack_homes.pop();
                 }
 
                 // ---- 栈操作 ----
                 Dup => {
                     if let Some(&top) = value_stack.last() {
                         value_stack.push(top);
+                        if let Some(home) = stack_homes.last() {
+                            stack_homes.push(*home);
+                        }
                     }
                 }
                 Pop => {
                     value_stack.pop();
+                    stack_homes.pop();
                 }
             }
         }
@@ -674,10 +934,13 @@ fn binary_operands(
     a: VarId,
     b: VarId,
     stack: &mut Vec<cl::ir::Value>,
+    stack_homes: &mut Vec<Option<VarId>>,
 ) -> Result<(cl::ir::Value, cl::ir::Value), String> {
+    // 优先从变量系统获取值，确保 SSA 支配规则
     let va = if let Some(var) = var_map.get(&a) {
         builder.use_var(*var)
     } else if let Some(v) = stack.pop() {
+        stack_homes.pop();
         v
     } else {
         return Err(format!("Binary op: unknown operand var {}", a));
@@ -685,6 +948,7 @@ fn binary_operands(
     let vb = if let Some(var) = var_map.get(&b) {
         builder.use_var(*var)
     } else if let Some(v) = stack.pop() {
+        stack_homes.pop();
         v
     } else {
         return Err(format!("Binary op: unknown operand var {}", b));
@@ -698,10 +962,13 @@ fn get_var_value(
     var_map: &HashMap<VarId, clf::Variable>,
     vid: VarId,
     stack: &mut Vec<cl::ir::Value>,
+    stack_homes: &mut Vec<Option<VarId>>,
 ) -> Result<cl::ir::Value, String> {
+    // 优先从变量系统获取值，确保 SSA 支配规则
     if let Some(var) = var_map.get(&vid) {
         Ok(builder.use_var(*var))
     } else if let Some(v) = stack.pop() {
+        stack_homes.pop();
         Ok(v)
     } else {
         Err(format!("Unknown variable {}", vid))
@@ -765,7 +1032,6 @@ mod tests {
         );
         let obj = result.unwrap();
         assert!(!obj.is_empty(), "Object file should not be empty");
-        println!("Host AOT: compiled {} bytes object file", obj.len());
     }
 
     #[test]

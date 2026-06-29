@@ -1,4 +1,4 @@
-use crate::parser::Expr;
+use crate::parser::{Expr, expr_to_type_name};
 use crate::OpCode;
 use crate::compiler_bytecode::{BytecodeArg, ConstantValue};
 use crate::compiler_core::{Compiler, LoopInfo};
@@ -14,10 +14,20 @@ impl Compiler {
                     self.compile_expr(expr)?;
                 }
             }
-            Expr::VarDecl(name, _, value, _, _, _) => {
+            Expr::VarDecl(name, ty, value, _, _, _) => {
+                let declared = match ty {
+                    Some(t) => Self::type_name_to_known_type(&expr_to_type_name(t)),
+                    None => {
+                        return Err(format!(
+                            "VX Error: 变量 `{}` 缺少类型注解，VX 为纯静态类型语言",
+                            name
+                        ));
+                    }
+                };
                 self.compile_expr(value)?;
-                let value_type = self.pop_stack_type();
-                self.set_var_type(name, value_type);
+                // 丢弃从初始值推导出的临时类型，变量类型以显式声明为准
+                self.pop_stack_type();
+                self.set_var_type(name, declared);
                 let slot = self.allocate_slot(name);
                 self.emit(OpCode::DefineVar, BytecodeArg::Int(slot as i32));
             }
