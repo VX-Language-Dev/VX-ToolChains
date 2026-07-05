@@ -1,0 +1,13 @@
+# ============================================================
+# std::prelude —— 预导入模块
+# 编译器自动注入，提供最常用的类型和函数
+# ============================================================
+
+import std.error
+import std.collections
+import std.string
+import std.math
+import std.io
+import std.sys
+import std.macros
+import std.reflect

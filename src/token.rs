@@ -70,6 +70,7 @@ pub enum TokenType {
     Return,
     // 循环
     Loop,
+    Match,
     // 所有权
     Move,
     Mut,
@@ -144,6 +145,8 @@ pub enum TokenType {
     // 宏系统
     Macro,      // macro 关键字
     Hash,       // # 符号，用于宏调用
+    // 外部/FFI
+    Extern,     // extern 关键字
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +169,7 @@ pub const KEYWORDS: &[( &str, TokenType)] = &[
     ("func", TokenType::Func),
     ("return", TokenType::Return),
     ("loop", TokenType::Loop),
+    ("match", TokenType::Match),
     ("true", TokenType::True),
     ("false", TokenType::False),
     ("nil", TokenType::Nil),
@@ -181,6 +185,7 @@ pub const KEYWORDS: &[( &str, TokenType)] = &[
     ("move", TokenType::Move),
     ("mut", TokenType::Mut),
     ("macro", TokenType::Macro),  // 宏定义关键字
+    ("extern", TokenType::Extern), // 外部/FFI 函数声明
     // 5 原生标量类型 (硬件基础类型, 保留)
     ("int", TokenType::IntT),
     ("float", TokenType::FloatT),

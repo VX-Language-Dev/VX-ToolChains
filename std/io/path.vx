@@ -1,0 +1,105 @@
+# ============================================================
+# std::io::path —— 路径操作
+# 纯字符串操作，无 I/O
+# ============================================================
+
+import std.error
+import std.string.util
+
+# ---- Path 类：路径处理工具（静态方法）----
+class Path:
+
+    # 连接路径片段
+    func join(base: var, child: var) -> var:
+        if base == "":
+            return child
+        if child == "":
+            return base
+        var sep = Path.separator()
+        var base_len = len(base)
+        if base[base_len - 1] == sep[0]:
+            return base + child
+        return base + sep + child
+
+    # 获取父目录
+    func parent(path: var) -> var:
+        var sep = Path.separator()
+        var idx = StringUtil.rfind(path, sep)
+        if idx < 0:
+            return Result.err(error.value_error("Path.parent: no parent for '" + path + "'"))
+        if idx == 0:
+            return Result.ok(sep)
+        return Result.ok(StringUtil.slice_to(path, idx))
+
+    # 获取文件名（含扩展名）
+    func file_name(path: var) -> var:
+        var sep = Path.separator()
+        var idx = StringUtil.rfind(path, sep)
+        if idx < 0:
+            return Result.ok(path)
+        return Result.ok(StringUtil.slice_from(path, idx + 1))
+
+    # 获取扩展名（含点号）
+    func extension(path: var) -> var:
+        var name_r = Path.file_name(path)
+        if name_r.is_ok == false:
+            return name_r
+        var name = name_r.value
+        var idx = StringUtil.rfind(name, ".")
+        if idx < 0:
+            return Result.err(error.value_error("Path.extension: no extension for '" + path + "'"))
+        return Result.ok(StringUtil.slice_from(name, idx))
+
+    # 获取不含扩展名的文件名
+    func stem(path: var) -> var:
+        var name_r = Path.file_name(path)
+        if name_r.is_ok == false:
+            return name_r
+        var name = name_r.value
+        var idx = StringUtil.rfind(name, ".")
+        if idx < 0:
+            return Result.ok(name)
+        return Result.ok(StringUtil.slice_to(name, idx))
+
+    # 是否为绝对路径
+    func is_absolute(path: var) -> bool:
+        if len(path) == 0:
+            return false
+        var sep = Path.separator()
+        if path[0] == sep[0]:
+            return true
+        # Windows 盘符路径
+        if len(path) >= 2:
+            if path[1] == ":":
+                return true
+        return false
+
+    # 规范化路径（折叠 ../ 和 ./）
+    func normalize(path: var) -> var:
+        var sep = Path.separator()
+        var parts = StringUtil.split(path, sep)
+        var result = []
+
+        var i = 0
+        while i < len(parts):
+            var part = parts[i]
+            if part == ".":
+                pass
+            elif part == "..":
+                var result_len = len(result)
+                if result_len > 0:
+                    var new_result = []
+                    var j = 0
+                    while j < result_len - 1:
+                        new_result = new_result + [result[j]]
+                        j = j + 1
+                    result = new_result
+            else:
+                result = result + [part]
+            i = i + 1
+
+        return StringUtil.join(result, sep)
+
+    # 路径分隔符
+    func separator() -> var:
+        return "/"

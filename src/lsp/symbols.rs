@@ -170,7 +170,7 @@ fn build_document_symbol(stmt: &Stmt) -> Option<DocumentSymbol> {
                     kind: SymbolKind::ENUM_MEMBER,
                     tags: None,
                     #[allow(deprecated)]
-                    deprecated: None,
+                deprecated: None,
                     range: Range {
                         start: Position {
                             line: line0,
@@ -291,7 +291,7 @@ fn make_var_symbol(name: &str, type_ann: Option<&str>, line: usize, col: usize) 
         kind: SymbolKind::VARIABLE,
         tags: None,
         #[allow(deprecated)]
-        deprecated: None,
+                deprecated: None,
         range: Range {
             start: Position {
                 line: line0,

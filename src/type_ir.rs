@@ -102,13 +102,18 @@ pub enum TypedInstruction {
     F64Neg(VarId),
     BoolNot(VarId),
 
+    // Bitwise / logical
+    I32And(VarId, VarId),
+    I32Or(VarId, VarId),
+
     // Control flow
     Jump(u32),
     JumpIfFalse(VarId, u32),
     JumpIfTrue(VarId, u32),
 
     // Functions
-    Call(FuncId, Vec<VarId>),
+    // Call 增加可选的外部函数名：FuncId == u32::MAX 且未在模块 linkage 中登记时使用
+    Call(FuncId, Vec<VarId>, Option<String>),
     CallIndirect(VarId, Vec<VarId>),
     Return(Option<VarId>),
 
@@ -243,6 +248,13 @@ pub fn serialize_type_module(module: &TypeModule) -> Vec<u8> {
             write_str(&mut buf, pname);
             serialize_type(&mut buf, ptype);
         }
+        // var_count + local_types (VXOBJ v4)
+        buf.extend(&func.var_count.to_be_bytes());
+        buf.extend(&(func.local_types.len() as u32).to_be_bytes());
+        for (vid, vty) in &func.local_types {
+            buf.extend(&vid.to_be_bytes());
+            serialize_type(&mut buf, vty);
+        }
         buf.extend(&(func.body.len() as u32).to_be_bytes());
         for inst in &func.body {
             serialize_instruction(&mut buf, inst);
@@ -298,8 +310,16 @@ pub fn deserialize_type_module_result(data: &[u8]) -> Result<TypeModule, String>
         for _ in 0..param_count {
             let pname = read_str_at(data, &mut pos).ok_or("failed to read param name")?;
             let ptype = deserialize_type(data, &mut pos).ok_or("failed to deserialize param type")?;
-            let _vid = func.add_local(ptype.clone());
             func.params.push((pname, ptype));
+        }
+        // var_count + local_types (VXOBJ v4)
+        let var_count = read_u32_be_at(data, &mut pos).ok_or("failed to read var_count")?;
+        func.var_count = var_count;
+        let num_local_types = read_u32_be_at(data, &mut pos).ok_or("failed to read num_local_types")? as usize;
+        for _ in 0..num_local_types {
+            let vid = read_u32_be_at(data, &mut pos).ok_or("failed to read local type vid")?;
+            let vty = deserialize_type(data, &mut pos).ok_or("failed to deserialize local type")?;
+            func.local_types.insert(vid, vty);
         }
         let num_insts = read_u32_be_at(data, &mut pos).ok_or("failed to read num_insts")? as usize;
         for i in 0..num_insts {
@@ -442,11 +462,16 @@ fn serialize_instruction(buf: &mut Vec<u8>, inst: &TypedInstruction) {
         I32Neg(v) => (32, Some(format!("{}", v))),
         F64Neg(v) => (33, Some(format!("{}", v))),
         BoolNot(v) => (34, Some(format!("{}", v))),
+        I32And(a, b) => (35, Some(format!("{},{}", a, b))),
+        I32Or(a, b) => (36, Some(format!("{},{}", a, b))),
         Jump(t) => (40, Some(format!("{}", t))),
         JumpIfFalse(v, t) => (41, Some(format!("{},{}", v, t))),
         JumpIfTrue(v, t) => (42, Some(format!("{},{}", v, t))),
-        Call(f, args) => {
-            let s = format!("f{}{}", f, args.iter().map(|a| format!(",{}", a)).collect::<String>());
+        Call(f, args, ext_name) => {
+            let mut s = format!("f{}{}", f, args.iter().map(|a| format!(",{}", a)).collect::<String>());
+            if let Some(name) = ext_name {
+                s.push_str(&format!(";{}", name));
+            }
             (50, Some(s))
         }
         CallIndirect(v, args) => {
@@ -555,17 +580,20 @@ fn deserialize_instruction(data: &[u8], pos: &mut usize) -> Option<TypedInstruct
         32 => { let v = read_single(&read_str_at(data, pos)?)?; Some(I32Neg(v)) }
         33 => { let v = read_single(&read_str_at(data, pos)?)?; Some(F64Neg(v)) }
         34 => { let v = read_single(&read_str_at(data, pos)?)?; Some(BoolNot(v)) }
+        35 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32And(a, b)) }
+        36 => { let (a, b) = read_vars(&read_str_at(data, pos)?)?; Some(I32Or(a, b)) }
         40 => { let t = read_str_at(data, pos)?.parse().ok()?; Some(Jump(t)) }
         41 => { let (v, t) = read_vars(&read_str_at(data, pos)?)?; Some(JumpIfFalse(v, t)) }
         42 => { let (v, t) = read_vars(&read_str_at(data, pos)?)?; Some(JumpIfTrue(v, t)) }
         50 => {
-            // 格式: "f<func>,<arg0>,<arg1>,..." （func 后跟逗号分隔的变量 id 列表）
+            // 格式: "f<func>,<arg0>,<arg1>,...;<ext_name>" （分号后可选外部函数名）
             let s = read_str_at(data, pos)?;
-            let stripped = s.strip_prefix('f').unwrap_or(&s);
+            let (body, ext_name) = s.split_once(';').map(|(b, n)| (b, Some(n.to_string()))).unwrap_or((&s, None));
+            let stripped = body.strip_prefix('f').unwrap_or(body);
             let mut parts = stripped.split(',');
             let f: VarId = parts.next()?.parse().ok()?;
             let args: Vec<VarId> = parts.map(|p| p.parse().ok()).collect::<Option<_>>()?;
-            Some(Call(f, args))
+            Some(Call(f, args, ext_name))
         }
         51 => {
             // 格式: "vi<indirect>,<arg0>,<arg1>,..."
@@ -651,7 +679,7 @@ pub fn upgrade_from_bytecode(
             (0x05, _) => TypedInstruction::LoadVar(0),
             (0x06, _) => TypedInstruction::StoreVar(0),
             (0x07, _) => TypedInstruction::StoreVar(0),
-            (0x08, Some(n)) => TypedInstruction::Call(0, vec![0; *n as usize]),
+            (0x08, Some(n)) => TypedInstruction::Call(0, vec![0; *n as usize], None),
             (0x09, _) => TypedInstruction::Return(None),
             (0x0B, Some(t)) => TypedInstruction::Jump(*t as u32),
             (0x0C, Some(t)) => TypedInstruction::JumpIfFalse(0, *t as u32),

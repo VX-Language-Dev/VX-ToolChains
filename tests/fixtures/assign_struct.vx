@@ -1,0 +1,12 @@
+
+struct Point:
+    x: int
+    y: int
+
+func main():
+    var p = new Point(10, 20)
+    out(p.x)
+    p.x = 30
+    out(p.x)
+    out(999)
+    free(p)

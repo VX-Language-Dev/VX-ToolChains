@@ -1,0 +1,8 @@
+# VX Project Settings
+[project]
+name = "vx-std-tests"
+version = "1.0.0"
+
+[libraries]
+# 标准库路径（相对于此配置文件所在目录向上到 std/）
+std = "../.."

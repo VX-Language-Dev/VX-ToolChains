@@ -1,0 +1,11 @@
+# VX Standard Library - Entry Point
+#
+# The std module provides basic system interfaces, I/O,
+# data structures, and utility functions.
+#
+# Usage:
+#   import std           # import all public functions
+#   import std.io        # import I/O sub-module only
+
+import std.io
+import std.sys

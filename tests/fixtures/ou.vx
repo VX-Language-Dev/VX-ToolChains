@@ -1,0 +1,5 @@
+k: int = 0
+while k < 10:
+    out("Hello!")
+    k: int = k + 1
+

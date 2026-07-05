@@ -190,7 +190,7 @@ pub(crate) fn is_keyword_kind(k: TokenType) -> bool {
         | TokenType::In | TokenType::Import | TokenType::As
         | TokenType::VarT | TokenType::Struct | TokenType::Class
         | TokenType::Enum | TokenType::Union | TokenType::New | TokenType::Move
-        | TokenType::Macro
+        | TokenType::Macro | TokenType::Extern
         | TokenType::IntT | TokenType::FloatT | TokenType::DoubleT
         | TokenType::BoolT | TokenType::VoidT
         | TokenType::And | TokenType::Or | TokenType::Not

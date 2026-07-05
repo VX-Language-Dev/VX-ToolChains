@@ -1,0 +1,378 @@
+# ============================================================
+# bootstrap/compiler.vx —— VX 自举编译器入口
+# 整合词法分析、语法分析和字节码生成
+# ============================================================
+
+import bootstrap.lexer
+import bootstrap.parser
+import bootstrap.codegen
+
+# ---- 编译器选项 ----
+class CompilerOptions:
+    dump_tokens: bool
+    dump_ast: bool
+    dump_bytecode: bool
+    output_file: var
+    source_name: var
+
+    func new() -> var:
+        var opts = new CompilerOptions()
+        opts.dump_tokens = false
+        opts.dump_ast = false
+        opts.dump_bytecode = false
+        opts.output_file = nil
+        opts.source_name = "stdin"
+        return opts
+
+# ---- 编译器 ----
+class Compiler:
+    source: var
+    options: var
+    errors: var
+    warnings: var
+
+    func new(source: var) -> var:
+        var c = new Compiler()
+        c.source = source
+        c.options = CompilerOptions.new()
+        c.errors = []
+        c.warnings = []
+        return c
+
+    # ---- 设置源码 ----
+    func set_source(source: var) -> var:
+        self.source = source
+        return self
+
+    # ---- 设置源码文件名 ----
+    func set_source_name(name: var) -> var:
+        self.options.source_name = name
+        return self
+
+    # ---- 设置选项 ----
+    func set_options(opts: var) -> var:
+        self.options = opts
+        return self
+
+    # ---- 编译源程序 ----
+    func compile() -> var:
+        var result = Result.ok(nil)
+
+        # 1. 词法分析
+        var tokens = lexer.tokenize(self.source)
+
+        if self.options.dump_tokens:
+            self.dump_tokens(tokens)
+
+        # 2. 语法分析
+        var ast = parser.parse(tokens, self.source)
+
+        # 检查解析错误
+        if len(parser.errors) > 0:
+            self.errors = self.errors + parser.errors
+            return Result.err(error.runtime_error("解析失败: " + len(parser.errors) + " 个错误"))
+
+        if self.options.dump_ast:
+            self.dump_ast(ast)
+
+        # 3. 字节码生成
+        var codegen = codegen.generate(ast)
+
+        if self.options.dump_bytecode:
+            out(codegen.dump())
+
+        # 检查代码生成错误
+        if len(codegen.errors) > 0:
+            self.errors = self.errors + codegen.errors
+            return Result.err(error.runtime_error("代码生成失败: " + len(codegen.errors) + " 个错误"))
+
+        return Result.ok(codegen)
+
+    # ---- 输出 Token 列表 ----
+    func dump_tokens(tokens: var):
+        out("=== TOKENS ===")
+        var i = 0
+        while i < len(tokens):
+            out(tokens[i].to_string())
+            i = i + 1
+        out("")
+
+    # ---- 输出 AST ----
+    func dump_ast(node: var):
+        out("=== AST ===")
+        self.dump_node(node, "")
+        out("")
+
+    func dump_node(node: var, indent: var):
+        if node == nil:
+            out(indent + "(nil)")
+            return
+
+        # 根据节点类型输出
+        var node_type = node.node_type
+        out(indent + node.node_type_name())
+
+        # 递归输出子节点
+        var child_indent = indent + "  "
+
+        # 语句节点
+        if node_type == ast.AstNodeType.ExprStmt:
+            self.dump_node(node.expr, child_indent)
+
+        elif node_type == ast.AstNodeType.VarDecl:
+            out(child_indent + "name: " + str(node.name))
+            if node.var_type != nil:
+                self.dump_node(node.var_type, child_indent)
+            if node.initializer != nil:
+                self.dump_node(node.initializer, child_indent)
+
+        elif node_type == ast.AstNodeType.FuncDecl:
+            out(child_indent + "name: " + node.name)
+            out(child_indent + "params: " + len(node.params))
+            out(child_indent + "body: " + len(node.body))
+
+        elif node_type == ast.AstNodeType.ReturnStmt:
+            if node.value != nil:
+                self.dump_node(node.value, child_indent)
+
+        elif node_type == ast.AstNodeType.IfStmt:
+            self.dump_node(node.condition, child_indent + "cond: ")
+            out(child_indent + "then: " + len(node.then_branch) + " stmts")
+
+        elif node_type == ast.AstNodeType.WhileStmt:
+            self.dump_node(node.condition, child_indent + "cond: ")
+            out(child_indent + "body: " + len(node.body) + " stmts")
+
+        elif node_type == ast.AstNodeType.ForStmt:
+            out(child_indent + "var: " + node.variable.name)
+            out(child_indent + "iterable:")
+            self.dump_node(node.iterable, child_indent + "  ")
+            out(child_indent + "body: " + len(node.body) + " stmts")
+
+        elif node_type == ast.AstNodeType.BreakStmt:
+            pass
+
+        elif node_type == ast.AstNodeType.ContinueStmt:
+            pass
+
+        elif node_type == ast.AstNodeType.ImportStmt:
+            out(child_indent + "path: " + node.path)
+
+        # 表达式节点
+        elif node_type == ast.AstNodeType.IntLiteral:
+            out(child_indent + "value: " + str(node.value))
+
+        elif node_type == ast.AstNodeType.FloatLiteral:
+            out(child_indent + "value: " + str(node.value))
+
+        elif node_type == ast.AstNodeType.StringLiteral:
+            out(child_indent + "value: \"" + node.value + "\"")
+
+        elif node_type == ast.AstNodeType.BoolLiteral:
+            out(child_indent + "value: " + str(node.value))
+
+        elif node_type == ast.AstNodeType.NilLiteral:
+            pass
+
+        elif node_type == ast.AstNodeType.ArrayLiteral:
+            out(child_indent + "elements: " + len(node.elements))
+
+        elif node_type == ast.AstNodeType.MapLiteral:
+            out(child_indent + "pairs: " + len(node.pairs))
+
+        elif node_type == ast.AstNodeType.Identifier:
+            out(child_indent + "name: " + node.name)
+
+        elif node_type == ast.AstNodeType.TypeExpr:
+            out(child_indent + "name: " + node.name)
+
+        elif node_type == ast.AstNodeType.BinaryOp:
+            out(child_indent + "operator: " + node.operator)
+            self.dump_node(node.left, child_indent + "left: ")
+            self.dump_node(node.right, child_indent + "right: ")
+
+        elif node_type == ast.AstNodeType.UnaryOp:
+            out(child_indent + "operator: " + node.operator)
+            self.dump_node(node.operand, child_indent)
+
+        elif node_type == ast.AstNodeType.CallExpr:
+            self.dump_node(node.callee, child_indent + "callee: ")
+            out(child_indent + "args: " + len(node.args))
+
+        elif node_type == ast.AstNodeType.PropertyAccess:
+            self.dump_node(node.object, child_indent + "object: ")
+            out(child_indent + "property: " + node.property)
+
+        elif node_type == ast.AstNodeType.IndexAccess:
+            self.dump_node(node.object, child_indent + "object: ")
+            self.dump_node(node.index, child_indent + "index: ")
+
+        elif node_type == ast.AstNodeType.NewExpr:
+            out(child_indent + "class: " + node.class_name)
+            out(child_indent + "args: " + len(node.args))
+
+        # 声明节点
+        elif node_type == ast.AstNodeType.StructDecl:
+            out(child_indent + "name: " + node.name)
+            out(child_indent + "fields: " + len(node.fields))
+
+        elif node_type == ast.AstNodeType.ClassDecl:
+            out(child_indent + "name: " + node.name)
+            out(child_indent + "fields: " + len(node.fields))
+
+        elif node_type == ast.AstNodeType.EnumDecl:
+            out(child_indent + "name: " + node.name)
+            out(child_indent + "variants: " + len(node.variants))
+
+        elif node_type == ast.AstNodeType.UnionDecl:
+            out(child_indent + "name: " + node.name)
+            out(child_indent + "variants: " + len(node.variants))
+
+        # 程序节点
+        elif node_type == ast.AstNodeType.Program:
+            out(child_indent + "statements: " + len(node.statements))
+            var i = 0
+            while i < len(node.statements):
+                self.dump_node(node.statements[i], child_indent + "  ")
+                i = i + 1
+
+    # ---- 编译文件 ----
+    func compile_file(input_path: var, output_path: var) -> var:
+        # 读取源文件
+        var source = file_read(input_path)
+        if source == nil:
+            return Result.err(error.io_error("无法读取文件: " + input_path))
+
+        self.source = source
+        self.options.source_name = input_path
+
+        # 编译
+        var compile_result = self.compile()
+        if is_error(compile_result):
+            return compile_result
+
+        var codegen = compile_result.value
+
+        # 生成字节码
+        var bytecode = codegen.to_bytes()
+
+        # 写入输出文件
+        if output_path != nil:
+            # TODO: 实现 file_write_bytes
+            # file_write_bytes(output_path, bytecode)
+            pass
+
+        return Result.ok(bytecode)
+
+    # ---- 获取错误列表 ----
+    func get_errors() -> var:
+        return self.errors
+
+    # ---- 获取警告列表 ----
+    func get_warnings() -> var:
+        return self.warnings
+
+# ---- 便捷函数 ----
+func compile_source(source: var) -> var:
+    var compiler = Compiler.new(source)
+    return compiler.compile()
+
+func compile_source_with_opts(source: var, opts: var) -> var:
+    var compiler = Compiler.new(source)
+    compiler.set_options(opts)
+    return compiler.compile()
+
+func compile_file(path: var) -> var:
+    var source = file_read(path)
+    if source == nil:
+        return Result.err(error.io_error("无法读取文件: " + path))
+    var compiler = Compiler.new(source)
+    compiler.set_source_name(path)
+    return compiler.compile()
+
+# ---- 主函数入口（用于测试）----
+func bootstrap_compiler_main():
+    var args = sys_argv
+    if len(args) < 2:
+        out("VX Bootstrap Compiler v0.2.0")
+        out("用法: vxbootstrap <input.vx> [-o output.vxob] [--dump-tokens] [--dump-ast] [--dump-bytecode]")
+        return
+    
+
+    var input = args[1]
+    var compiler = Compiler.new("")
+    var options = CompilerOptions.new()
+    var output_file = nil
+
+    # 解析命令行参数
+    var i = 2
+    while i < len(args):
+        var arg = args[i]
+        if arg == "-o" and i + 1 < len(args):
+            output_file = args[i + 1]
+            i = i + 2
+        elif arg == "--dump-tokens":
+            options.dump_tokens = true
+            i = i + 1
+        elif arg == "--dump-ast":
+            options.dump_ast = true
+            i = i + 1
+        elif arg == "--dump-bytecode":
+            options.dump_bytecode = true
+            i = i + 1
+        else:
+            i = i + 1
+
+    # 读取源文件
+    var source = file_read(input)
+    if source == nil:
+        out("错误: 无法读取文件 " + input)
+        return
+    
+
+    compiler.set_source(source)
+    compiler.set_source_name(input)
+    compiler.set_options(options)
+
+    # 编译
+    out("正在编译 " + input + "...")
+    var result = compiler.compile()
+
+    if is_error(result):
+        out("编译失败: " + result.error)
+        var errors = compiler.get_errors()
+        var i = 0
+        while i < len(errors):
+            out("  " + errors[i].to_string())
+            i = i + 1
+        return
+
+    var codegen = result.value
+
+    # 调试：输出生成的指令
+    out("=== 生成的指令 ===")
+    var func_i = 0
+    while func_i < len(codegen.functions):
+        var fn = codegen.functions[func_i]
+        out("函数: " + fn.name + " (参数: " + fn.num_params + ")")
+        var instr_i = 0
+        while instr_i < len(fn.instructions):
+            var instr = fn.instructions[instr_i]
+            out("  [" + instr_i + "] " + instr.to_string())
+            instr_i = instr_i + 1
+        func_i = func_i + 1
+    out("==================")
+
+    # 生成字节码
+    var bytecode = codegen.to_bytes()
+
+    # 输出或保存
+    if output_file != nil:
+        out("字节码已写入 " + output_file + " (" + len(bytecode) + " 字节)")
+    else:
+        out("编译成功!")
+        out(codegen.dump())
+
+# ---- 主函数入口 ----
+func main():
+    bootstrap_compiler_main()

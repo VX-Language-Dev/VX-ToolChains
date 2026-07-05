@@ -1,0 +1,1141 @@
+# ============================================================
+# bootstrap/codegen.vx —— 字节码生成器
+# 将 AST 转换为 VXOBJ 字节码
+# ============================================================
+
+import bootstrap.ast
+
+# ---- OpCode 枚举（与 Rust 版本保持一致）----
+class OpCode:
+    # 加载指令
+    LoadConst = 1
+    LoadNil = 2
+    LoadTrue = 3
+    LoadFalse = 4
+    LoadVar = 5
+    StoreVar = 6
+    DefineVar = 7
+
+    # 函数调用
+    Call = 8
+    Return = 9
+    MakeFunction = 10
+
+    # 跳转指令
+    Jump = 11
+    JumpIfFalse = 12
+    JumpIfTrue = 13
+    Break = 14
+    Continue = 15
+
+    # 二元运算
+    BinaryAdd = 16
+    BinarySub = 17
+    BinaryMul = 18
+    BinaryDiv = 19
+    BinaryMod = 20
+    BinaryPow = 21
+    BinaryEq = 22
+    BinaryNe = 23
+    BinaryLt = 24
+    BinaryGt = 25
+    BinaryLe = 26
+    BinaryGe = 27
+    BinaryAnd = 28
+    BinaryOr = 29
+
+    # 一元运算
+    UnaryNeg = 30
+    UnaryNot = 31
+
+    # 类型构造
+    MakeStruct = 32
+    MakeClass = 33
+    MakeEnum = 34
+    MakeUnion = 35
+
+    # 字段访问
+    LoadField = 36
+    StoreField = 37
+
+    # 容器构造
+    MakeArray = 38
+    MakeMap = 39
+
+    # 索引访问
+    IndexGet = 40
+    IndexSet = 41
+
+    # 属性访问
+    PropertyGet = 42
+    PropertySet = 43
+
+    # 指针操作
+    AddressOf = 44
+    Deref = 45
+    PointerMember = 46
+
+    # 模块操作
+    Import = 47
+
+    # 对象构造
+    New = 48
+
+    # 系统指令
+    Halt = 49
+    SysArgv = 50
+    System = 51
+    FileRead = 52
+    FileWrite = 53
+    FileExists = 54
+
+    # 栈操作
+    Dup = 55
+    Pop = 56
+
+    # 特化整数运算
+    AddInt = 64
+    SubInt = 65
+    MulInt = 66
+    DivInt = 67
+    ModInt = 68
+    EqInt = 69
+    LtInt = 70
+    GtInt = 71
+    LeInt = 72
+    GeInt = 73
+    NegInt = 74
+    Not = 75
+
+    # 特化浮点运算
+    AddFloat = 80
+    SubFloat = 81
+    MulFloat = 82
+    DivFloat = 83
+    NegFloat = 84
+    EqFloat = 85
+    LtFloat = 86
+    GtFloat = 87
+    LeFloat = 88
+    GeFloat = 89
+
+    # 循环指令
+    Iterate = 96
+    Next = 97
+
+# ---- OpCode 辅助 ----
+class OpCode:
+    func name(op: int) -> var:
+        if op == 1: return "LoadConst"
+        if op == 2: return "LoadNil"
+        if op == 3: return "LoadTrue"
+        if op == 4: return "LoadFalse"
+        if op == 5: return "LoadVar"
+        if op == 6: return "StoreVar"
+        if op == 7: return "DefineVar"
+        if op == 8: return "Call"
+        if op == 9: return "Return"
+        if op == 10: return "MakeFunction"
+        if op == 11: return "Jump"
+        if op == 12: return "JumpIfFalse"
+        if op == 13: return "JumpIfTrue"
+        if op == 14: return "Break"
+        if op == 15: return "Continue"
+        if op == 16: return "BinaryAdd"
+        if op == 17: return "BinarySub"
+        if op == 18: return "BinaryMul"
+        if op == 19: return "BinaryDiv"
+        if op == 20: return "BinaryMod"
+        if op == 21: return "BinaryPow"
+        if op == 22: return "BinaryEq"
+        if op == 23: return "BinaryNe"
+        if op == 24: return "BinaryLt"
+        if op == 25: return "BinaryGt"
+        if op == 26: return "BinaryLe"
+        if op == 27: return "BinaryGe"
+        if op == 28: return "BinaryAnd"
+        if op == 29: return "BinaryOr"
+        if op == 30: return "UnaryNeg"
+        if op == 31: return "UnaryNot"
+        if op == 32: return "MakeStruct"
+        if op == 33: return "MakeClass"
+        if op == 34: return "MakeEnum"
+        if op == 35: return "MakeUnion"
+        if op == 36: return "LoadField"
+        if op == 37: return "StoreField"
+        if op == 38: return "MakeArray"
+        if op == 39: return "MakeMap"
+        if op == 40: return "IndexGet"
+        if op == 41: return "IndexSet"
+        if op == 42: return "PropertyGet"
+        if op == 43: return "PropertySet"
+        if op == 47: return "Import"
+        if op == 48: return "New"
+        if op == 49: return "Halt"
+        if op == 55: return "Dup"
+        if op == 56: return "Pop"
+        if op == 64: return "AddInt"
+        if op == 65: return "SubInt"
+        if op == 66: return "MulInt"
+        if op == 67: return "DivInt"
+        if op == 68: return "ModInt"
+        if op == 69: return "EqInt"
+        if op == 70: return "LtInt"
+        if op == 71: return "GtInt"
+        if op == 72: return "LeInt"
+        if op == 73: return "GeInt"
+        if op == 74: return "NegInt"
+        if op == 75: return "Not"
+        if op == 80: return "AddFloat"
+        if op == 81: return "SubFloat"
+        if op == 82: return "MulFloat"
+        if op == 83: return "DivFloat"
+        if op == 84: return "NegFloat"
+        if op == 85: return "EqFloat"
+        if op == 86: return "LtFloat"
+        if op == 87: return "GtFloat"
+        if op == 88: return "LeFloat"
+        if op == 89: return "GeFloat"
+        if op == 96: return "Iterate"
+        if op == 97: return "Next"
+        return "Op(0x" + this.int_to_hex(op) + ")"
+
+    func int_to_hex(n: int) -> var:
+        if n == 0: return "00"
+        var hex = ""
+        var chars = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"]
+        while n > 0:
+            hex = chars[n % 16] + hex
+            n = n / 16
+        if len(hex) == 1:
+            hex = "0" + hex
+        return hex
+
+# ---- 指令 ----
+class Instruction:
+    op: int
+    arg: var         # nil 或 int
+    arg_type: int    # 0=none, 1=int, 2=string
+    target: int      # 跳转目标（回填用）
+
+    func new(op: int) -> var:
+        var i = new Instruction()
+        i.op = op
+        i.arg = nil
+        i.arg_type = 0
+        i.target = -1
+        return i
+
+    func with_int_arg(arg: int) -> var:
+        var i = new Instruction()
+        i.op = op
+        i.arg = arg
+        i.arg_type = 1
+        i.target = -1
+        return i
+
+    func is_jump() -> bool:
+        return self.op == OpCode.Jump or
+               self.op == OpCode.JumpIfFalse or
+               self.op == OpCode.JumpIfTrue or
+               self.op == OpCode.Break or
+               self.op == OpCode.Continue
+
+    # ---- 设置跳转目标 ----
+    func set_target(target: int):
+        self.target = target
+        self.arg = target
+
+    # ---- 序列化指令为字节（与 Rust 编译器格式一致）----
+    func to_bytes() -> var:
+        var buf = []
+        buf = buf + [self.op]
+        if self.arg == nil or self.arg_type == 0:
+            # 无参数: 只写 arg_type=0
+            buf = buf + [0]
+        elif is_int(self.arg):
+            # 整数参数: arg_type=1 + 4字节大端整数
+            var val = self.arg
+            buf = buf + [1]
+            buf = buf + [(val / 16777216) % 256]
+            buf = buf + [(val / 65536) % 256]
+            buf = buf + [(val / 256) % 256]
+            buf = buf + [val % 256]
+        elif self.arg_type == 2:
+            # string 参数: arg_type=2 + 4字节长度 + UTF-8 字节
+            var bytes = Constant.string_to_bytes(self.arg)
+            var len_bytes = len(bytes)
+            buf = buf + [2]
+            buf = buf + [(len_bytes / 16777216) % 256]
+            buf = buf + [(len_bytes / 65536) % 256]
+            buf = buf + [(len_bytes / 256) % 256]
+            buf = buf + [len_bytes % 256]
+            buf = buf + bytes
+        return buf
+
+    # ---- 可读的字符串表示 ----
+    func to_string() -> var:
+        var s = OpCode.name(self.op)
+        if self.arg != nil and self.arg_type != 0:
+            s = s + " " + str(self.arg)
+        if self.target != -1:
+            s = s + " (-> " + self.target + ")"
+        return s
+
+# ---- 常量 ----
+class Constant:
+    tag: int    # 0=nil, 1=int, 2=float, 3=string, 4=bool
+    data: var
+
+    func nil() -> var:
+        var c = new Constant()
+        c.tag = 0
+        c.data = nil
+        return c
+
+    func int_val(v: int) -> var:
+        var c = new Constant()
+        c.tag = 1
+        c.data = v
+        return c
+
+    func float_val(v: float) -> var:
+        var c = new Constant()
+        c.tag = 2
+        c.data = v
+        return c
+
+    func string_val(v: var) -> var:
+        var c = new Constant()
+        c.tag = 3
+        c.data = v
+        return c
+
+    func bool_val(v: bool) -> var:
+        var c = new Constant()
+        c.tag = 4
+        c.data = v
+        return c
+
+    # ---- 序列化常量 ----
+    func to_bytes() -> var:
+        var buf = []
+        buf = buf + [self.tag]
+        if self.tag == 0:
+            # nil - 无额外数据
+            buf = buf + [0, 0, 0, 0]
+        elif self.tag == 1:
+            # int - 8 字节大端
+            var val = self.data
+            buf = buf + [0, 0, 0, 0, 0, 0, 0, 0]
+            var i = 7
+            while i >= 0:
+                buf[i + 1] = val % 256
+                val = val / 256
+                i = i - 1
+        elif self.tag == 2:
+            # float - 8 字节 IEEE 754 (简化处理)
+            # TODO: 正确的 float 序列化
+            buf = buf + [0, 0, 0, 0, 0, 0, 0, 0]
+        elif self.tag == 3:
+            # string - 4 字节长度 + UTF-8 字节
+            var s = self.data
+            var bytes = this.string_to_bytes(s)
+            var len_bytes = len(bytes)
+            buf = buf + [(len_bytes / 16777216) % 256]
+            buf = buf + [(len_bytes / 65536) % 256]
+            buf = buf + [(len_bytes / 256) % 256]
+            buf = buf + [len_bytes % 256]
+            buf = buf + bytes
+        elif self.tag == 4:
+            # bool
+            if self.data:
+                buf = buf + [1]
+            else:
+                buf = buf + [0]
+            buf = buf + [0, 0, 0]
+        return buf
+
+    func string_to_bytes(s: var) -> var:
+        var result = []
+        var i = 0
+        while i < len(s):
+            var code = ord(s[i])
+            if code < 128:
+                result = result + [code]
+            elif code < 2048:
+                result = result + [(code / 64) + 192, (code % 64) + 128]
+            else:
+                result = result + [(code / 4096) + 224, ((code / 64) % 64) + 128, (code % 64) + 128]
+            i = i + 1
+        return result
+
+    func to_string() -> var:
+        if self.tag == 0: return "nil"
+        if self.tag == 1: return "int(" + str(self.data) + ")"
+        if self.tag == 2: return "float(" + str(self.data) + ")"
+        if self.tag == 3: return "string(\"" + self.data + "\")"
+        if self.tag == 4: return "bool(" + str(self.data) + ")"
+        return "unknown"
+
+# ---- 函数定义 ----
+class Function:
+    name: var
+    num_params: int
+    instructions: var
+    num_locals: int
+
+    func new(name: var) -> var:
+        var f = new Function()
+        f.name = name
+        f.num_params = 0
+        f.instructions = []
+        f.num_locals = 0
+        return f
+
+    func add_instruction(instr: var):
+        self.instructions = self.instructions + [instr]
+
+    # ---- 序列化函数为字节（与 Rust 编译器格式一致）----
+    func to_bytes() -> var:
+        var buf = []
+        # 函数名（4 字节长度 + UTF-8 字节）
+        var name_bytes = Constant.string_to_bytes(self.name)
+        var name_len = len(name_bytes)
+        buf = buf + [(name_len / 16777216) % 256]
+        buf = buf + [(name_len / 65536) % 256]
+        buf = buf + [(name_len / 256) % 256]
+        buf = buf + [name_len % 256]
+        buf = buf + name_bytes
+        
+        # 参数数量（4 字节，大端）
+        buf = buf + [(self.num_params / 16777216) % 256]
+        buf = buf + [(self.num_params / 65536) % 256]
+        buf = buf + [(self.num_params / 256) % 256]
+        buf = buf + [self.num_params % 256]
+        
+        # has_return（1 字节）
+        buf = buf + [0]
+        
+        # num_param_names（4 字节）
+        buf = buf + [0, 0, 0, 0]
+        
+        # num_local（4 字节）
+        buf = buf + [(self.num_locals / 16777216) % 256]
+        buf = buf + [(self.num_locals / 65536) % 256]
+        buf = buf + [(self.num_locals / 256) % 256]
+        buf = buf + [self.num_locals % 256]
+        
+        # 指令数量（4 字节，大端）
+        var num_instrs = len(self.instructions)
+        buf = buf + [(num_instrs / 16777216) % 256]
+        buf = buf + [(num_instrs / 65536) % 256]
+        buf = buf + [(num_instrs / 256) % 256]
+        buf = buf + [num_instrs % 256]
+
+        # 指令
+        var i = 0
+        while i < num_instrs:
+            buf = buf + self.instructions[i].to_bytes()
+            i = i + 1
+
+        return buf
+
+    func to_string() -> var:
+        var s = "Function " + self.name + " (params=" + self.num_params + ", locals=" + self.num_locals + ")\n"
+        s = s + "Instructions:\n"
+        var i = 0
+        while i < len(self.instructions):
+            s = s + "  [" + i + "] " + self.instructions[i].to_string() + "\n"
+            i = i + 1
+        return s
+
+# ---- 代码生成器 ----
+class CodeGen:
+    constants: var         # 全局常量池
+    functions: var          # 函数定义列表
+    current_function: var  # 当前正在生成的函数
+    errors: var
+    struct_defs: var       # struct/class 字段定义: name -> [field_name, ...]
+
+    func new() -> var:
+        var c = new CodeGen()
+        c.constants = []
+        c.functions = []
+        c.errors = []
+        c.struct_defs = []
+        return c
+
+    # ---- 添加常量到模块级常量池 ----
+    func add_constant(c: var) -> int:
+        self.constants = self.constants + [c]
+        return len(self.constants) - 1
+
+    # ---- 添加指令 ----
+    func emit(op: int):
+        var instr = Instruction.new(op)
+        self.current_function.add_instruction(instr)
+
+    func emit_with_arg(op: int, arg: int):
+        var instr = Instruction.new(op)
+        instr.arg = arg
+        instr.arg_type = 1
+        self.current_function.add_instruction(instr)
+
+    func emit_with_sarg(op: int, arg: var):
+        var instr = Instruction.new(op)
+        instr.arg = arg
+        instr.arg_type = 2
+        self.current_function.add_instruction(instr)
+
+    # ---- 发射跳转指令（返回指令索引） ----
+    func emit_jump(op: int) -> int:
+        var instr = Instruction.new(op)
+        instr.arg_type = 1
+        self.current_function.add_instruction(instr)
+        return len(self.current_function.instructions) - 1
+
+    # ---- 回填跳转目标 ----
+    func patch_jump(idx: int, target: int):
+        if idx >= 0 and idx < len(self.current_function.instructions):
+            self.current_function.instructions[idx].set_target(target)
+
+    # ---- 编译程序 ----
+    func compile_program(program: var) -> var:
+        # 创建入口函数 __main__（与 Rust 编译器一致）
+        self.current_function = Function.new("__main__")
+
+        # 编译所有语句
+        var i = 0
+        while i < len(program.statements):
+            self.compile_stmt(program.statements[i])
+            i = i + 1
+
+        # 如果用户定义了 main() 函数，在 __main__ 末尾调用它
+        var has_main = false
+        var j = 0
+        while j < len(self.functions):
+            if self.functions[j].name == "main":
+                has_main = true
+            j = j + 1
+        if has_main:
+            var main_idx = self.add_constant(Constant.string_val("main"))
+            self.emit_with_arg(OpCode.LoadConst, main_idx)
+            self.emit_with_arg(OpCode.Call, 0)
+            self.emit(OpCode.Pop)
+
+        # 添加 halt 指令
+        self.emit(OpCode.Halt)
+
+        # 将 __main__ 函数插入到函数列表开头
+        var new_funcs = [self.current_function]
+        var k = 0
+        while k < len(self.functions):
+            new_funcs = new_funcs + [self.functions[k]]
+            k = k + 1
+        self.functions = new_funcs
+
+        # 回填所有跳转指令
+        self.resolve_jumps()
+
+        return self
+
+    # ---- 回填所有跳转指令 ----
+    func resolve_jumps():
+        # 对于简单的顺序代码，跳转目标是下一条指令
+        # 实际实现需要在 emit_jump 后记录待回填的指令
+        # 这里简化处理：让编译器先完整编译，然后回填
+        pass
+
+    # ---- 编译语句 ----
+    func compile_stmt(stmt: var):
+        var node_type = stmt.node_type
+
+        if node_type == ast.AstNodeType.ExprStmt:
+            self.compile_expr(stmt.expr)
+            self.emit(OpCode.Pop)
+
+        elif node_type == ast.AstNodeType.VarDecl:
+            self.compile_var_decl(stmt)
+
+        elif node_type == ast.AstNodeType.FuncDecl:
+            self.compile_func_decl(stmt)
+
+        elif node_type == ast.AstNodeType.ReturnStmt:
+            self.compile_return(stmt)
+
+        elif node_type == ast.AstNodeType.IfStmt:
+            self.compile_if(stmt)
+
+        elif node_type == ast.AstNodeType.WhileStmt:
+            self.compile_while(stmt)
+
+        elif node_type == ast.AstNodeType.ForStmt:
+            self.compile_for(stmt)
+
+        elif node_type == ast.AstNodeType.BreakStmt:
+            self.emit(OpCode.Break)
+
+        elif node_type == ast.AstNodeType.ContinueStmt:
+            self.emit(OpCode.Continue)
+
+        elif node_type == ast.AstNodeType.ImportStmt:
+            self.compile_import(stmt)
+
+        elif node_type == ast.AstNodeType.StructDecl:
+            self.compile_struct_decl(stmt)
+
+        elif node_type == ast.AstNodeType.ClassDecl:
+            self.compile_class_decl(stmt)
+
+    # ---- 编译变量声明 ----
+    func compile_var_decl(stmt: var):
+        if stmt.initializer != nil:
+            self.compile_expr(stmt.initializer)
+        else:
+            self.emit(OpCode.LoadNil)
+        var idx = self.add_constant(Constant.string_val(stmt.name))
+        self.emit_with_arg(OpCode.DefineVar, idx)
+
+    # ---- 编译 return 语句 ----
+    func compile_return(stmt: var):
+        if stmt.value != nil:
+            self.compile_expr(stmt.value)
+        else:
+            self.emit(OpCode.LoadNil)
+        self.emit(OpCode.Return)
+
+    # ---- 编译 if 语句 ----
+    func compile_if(stmt: var):
+        # 编译条件
+        self.compile_expr(stmt.condition)
+
+        # 条件为假时跳转到 else
+        var jump_to_else = self.emit_jump(OpCode.JumpIfFalse)
+        self.emit(OpCode.Pop)
+
+        # then 分支
+        self.compile_block(stmt.then_branch)
+
+        # 跳过 else/elif 分支
+        var jump_to_end = self.emit_jump(OpCode.Jump)
+
+        # 回填 else 跳转
+        self.patch_jump(jump_to_else, len(self.current_function.instructions))
+
+        # elif 分支
+        if stmt.elif_branches != nil:
+            var i = 0
+            while i < len(stmt.elif_branches):
+                var elif_cond = stmt.elif_branches[i][0]
+                var elif_body = stmt.elif_branches[i][1]
+                self.compile_expr(elif_cond)
+                var jump_to_next = self.emit_jump(OpCode.JumpIfFalse)
+                self.emit(OpCode.Pop)
+                self.compile_block(elif_body)
+                var skip_rest = self.emit_jump(OpCode.Jump)
+                self.patch_jump(jump_to_next, len(self.current_function.instructions))
+                if i == len(stmt.elif_branches) - 1:
+                    self.patch_jump(jump_to_end, len(self.current_function.instructions))
+                i = i + 1
+
+        # else 分支
+        if stmt.else_branch != nil:
+            self.compile_block(stmt.else_branch)
+
+        self.patch_jump(jump_to_end, len(self.current_function.instructions))
+
+    # ---- 编译 while 循环 ----
+    func compile_while(stmt: var):
+        # 记录循环起始位置
+        var loop_start = len(self.current_function.instructions)
+
+        # 条件
+        self.compile_expr(stmt.condition)
+
+        # 条件为假时跳出
+        var jump_to_end = self.emit_jump(OpCode.JumpIfFalse)
+        self.emit(OpCode.Pop)
+
+        # 循环体
+        self.compile_block(stmt.body)
+
+        # 跳回条件
+        self.emit_with_arg(OpCode.Jump, loop_start)
+
+        # 回填跳出跳转
+        self.patch_jump(jump_to_end, len(self.current_function.instructions))
+
+    # ---- 编译 for 循环 ----
+    func compile_for(stmt: var):
+        # 编译 iterable 表达式
+        self.compile_expr(stmt.iterable)
+
+        # 获取迭代器
+        self.emit(OpCode.Iterate)
+
+        # 循环起始位置
+        var loop_start = len(self.current_function.instructions)
+
+        # 调用 next 获取元素
+        self.emit(OpCode.Next)
+
+        # 如果没有更多元素，跳出循环
+        var jump_to_end = self.emit_jump(OpCode.JumpIfFalse)
+        self.emit(OpCode.Pop)
+
+        # 将当前元素存储到循环变量
+        var var_idx = self.add_constant(Constant.string_val(stmt.variable.name))
+        self.emit_with_arg(OpCode.StoreVar, var_idx)
+
+        # 循环体
+        self.compile_block(stmt.body)
+
+        # 跳回迭代
+        self.emit_with_arg(OpCode.Jump, loop_start)
+
+        # 回填跳出跳转
+        self.patch_jump(jump_to_end, len(self.current_function.instructions))
+        self.emit(OpCode.Pop)  # 弹出迭代器
+
+    # ---- 编译代码块 ----
+    func compile_block(block: var):
+        var i = 0
+        while i < len(block):
+            self.compile_stmt(block[i])
+            i = i + 1
+
+    # ---- 编译 import ----
+    func compile_import(stmt: var):
+        # Import 指令使用 sarg（字符串参数）传递模块路径，不操作栈
+        self.emit_with_sarg(OpCode.Import, stmt.path)
+
+    # ---- 编译 struct 声明 ----
+    func compile_struct_decl(decl: var):
+        self.compile_type_decl(decl, OpCode.MakeStruct)
+
+    # ---- 编译 class 声明 ----
+    func compile_class_decl(decl: var):
+        self.compile_type_decl(decl, OpCode.MakeClass)
+
+    # ---- 编译 struct/class 声明通用逻辑 ----
+    func compile_type_decl(decl: var, ctor_op: int):
+        var name = decl.name
+        var fields = decl.fields
+        var field_names = []
+        var i = 0
+        while i < len(fields):
+            field_names = field_names + [fields[i][0]]
+            i = i + 1
+        self.struct_defs[name] = field_names
+
+        # 生成构造函数
+        var old_func = self.current_function
+        self.current_function = Function.new(name)
+        self.current_function.num_params = len(field_names)
+
+        # MakeStruct/MakeClass 创建空实例
+        self.emit_with_sarg(ctor_op, name)
+
+        # 依次用参数初始化字段
+        i = 0
+        while i < len(field_names):
+            var fname = field_names[i]
+            self.emit_with_sarg(OpCode.LoadVar, fname)
+            self.emit_with_sarg(OpCode.PropertySet, fname)
+            i = i + 1
+
+        self.emit(OpCode.Return)
+
+        var func_idx = len(self.functions)
+        self.functions = self.functions + [self.current_function]
+        self.current_function = old_func
+
+        # 在外层定义类型名变量指向构造函数
+        self.emit_with_arg(OpCode.MakeFunction, func_idx)
+        var name_idx = self.add_constant(Constant.string_val(name))
+        self.emit_with_arg(OpCode.DefineVar, name_idx)
+
+    # ---- 编译函数声明 ----
+    func compile_func_decl(decl: var):
+        # 创建新的函数
+        var old_func = self.current_function
+        self.current_function = Function.new(decl.name)
+        self.current_function.num_params = len(decl.params)
+
+        # 编译函数体
+        self.compile_block(decl.body)
+
+        # 确保有 return 指令
+        if len(self.current_function.instructions) == 0 or
+           self.current_function.instructions[len(self.current_function.instructions) - 1].op != OpCode.Return:
+            self.emit(OpCode.LoadNil)
+            self.emit(OpCode.Return)
+
+        # 将函数添加到列表
+        self.functions = self.functions + [self.current_function]
+
+        # 恢复旧函数
+        self.current_function = old_func
+
+        # 注意：不要在外部函数中发射任何指令
+        # 函数通过名称在 function_map 中注册，VM 会自动找到它
+
+    # ---- 编译表达式 ----
+    func compile_expr(expr: var):
+        var node_type = expr.node_type
+
+        # 字面量
+        if node_type == ast.AstNodeType.IntLiteral:
+            self.emit_int_literal(expr.value)
+        elif node_type == ast.AstNodeType.FloatLiteral:
+            self.emit_float_literal(expr.value)
+        elif node_type == ast.AstNodeType.StringLiteral:
+            self.emit_string_literal(expr.value)
+        elif node_type == ast.AstNodeType.BoolLiteral:
+            if expr.value:
+                self.emit(OpCode.LoadTrue)
+            else:
+                self.emit(OpCode.LoadFalse)
+        elif node_type == ast.AstNodeType.NilLiteral:
+            self.emit(OpCode.LoadNil)
+        elif node_type == ast.AstNodeType.ArrayLiteral:
+            self.compile_array_literal(expr)
+        elif node_type == ast.AstNodeType.MapLiteral:
+            self.compile_map_literal(expr)
+
+        # 标识符和引用
+        elif node_type == ast.AstNodeType.Identifier:
+            self.compile_identifier(expr)
+        elif node_type == ast.AstNodeType.TypeExpr:
+            # 类型表达式在运行时忽略
+            self.emit(OpCode.LoadNil)
+
+        # 运算
+        elif node_type == ast.AstNodeType.BinaryOp:
+            self.compile_binary_op(expr)
+        elif node_type == ast.AstNodeType.UnaryOp:
+            self.compile_unary_op(expr)
+
+        # 调用和访问
+        elif node_type == ast.AstNodeType.CallExpr:
+            self.compile_call(expr)
+        elif node_type == ast.AstNodeType.PropertyAccess:
+            self.compile_property_access(expr)
+        elif node_type == ast.AstNodeType.IndexAccess:
+            self.compile_index_access(expr)
+        elif node_type == ast.AstNodeType.NewExpr:
+            self.compile_new_expr(expr)
+
+    # ---- 发射整数字面量 ----
+    func emit_int_literal(value: int):
+        # 使用特化指令
+        if value >= 0 and value <= 9:
+            # 小整数优化
+            var op = 112 + value  # LoadInt0 - LoadInt9
+            self.emit(op)
+        else:
+            var idx = self.add_constant(Constant.int_val(value))
+            self.emit_with_arg(OpCode.LoadConst, idx)
+
+    # ---- 发射浮点数字面量 ----
+    func emit_float_literal(value: float):
+        var idx = self.add_constant(Constant.float_val(value))
+        self.emit_with_arg(OpCode.LoadConst, idx)
+
+    # ---- 发射字符串字面量 ----
+    func emit_string_literal(value: var):
+        var idx = self.add_constant(Constant.string_val(value))
+        self.emit_with_arg(OpCode.LoadConst, idx)
+
+    # ---- 编译数组字面量 ----
+    func compile_array_literal(expr: var):
+        # 逆序压入元素
+        var i = len(expr.elements) - 1
+        while i >= 0:
+            self.compile_expr(expr.elements[i])
+            i = i - 1
+        self.emit_with_arg(OpCode.MakeArray, len(expr.elements))
+
+    # ---- 编译映射字面量 ----
+    func compile_map_literal(expr: var):
+        # 逆序压入键值对
+        var i = len(expr.pairs) - 1
+        while i >= 0:
+            self.compile_expr(expr.pairs[i][0])
+            self.compile_expr(expr.pairs[i][1])
+            i = i - 1
+        self.emit_with_arg(OpCode.MakeMap, len(expr.pairs))
+
+    # ---- 编译标识符 ----
+    func compile_identifier(expr: var):
+        var name = expr.name
+        # 内置函数作为标识符使用时，发射对应指令
+        if name == "sys_argv":
+            self.emit(OpCode.SysArgv)
+            return
+        if name == "os_system":
+            self.emit(OpCode.System)
+            return
+        if name == "file_read":
+            self.emit(OpCode.FileRead)
+            return
+        if name == "file_write":
+            self.emit(OpCode.FileWrite)
+            return
+        if name == "file_exists":
+            self.emit(OpCode.FileExists)
+            return
+        var idx = self.add_constant(Constant.string_val(name))
+        self.emit_with_arg(OpCode.LoadVar, idx)
+
+    # ---- 编译二元运算 ----
+    func compile_binary_op(expr: var):
+        var op = expr.operator
+
+        # 赋值
+        if op == "=":
+            self.compile_expr(expr.right)
+            # 暂不支持复杂赋值
+            return
+
+        # 逻辑运算（短路求值）
+        if op == "and":
+            self.compile_expr(expr.left)
+            var jump_and = self.emit_jump(OpCode.JumpIfFalse)
+            self.emit(OpCode.Pop)
+            self.compile_expr(expr.right)
+            self.patch_jump(jump_and, len(self.current_function.instructions))
+            return
+
+        if op == "or":
+            self.compile_expr(expr.left)
+            var jump_or = self.emit_jump(OpCode.JumpIfTrue)
+            self.emit(OpCode.Pop)
+            self.compile_expr(expr.right)
+            self.patch_jump(jump_or, len(self.current_function.instructions))
+            return
+
+        # 算术和比较运算
+        self.compile_expr(expr.left)
+        self.compile_expr(expr.right)
+
+        var opcode = self.get_binary_opcode(op)
+        if opcode != 0:
+            self.emit(opcode)
+
+    # ---- 获取二元运算对应的 OpCode ----
+    func get_binary_opcode(op: var) -> int:
+        if op == "+": return OpCode.BinaryAdd
+        if op == "-": return OpCode.BinarySub
+        if op == "*": return OpCode.BinaryMul
+        if op == "/": return OpCode.BinaryDiv
+        if op == "%": return OpCode.BinaryMod
+        if op == "^": return OpCode.BinaryPow
+        if op == "==": return OpCode.BinaryEq
+        if op == "!=": return OpCode.BinaryNe
+        if op == "<": return OpCode.BinaryLt
+        if op == ">": return OpCode.BinaryGt
+        if op == "<=": return OpCode.BinaryLe
+        if op == ">=": return OpCode.BinaryGe
+        if op == "and": return OpCode.BinaryAnd
+        if op == "or": return OpCode.BinaryOr
+        if op == "&": return OpCode.BinaryAnd
+        if op == "|": return OpCode.BinaryOr
+        return 0
+
+    # ---- 编译一元运算 ----
+    func compile_unary_op(expr: var):
+        self.compile_expr(expr.operand)
+        if expr.operator == "-":
+            self.emit(OpCode.UnaryNeg)
+        elif expr.operator == "!" or expr.operator == "not":
+            self.emit(OpCode.UnaryNot)
+
+    # ---- 编译函数调用 ----
+    func compile_call(expr: var):
+        # 检查是否为内置函数调用
+        if expr.callee.node_type == ast.AstNodeType.Identifier:
+            var fname = expr.callee.name
+            # sys_argv() 无参数，直接发射 SysArgv 指令
+            if fname == "sys_argv":
+                self.emit(OpCode.SysArgv)
+                return
+            # os_system / file_read / file_write / file_exists：先编译参数，再发射对应指令
+            if fname == "os_system":
+                var i = 0
+                while i < len(expr.args):
+                    self.compile_expr(expr.args[i])
+                    i = i + 1
+                self.emit(OpCode.System)
+                return
+            if fname == "file_read":
+                var i = 0
+                while i < len(expr.args):
+                    self.compile_expr(expr.args[i])
+                    i = i + 1
+                self.emit(OpCode.FileRead)
+                return
+            if fname == "file_write":
+                var i = 0
+                while i < len(expr.args):
+                    self.compile_expr(expr.args[i])
+                    i = i + 1
+                self.emit(OpCode.FileWrite)
+                return
+            if fname == "file_exists":
+                var i = 0
+                while i < len(expr.args):
+                    self.compile_expr(expr.args[i])
+                    i = i + 1
+                self.emit(OpCode.FileExists)
+                return
+
+        # 先编译 callee（加载函数名到栈底）
+        self.compile_expr(expr.callee)
+        # 然后按顺序编译参数（arg0, arg1, ...）
+        var i = 0
+        while i < len(expr.args):
+            self.compile_expr(expr.args[i])
+            i = i + 1
+        # 调用
+        self.emit_with_arg(OpCode.Call, len(expr.args))
+
+    # ---- 编译属性访问 ----
+    func compile_property_access(expr: var):
+        self.compile_expr(expr.object)
+        var idx = self.add_constant(Constant.string_val(expr.property))
+        self.emit_with_arg(OpCode.PropertyGet, idx)
+
+    # ---- 编译索引访问 ----
+    func compile_index_access(expr: var):
+        self.compile_expr(expr.object)
+        self.compile_expr(expr.index)
+        self.emit(OpCode.IndexGet)
+
+    # ---- 编译 new 表达式 ----
+    func compile_new_expr(expr: var):
+        # 逆序压入参数
+        var i = len(expr.args) - 1
+        while i >= 0:
+            self.compile_expr(expr.args[i])
+            i = i - 1
+        # 加载类名
+        var class_idx = self.add_constant(Constant.string_val(expr.class_name))
+        self.emit_with_arg(OpCode.LoadConst, class_idx)
+        # New 指令创建对象
+        self.emit(OpCode.New)
+
+    # ---- 生成字节码（与 Rust 编译器 VXOBJ v2 格式一致）----
+    func to_bytes() -> var:
+        var buf = []
+        # VXOBJ 文件头
+        buf = buf + [86, 88, 79, 66]  # "VXOB"
+        buf = buf + [0, 0, 0, 2]  # 版本 2
+
+        # 收集所有函数的常量
+        var all_constants = []
+        var i = 0
+        while i < len(self.functions):
+            var j = 0
+            while j < len(self.functions[i].constants):
+                var c = self.functions[i].constants[j]
+                # 检查常量是否已存在
+                var found = -1
+                var k = 0
+                while k < len(all_constants):
+                    if all_constants[k].tag == c.tag and all_constants[k].data == c.data:
+                        found = k
+                        k = len(all_constants)
+                    k = k + 1
+                if found == -1:
+                    all_constants = all_constants + [c]
+                j = j + 1
+            i = i + 1
+
+        # 常量数量（4 字节）
+        var num_constants = len(all_constants)
+        buf = buf + [(num_constants / 16777216) % 256]
+        buf = buf + [(num_constants / 65536) % 256]
+        buf = buf + [(num_constants / 256) % 256]
+        buf = buf + [num_constants % 256]
+
+        # 常量池
+        i = 0
+        while i < num_constants:
+            buf = buf + all_constants[i].to_bytes()
+            i = i + 1
+
+        # 函数数量（4 字节）
+        var num_funcs = len(self.functions)
+        buf = buf + [(num_funcs / 16777216) % 256]
+        buf = buf + [(num_funcs / 65536) % 256]
+        buf = buf + [(num_funcs / 256) % 256]
+        buf = buf + [num_funcs % 256]
+
+        # 各函数字节码
+        i = 0
+        while i < num_funcs:
+            buf = buf + self.functions[i].to_bytes()
+            i = i + 1
+
+        # struct/class 字段定义（4 字节数量）
+        var struct_names = keys(self.struct_defs)
+        var num_structs = len(struct_names)
+        buf = buf + [(num_structs / 16777216) % 256]
+        buf = buf + [(num_structs / 65536) % 256]
+        buf = buf + [(num_structs / 256) % 256]
+        buf = buf + [num_structs % 256]
+        i = 0
+        while i < num_structs:
+            var sname = struct_names[i]
+            var sfields = self.struct_defs[sname]
+            var sbytes = Constant.string_to_bytes(sname)
+            var flen = len(sbytes)
+            buf = buf + [(flen / 16777216) % 256]
+            buf = buf + [(flen / 65536) % 256]
+            buf = buf + [(flen / 256) % 256]
+            buf = buf + [flen % 256]
+            buf = buf + sbytes
+            var num_fields = len(sfields)
+            buf = buf + [(num_fields / 16777216) % 256]
+            buf = buf + [(num_fields / 65536) % 256]
+            buf = buf + [(num_fields / 256) % 256]
+            buf = buf + [num_fields % 256]
+            var j = 0
+            while j < num_fields:
+                var fbytes = Constant.string_to_bytes(sfields[j])
+                var fflen = len(fbytes)
+                buf = buf + [(fflen / 16777216) % 256]
+                buf = buf + [(fflen / 65536) % 256]
+                buf = buf + [(fflen / 256) % 256]
+                buf = buf + [fflen % 256]
+                buf = buf + fbytes
+                j = j + 1
+            i = i + 1
+
+        return buf
+
+    # ---- 导出为可读格式 ----
+    func dump() -> var:
+        var s = "=== CodeGen Result ===\n"
+        s = s + "Functions: " + len(self.functions) + "\n"
+        var i = 0
+        while i < len(self.functions):
+            s = s + "\n" + self.functions[i].to_string()
+            i = i + 1
+        return s
+
+# ---- 便捷函数 ----
+func generate(program: var) -> var:
+    var codegen = CodeGen.new()
+    codegen.compile_program(program)
+    return codegen
+
+func generate_bytes(program: var) -> var:
+    var codegen = generate(program)
+    return codegen.to_bytes()
+
+func dump_code(program: var) -> var:
+    var codegen = generate(program)
+    return codegen.dump()

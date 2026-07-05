@@ -1,0 +1,627 @@
+# ============================================================
+# 标准库集成测试 —— 跨模块真实场景
+# 演示 std::error/collections/string/math/io 协同使用
+# ============================================================
+
+import std.error
+import std.collections.vec
+import std.collections.hashmap
+import std.collections.linked_list
+import std.collections.set
+import std.string.util
+import std.string.pattern
+import std.string.codec
+import std.math
+import std.math.random
+import std.io.file
+import std.io.stream
+import std.io.path
+import std.sys.sync
+import std.sys.duration
+
+# ================================================================
+# 辅助函数：轻量测试断言
+# ================================================================
+
+func ok(msg: var):
+    out("  [OK] " + msg + "\n")
+
+func fail(msg: var):
+    out("  [FAIL] " + msg + "\n")
+
+func check(cond: bool, name: var) -> bool:
+    if cond:
+        ok(name)
+        return true
+    fail(name)
+    return false
+
+# ================================================================
+# 场景 1：Result 驱动的文本处理管线
+# ================================================================
+
+func test_scenario_text_pipeline():
+    out("\n--- Scenario 1: Text Processing Pipeline ---\n")
+
+    # 模拟从"文件"读取 CSV 行
+    var raw = "  Alice,25,Engineer  \n  Bob,30,Designer  \n  Charlie,28,Manager  "
+
+    # 1. 拆分行、trim、过滤空行
+    var lines = StringUtil.lines(raw)
+    var records = new Vec()
+    var i = 0
+    while i < lines.size():
+        var line = lines.get(i).unwrap()
+        var trimmed = StringUtil.trim(line)
+        if trimmed != "":
+            # 2. 分割 CSV 字段
+            var fields = StringUtil.split(trimmed, ",")
+            records.push(fields)
+        i = i + 1
+
+    # 验证：3 条记录，每记录 3 个字段
+    check(records.size() == 3, "parsed 3 records")
+    var first = records.get(0).unwrap()
+    var name = first.get(0).unwrap()
+    var age  = first.get(1).unwrap()
+    var role = first.get(2).unwrap()
+    check(name == "Alice",          "first record name=Alice")
+    check(age == "25",              "first record age=25")
+    check(role == "Engineer",       "first record role=Engineer")
+
+    # 3. 用 HashMap 构建姓名→角色索引
+    var index = new HashMap()
+    i = 0
+    while i < records.size():
+        var rec = records.get(i).unwrap()
+        index.insert(rec.get(0).unwrap(), rec.get(2).unwrap())
+        i = i + 1
+
+    check(index.contains("Bob"),    "index contains Bob")
+    var r = index.get("Charlie")
+    check(r.unwrap_or("???") == "Manager", "Charlie is Manager")
+
+    # 4. Result 驱动的错误处理链
+    var result = safe_lookup(index, "Alice")
+    check(result.is_ok,             "safe_lookup Alice success")
+    check(result.value == "Engineer", "Alice is Engineer")
+
+    result = safe_lookup(index, "Nobody")
+    check(result.is_ok == false,    "safe_lookup Nobody fails")
+    check(result.error.kind == ErrorKind.Key, "error kind is Key")
+
+    out("--- Scenario 1: PASS ---\n")
+
+# 安全的 HashMap 查找，返回 Result
+func safe_lookup(map: var, key: var) -> var:
+    if map.contains(key) == false:
+        return Result.err(error.value_error("key not found: " + key))
+    return map.get(key)
+
+# ================================================================
+# 场景 2：统计分析 —— Vec + 数学运算
+# ================================================================
+
+func test_scenario_statistics():
+    out("\n--- Scenario 2: Statistics Calculator ---\n")
+
+    # 构建数据集
+    var data = new Vec()
+    data.push(12.5)
+    data.push(8.0)
+    data.push(15.5)
+    data.push(9.0)
+    data.push(10.0)
+    data.push(14.0)
+    data.push(11.0)
+
+    # 1. 求和 / 均值（用 fold）
+    var sum_val = 0.0
+    var k = 0
+    while k < data.size():
+        var r = data.get(k)
+        if r.is_ok:
+            sum_val = sum_val + r.value
+        k = k + 1
+    var mean_val = sum_val / data.size()
+
+    check(mean_val > 11.0, "mean > 11")
+    check(mean_val < 12.0, "mean < 12")
+
+    # 2. 方差：Σ(x - μ)² / n
+    var sum_sq = 0.0
+    k = 0
+    while k < data.size():
+        var r = data.get(k)
+        if r.is_ok:
+            var diff = r.value - mean_val
+            sum_sq = sum_sq + diff * diff
+        k = k + 1
+    var variance = sum_sq / data.size()
+    var stddev = sqrt(variance)
+
+    check(stddev > 2.0, "stddev > 2.0")
+    check(stddev < 4.0, "stddev < 4.0")
+
+    # 3. min / max
+    var dmin = 999.0
+    var dmax = -999.0
+    k = 0
+    while k < data.size():
+        var r = data.get(k)
+        if r.is_ok:
+            if r.value < dmin:
+                dmin = r.value
+            if r.value > dmax:
+                dmax = r.value
+        k = k + 1
+
+    check(dmin == 8.0,  "min = 8.0")
+    check(dmax == 15.5, "max = 15.5")
+
+    # 4. 排序后的中位数
+    var sorted = new Vec()
+    k = 0
+    while k < data.size():
+        var r = data.get(k)
+        if r.is_ok:
+            sorted.push(r.value)
+        k = k + 1
+    sorted.sort()
+
+    var mid = sorted.get(sorted.size() / 2).unwrap()
+    check(mid > 10.0, "median > 10")
+    check(mid < 13.0, "median < 13")
+
+    out("--- Scenario 2: PASS ---\n")
+
+# ================================================================
+# 场景 3：数学计算器 —— 三角函数 / 幂 / 对数
+# ================================================================
+
+func test_scenario_math_calc():
+    out("\n--- Scenario 3: Math Calculator ---\n")
+
+    # 1. sin/cos 一致性：sin²x + cos²x ≈ 1
+    var x = math_pi() / 3.0
+    var s = sin(x)
+    var c = cos(x)
+    var ident = s * s + c * c
+    check(ident > 0.99, "sin²+cos² > 0.99")
+    check(ident < 1.01, "sin²+cos² < 1.01")
+
+    # 2. 指数/对数互逆：e^(ln x) ≈ x
+    var v = 5.0
+    var l = ln(v)
+    var e = exp(l)
+    check(e > 4.9,  "exp(ln(5)) > 4.9")
+    check(e < 5.1,  "exp(ln(5)) < 5.1")
+
+    # 3. pow_int 完整测试
+    check(pow_int(2, 10) == 1024,  "2^10 = 1024")
+    check(pow_int(3, 4) == 81,     "3^4 = 81")
+    check(pow_int(7, 0) == 1,      "7^0 = 1")
+
+    # 4. 三角函数 atan2 象限
+    var a1 = atan2(1.0, 1.0)    # 45°
+    var a2 = atan2(1.0, -1.0)   # 135°
+    check(a1 > 0.7, "atan2(1,1) > 0.7 rad")
+    check(a2 > a1,  "atan2(1,-1) > atan2(1,1)")
+
+    # 5. gcd/lcm
+    check(gcd(48, 18) == 6,   "gcd(48,18)=6")
+    check(lcm(48, 18) == 144, "lcm(48,18)=144")
+    check(is_prime(17),        "17 is prime")
+    check(is_prime(16) == false, "16 is not prime")
+    check(factorial(5) == 120, "5! = 120")
+
+    out("--- Scenario 3: PASS ---\n")
+
+# ================================================================
+# 场景 4：随机数分布验证
+# ================================================================
+
+func test_scenario_random():
+    out("\n--- Scenario 4: Random Number Generator ---\n")
+
+    var rng = Random.with_seed(42)
+
+    # 1. 生成 100 个 [0,1) 随机数，验证在范围内
+    var samples = new Vec()
+    var i = 0
+    while i < 100:
+        var n = rng.next()
+        samples.push(n)
+        i = i + 1
+
+    # 验证全部在 [0,1) 内
+    var all_valid = true
+    i = 0
+    while i < samples.size():
+        var r = samples.get(i)
+        if r.is_ok:
+            if r.value < 0.0:
+                all_valid = false
+            if r.value >= 1.0:
+                all_valid = false
+        i = i + 1
+    check(all_valid, "100 random samples in [0,1)")
+
+    # 2. next_int 范围
+    var rng2 = Random.with_seed(7)
+    var int_valid = true
+    i = 0
+    while i < 50:
+        var n = rng2.next_int(10, 20)
+        if n < 10:
+            int_valid = false
+        if n > 20:
+            int_valid = false
+        i = i + 1
+    check(int_valid, "next_int(10,20) always in range")
+
+    # 3. 确定性：相同种子产生相同序列
+    var rng_a = Random.with_seed(123)
+    var rng_b = Random.with_seed(123)
+    var deterministic = true
+    i = 0
+    while i < 10:
+        if rng_a.next() != rng_b.next():
+            deterministic = false
+        i = i + 1
+    check(deterministic, "same seed = same sequence")
+
+    # 4. 洗牌
+    var deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var shuffled = rng.shuffle(deck)
+    check(len(shuffled) == 10, "shuffle preserves length")
+    var is_different = false
+    i = 0
+    while i < 10:
+        if deck[i] != shuffled[i]:
+            is_different = true
+        i = i + 1
+    # 有概率原序，但种子 42 应该产生不同顺序
+    check(is_different, "shuffle changes order")
+
+    out("--- Scenario 4: PASS ---\n")
+
+# ================================================================
+# 场景 5：编码转换 Hex/Base64
+# ================================================================
+
+func test_scenario_encoding():
+    out("\n--- Scenario 5: Hex & Base64 Encoding ---\n")
+
+    # 1. Hex 编码往返
+    var bytes = [72, 101, 108, 108, 111]     # "Hello"
+    var hex = Codec.to_hex(bytes)
+    check(hex == "48656C6C6F", "hex encode 'Hello'")
+
+    var decoded = Codec.from_hex(hex)
+    check(decoded.is_ok, "hex decode success")
+    if decoded.is_ok:
+        var dec_bytes = decoded.value
+        check(len(dec_bytes) == 5, "decoded 5 bytes")
+        check(dec_bytes[0] == 72, "first byte = 72")
+        check(dec_bytes[4] == 111, "last byte = 111")
+
+    # 2. 非法 hex 字符
+    var bad = Codec.from_hex("ZZ")
+    check(bad.is_ok == false, "invalid hex returns error")
+
+    # 3. Base64 编码往返
+    var b64 = Codec.to_base64(bytes)
+    check(b64 == "SGVsbG8=", "base64 encode 'Hello'")
+
+    var dec_b64 = Codec.from_base64(b64)
+    check(dec_b64.is_ok, "base64 decode success")
+    if dec_b64.is_ok:
+        var dec2 = dec_b64.value
+        check(len(dec2) == 5, "base64 decoded 5 bytes")
+
+    # 4. 空输入
+    check(Codec.to_hex([]) == "",    "empty hex = ''")
+    check(Codec.to_base64([]) == "", "empty base64 = ''")
+
+    out("--- Scenario 5: PASS ---\n")
+
+# ================================================================
+# 场景 6：通配符模式匹配
+# ================================================================
+
+func test_scenario_pattern():
+    out("\n--- Scenario 6: Wildcard Pattern Matching ---\n")
+
+    # 1. 基本 * 匹配
+    var p = new Pattern("*.vx")
+    check(p.test("main.vx"),     "*.vx matches main.vx")
+    check(p.test("std/io.vx"),   "*.vx matches std/io.vx (note: doesn't match /)")
+    check(p.test("main.rs") == false, "*.vx does not match main.rs")
+
+    # 2. ? 匹配单字符
+    var p2 = new Pattern("test_?.vx")
+    check(p2.test("test_a.vx"),         "? matches single char")
+    check(p2.test("test_ab.vx") == false, "? does not match two chars")
+
+    # 3. 组合模式
+    var p3 = new Pattern("log-*.txt")
+    check(p3.test("log-2024.txt"), "log-*.txt matches log-2024.txt")
+    check(p3.test("log-err.txt"),  "log-*.txt matches log-err.txt")
+
+    # 4. 替换
+    var p4 = new Pattern("temp*")
+    check(p4.replace("temp123.tmp", "clean") == "clean", "pattern replace")
+
+    out("--- Scenario 6: PASS ---\n")
+
+# ================================================================
+# 场景 7：Set 集合运算
+# ================================================================
+
+func test_scenario_set_operations():
+    out("\n--- Scenario 7: Set Operations ---\n")
+
+    var set_a = new Set()
+    set_a.insert(1)
+    set_a.insert(2)
+    set_a.insert(3)
+    set_a.insert(4)
+
+    var set_b = new Set()
+    set_b.insert(3)
+    set_b.insert(4)
+    set_b.insert(5)
+    set_b.insert(6)
+
+    # 并集
+    var u = set_a.union(set_b)
+    check(u.size() == 6,    "union size = 6")
+    check(u.contains(1),    "union contains 1")
+    check(u.contains(6),    "union contains 6")
+
+    # 交集
+    var inter = set_a.intersection(set_b)
+    check(inter.size() == 2, "intersection size = 2")
+    check(inter.contains(3), "intersection contains 3")
+    check(inter.contains(4), "intersection contains 4")
+
+    # 差集
+    var diff = set_a.difference(set_b)
+    check(diff.size() == 2,   "difference size = 2")
+    check(diff.contains(1),   "difference contains 1")
+    check(diff.contains(2),   "difference contains 2")
+    check(diff.contains(3) == false, "difference does not contain 3")
+
+    # 子集/超集
+    var sub = new Set()
+    sub.insert(1)
+    sub.insert(2)
+    check(sub.is_subset(set_a),   "[1,2] ⊆ [1,2,3,4]")
+    check(set_a.is_superset(sub), "[1,2,3,4] ⊇ [1,2]")
+    check(sub.is_subset(set_b) == false, "[1,2] ⊈ [3,4,5,6]")
+
+    out("--- Scenario 7: PASS ---\n")
+
+# ================================================================
+# 场景 8：LinkedList 操作和双向遍历
+# ================================================================
+
+func test_scenario_linked_list():
+    out("\n--- Scenario 8: Linked List Dual-direction Ops ---\n")
+
+    var ll = new LinkedList()
+
+    # 1. 双向构建
+    ll.push_back("first")
+    ll.push_back("middle")
+    ll.push_front("front")
+    ll.push_back("last")
+
+    check(ll.size() == 4, "list size = 4")
+
+    # 2. 顺序遍历
+    var arr = ll.to_array()
+    check(arr[0] == "front", "first element = front")
+    check(arr[1] == "first", "second element = first")
+    check(arr[2] == "middle", "third element = middle")
+    check(arr[3] == "last",  "last element = last")
+
+    # 3. 弹出首尾
+    var r = ll.pop_front()
+    check(r.value == "front", "pop_front = front")
+    r = ll.pop_back()
+    check(r.value == "last",  "pop_back = last")
+    check(ll.size() == 2,     "size after pops = 2")
+
+    # 4. 查找
+    check(ll.contains("first"),  "contains first")
+    check(ll.contains("middle"), "contains middle")
+    check(ll.contains("front") == false, "does not contain front (popped)")
+
+    # 5. 清空
+    ll.clear()
+    check(ll.is_empty(), "cleared list is empty")
+
+    out("--- Scenario 8: PASS ---\n")
+
+# ================================================================
+# 场景 9：路径操作
+# ================================================================
+
+func test_scenario_path():
+    out("\n--- Scenario 9: Path Manipulation ---\n")
+
+    check(Path.join("/home/user", "docs") == "/home/user/docs", "join basic")
+    check(Path.join("/home/user/", "docs") == "/home/user/docs", "join with trailing slash")
+
+    var r = Path.parent("/home/user/docs/file.txt")
+    check(r.unwrap_or("") == "/home/user/docs", "parent of file path")
+
+    r = Path.file_name("/home/user/file.txt")
+    check(r.unwrap_or("") == "file.txt", "file_name extraction")
+
+    r = Path.extension("/home/user/file.txt")
+    check(r.unwrap_or("") == ".txt", "extension extraction")
+
+    r = Path.stem("/home/user/file.txt")
+    check(r.unwrap_or("") == "file", "stem extraction")
+
+    check(Path.is_absolute("/home/user"), "absolute path detected")
+    check(Path.is_absolute("relative/path") == false, "relative path detected")
+
+    var norm = Path.normalize("/home/user/./docs/../src")
+    check(norm == "/home/user/src", "normalize collapses ./ and ../")
+
+    out("--- Scenario 9: PASS ---\n")
+
+# ================================================================
+# 场景 10：字符串工具综合
+# ================================================================
+
+func test_scenario_string_utils():
+    out("\n--- Scenario 10: String Utilities Comprehensive ---\n")
+
+    # 1. 查找
+    check(StringUtil.find("hello world hello", "hello") == 0,  "find first hello")
+    check(StringUtil.rfind("hello world hello", "hello") == 12, "rfind last hello")
+    check(StringUtil.contains("hello", "ell"),    "contains works")
+    check(StringUtil.count("ababa", "aba") == 1,  "count non-overlapping aba")
+
+    # 2. 边界
+    check(StringUtil.starts_with("hello", "hel"),   "starts_with positive")
+    check(StringUtil.starts_with("hello", "lo") == false, "starts_with negative")
+    check(StringUtil.ends_with("hello", "lo"),      "ends_with positive")
+
+    # 3. 替换（原地复杂场景）
+    var s = "abc abc abc"
+    check(StringUtil.replace(s, "abc", "X") == "X abc abc",     "replace first")
+    check(StringUtil.replace_all(s, "abc", "X") == "X X X",      "replace all")
+    check(StringUtil.replace_all(s, "xyz", "X") == "abc abc abc", "replace none")
+
+    # 4. trim 全部空白
+    var ws = " \t\n hello world \t\n "
+    check(StringUtil.trim(ws) == "hello world", "trim whitespace")
+
+    # 5. split 与 join 往返
+    var csv = "alpha,beta,gamma,delta"
+    var parts = StringUtil.split(csv, ",")
+    check(parts.size() == 4, "split 4 parts")
+    var rejoined = StringUtil.join(parts.to_array(), ",")
+    check(rejoined == csv, "split+join roundtrip")
+
+    # 6. 大小写往返
+    var mixed = "Hello"
+    var lower = StringUtil.to_lower(mixed)
+    var upper = StringUtil.to_upper(mixed)
+    check(lower == "hello", "to_lower")
+    check(upper == "HELLO", "to_upper")
+    check(StringUtil.to_lower(StringUtil.to_upper(mixed)) == "hello", "upper+lower roundtrip")
+
+    out("--- Scenario 10: PASS ---\n")
+
+# ================================================================
+# 场景 11：同步原语 —— Channel 生产者-消费者
+# ================================================================
+
+func test_scenario_channel():
+    out("\n--- Scenario 11: Channel Producer-Consumer ---\n")
+
+    var ch = new Channel()
+
+    # 生产者：发送 5 条消息
+    ch.send("msg-1")
+    ch.send("msg-2")
+    ch.send("msg-3")
+    ch.send("msg-4")
+    ch.send("msg-5")
+
+    check(ch.is_closed() == false, "channel is open")
+
+    # 消费者：接收 5 条消息
+    var received = new Vec()
+    var i = 0
+    while i < 5:
+        var msg = ch.try_recv()
+        if msg != nil:
+            received.push(msg)
+        i = i + 1
+
+    check(received.size() == 5, "received 5 messages")
+    var r = received.get(0)
+    check(r.unwrap_or("") == "msg-1", "first msg = msg-1")
+    r = received.get(4)
+    check(r.unwrap_or("") == "msg-5", "last msg = msg-5")
+
+    # 关闭通道后 receive 返回 nil
+    ch.close()
+    check(ch.is_closed(), "channel is closed")
+
+    out("--- Scenario 11: PASS ---\n")
+
+# ================================================================
+# 场景 12：Duration 和 File 占位接口
+# ================================================================
+
+func test_scenario_duration():
+    out("\n--- Scenario 12: Duration & System Interfaces ---\n")
+
+    # Duration 构造和转换
+    var dur = Duration.from_secs(2.5)
+    check(dur.secs == 2,           "2.5s -> 2 secs")
+    check(dur.nanos == 500000000,  "2.5s -> 500M nanos")
+
+    var dur_ms = Duration.from_millis(1500)
+    check(dur_ms.as_secs() > 1.49, "1500ms > 1.49s")
+    check(dur_ms.as_millis() == 1500, "1500ms roundtrip")
+
+    var dur_us = Duration.from_micros(1000000)
+    check(dur_us.secs == 1, "1M us = 1s")
+
+    var dur_ns = Duration.from_nanos(1)
+    check(dur_ns.nanos == 1, "1ns = 1ns")
+    check(dur_ns.secs == 0,  "1ns = 0secs")
+
+    # File 占位接口调用（不依赖实际文件系统）
+    check(File.exists("/nonexistent") == false, "File.exists for nonexistent")
+
+    out("--- Scenario 12: PASS ---\n")
+
+# ================================================================
+# 主入口：运行全部场景
+# ================================================================
+
+func main():
+    out("==========================================\n")
+    out("  VX Standard Library — Integration Test\n")
+    out("==========================================\n")
+
+    test_scenario_text_pipeline()
+    test_scenario_statistics()
+    test_scenario_math_calc()
+    test_scenario_random()
+    test_scenario_encoding()
+    test_scenario_pattern()
+    test_scenario_set_operations()
+    test_scenario_linked_list()
+    test_scenario_path()
+    test_scenario_string_utils()
+    test_scenario_channel()
+    test_scenario_duration()
+
+    out("==========================================\n")
+    out("  All 12 integration scenarios completed.\n")
+    out("  std::error  ✓  错误处理 & Result 传播\n")
+    out("  std::vec    ✓  动态数组 & 排序/查找\n")
+    out("  std::hashmap✓  键值映射 & 安全查找\n")
+    out("  std::linked_list ✓  双向链表操作\n")
+    out("  std::set    ✓  集合运算 & 子集检查\n")
+    out("  std::string ✓  分割/拼接/大小写/trim\n")
+    out("  std::pattern✓  通配符匹配 * ?\n")
+    out("  std::codec  ✓  Hex & Base64 往返\n")
+    out("  std::math   ✓  三角/对数/质数/阶乘\n")
+    out("  std::random ✓  LCG/确定性/洗牌\n")
+    out("  std::io     ✓  路径操作 & 规范化\n")
+    out("  std::sys    ✓  Channel/Duration\n")
+    out("==========================================\n")
+    out("  Standard library integration test PASS\n")

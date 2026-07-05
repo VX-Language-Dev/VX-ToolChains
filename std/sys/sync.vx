@@ -1,0 +1,132 @@
+# ============================================================
+# std::sys::sync —— 同步原语
+# 第一版：Mutex、Semaphore、Channel、Once
+# ============================================================
+
+import std.error
+import std.collections.vec
+
+# ---- Mutex 类：互斥锁 ----
+class Mutex:
+    locked: bool
+    value: var          # 锁保护的值
+
+    func new(val: var) -> var:
+        var m = new Mutex()
+        m.locked = false
+        m.value = val
+        return m
+
+    # 获取锁（阻塞简化版：忙等待）
+    func lock() -> var:
+        while self.locked:
+            pass
+        self.locked = true
+        return self
+
+    # 释放锁
+    func unlock():
+        self.locked = false
+
+    # 尝试获取锁
+    func try_lock() -> var:
+        if self.locked:
+            return nil
+        self.locked = true
+        return self
+
+    # 获取内部值
+    func get() -> var:
+        return self.value
+
+    # 设置内部值
+    func set(val: var):
+        self.value = val
+
+# ---- Semaphore 类：信号量 ----
+class Semaphore:
+    permits: int
+
+    func new(count: int) -> var:
+        var s = new Semaphore()
+        s.permits = count
+        return s
+
+    # 获取信号量（可能阻塞）
+    func acquire():
+        # 忙等待：没有许可时等待
+        while self.permits <= 0:
+            pass
+        self.permits = self.permits - 1
+
+    # 非阻塞尝试
+    func try_acquire() -> bool:
+        if self.permits > 0:
+            self.permits = self.permits - 1
+            return true
+        return false
+
+    # 释放信号量
+    func release():
+        self.permits = self.permits + 1
+
+    # 当前可用许可数
+    func available() -> int:
+        return self.permits
+
+# ---- Channel 类：无界通道 ----
+# 基于 Mutex 保护的 Vec
+class Channel:
+    buffer: var         # Vec 实例
+    closed: bool
+    lock: var           # Mutex 实例
+
+    func new() -> var:
+        var ch = new Channel()
+        ch.buffer = new Vec()
+        ch.closed = false
+        ch.lock = new Mutex(ch.buffer)
+        return ch
+
+    # 发送消息
+    func send(val: var):
+        if self.closed:
+            return
+        self.lock.lock()
+        var buf = self.lock.get()
+        buf.push(val)
+        self.lock.unlock()
+
+    # 接收消息（阻塞简化版）
+    func recv() -> var:
+        while true:
+            if self.closed:
+                var buf = self.lock.get()
+                if buf.size() == 0:
+                    return nil
+            self.lock.lock()
+            var buf = self.lock.get()
+            if buf.size() > 0:
+                var val = buf.remove(0)
+                self.lock.unlock()
+                return val
+            self.lock.unlock()
+
+    # 非阻塞尝试接收
+    func try_recv() -> var:
+        self.lock.lock()
+        var buf = self.lock.get()
+        if buf.size() > 0:
+            var val = buf.remove(0)
+            self.lock.unlock()
+            return val
+        self.lock.unlock()
+        return nil
+
+    # 关闭通道
+    func close():
+        self.closed = true
+
+    # 检查是否关闭
+    func is_closed() -> bool:
+        return self.closed

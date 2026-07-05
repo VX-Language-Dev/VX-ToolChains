@@ -1,0 +1,683 @@
+# ============================================================
+# bootstrap/parser.vx —— 语法分析器
+# 将 Token 列表转换为 AST
+# ============================================================
+
+import std.error
+import bootstrap.token
+import bootstrap.ast
+
+# ---- 解析错误类 ----
+class ParseError:
+    msg: var
+    line: int
+    col: int
+
+    func new(msg: var, line: int, col: int) -> var:
+        var e = new ParseError()
+        e.msg = msg
+        e.line = line
+        e.col = col
+        return e
+
+    func to_string() -> var:
+        return "ParseError at " + self.line + ":" + self.col + " - " + self.msg
+
+# ---- 解析器 ----
+class Parser:
+    tokens: var
+    pos: int
+    source: var
+    errors: var
+
+    # ---- 构造函数 ----
+    func new(tokens: var, source: var) -> var:
+        var p = new Parser()
+        p.tokens = tokens
+        p.pos = 0
+        p.source = source
+        p.errors = []
+        return p
+
+    # ---- 获取当前 Token ----
+    func current() -> var:
+        if self.pos >= len(self.tokens):
+            return self.tokens[len(self.tokens) - 1]
+        return self.tokens[self.pos]
+
+    # ---- 向前看 N 个 Token ----
+    func peek(n: int) -> var:
+        var idx = self.pos + n
+        if idx >= len(self.tokens):
+            return self.tokens[len(self.tokens) - 1]
+        return self.tokens[idx]
+
+    # ---- 前进到下一个 Token ----
+    func advance() -> var:
+        var tok = self.current()
+        if self.current().kind != token.TokenType.EOF:
+            self.pos = self.pos + 1
+        return tok
+
+    # ---- 检查当前 Token 类型 ----
+    func check(kind: int) -> bool:
+        return self.current().kind == kind
+
+    # ---- 检查并前进 ----
+    func match(kind: int) -> bool:
+        if self.check(kind):
+            self.advance()
+            return true
+        return false
+
+    # ---- 期望某个 Token 类型 ----
+    func expect(kind: int, msg: var) -> var:
+        if self.check(kind):
+            return self.advance()
+        var err = ParseError.new(msg, self.current().line, self.current().col)
+        this.errors = this.errors + [err]
+        return nil
+
+    # ---- 跳过换行符 ----
+    func skip_newlines():
+        while self.check(token.TokenType.Newline):
+            self.advance()
+
+    # ---- 解析程序入口 ----
+    func parse() -> var:
+        var program = ast.Program.new()
+        self.skip_newlines()
+
+        while not self.check(token.TokenType.EOF):
+            var stmt = self.parse_statement()
+            if stmt != nil:
+                program.add(stmt)
+            self.skip_newlines()
+
+        return program
+
+    # ---- 解析语句 ----
+    func parse_statement() -> var:
+        self.skip_newlines()
+
+        var tok = self.current()
+
+        # return 语句
+        if self.check(token.TokenType.Return):
+            return self.parse_return()
+
+        # if 语句
+        if self.check(token.TokenType.If):
+            return self.parse_if()
+
+        # while 语句
+        if self.check(token.TokenType.While):
+            return self.parse_while()
+
+        # for 语句
+        if self.check(token.TokenType.For):
+            return self.parse_for()
+
+        # break 语句
+        if self.check(token.TokenType.Break):
+            self.advance()
+            return ast.BreakStmt.new(tok.line, tok.col)
+
+        # continue 语句
+        if self.check(token.TokenType.Continue):
+            self.advance()
+            return ast.ContinueStmt.new(tok.line, tok.col)
+
+        # func 声明
+        if self.check(token.TokenType.Func):
+            return self.parse_func_decl()
+
+        # struct 声明
+        if self.check(token.TokenType.Struct):
+            return self.parse_struct_decl()
+
+        # class 声明
+        if self.check(token.TokenType.Class):
+            return self.parse_class_decl()
+
+        # enum 声明
+        if self.check(token.TokenType.Enum):
+            return self.parse_enum_decl()
+
+        # union 声明
+        if self.check(token.TokenType.Union):
+            return self.parse_union_decl()
+
+        # macro 声明
+        if self.check(token.TokenType.Macro):
+            return self.parse_macro_def()
+
+        # import 语句
+        if self.check(token.TokenType.Import):
+            return self.parse_import()
+
+        # var 声明
+        if self.check(token.TokenType.VarT):
+            return self.parse_var_decl()
+
+        # 表达式语句
+        return self.parse_expr_statement()
+
+    # ---- 解析 return 语句 ----
+    func parse_return() -> var:
+        var tok = self.advance()  # consume 'return'
+        var value = nil
+        if not self.check(token.TokenType.Newline) and not self.check(token.TokenType.EOF) and not self.check(token.TokenType.RBrace):
+            value = self.parse_expression()
+        return ast.ReturnStmt.new(value, tok.line, tok.col)
+
+    # ---- 解析 if 语句 ----
+    func parse_if() -> var:
+        var tok = self.advance()  # consume 'if'
+        var condition = self.parse_expression()
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        # then 分支
+        var then_branch = []
+        while not self.check(token.TokenType.EOF) and not self.check(token.TokenType.Else) and not self.check(token.TokenType.Elif):
+            var stmt = self.parse_statement()
+            if stmt != nil:
+                then_branch = then_branch + [stmt]
+            self.skip_newlines()
+
+        # elif 分支
+        var elif_branches = []
+        while self.check(token.TokenType.Elif):
+            self.advance()  # consume 'elif'
+            var elif_cond = self.parse_expression()
+            self.expect(token.TokenType.Colon, "期望 ':'")
+            self.skip_newlines()
+            var elif_body = []
+            while not self.check(token.TokenType.EOF) and not self.check(token.TokenType.Else) and not self.check(token.TokenType.Elif):
+                var stmt = self.parse_statement()
+                if stmt != nil:
+                    elif_body = elif_body + [stmt]
+                self.skip_newlines()
+            elif_branches = elif_branches + [[elif_cond, elif_body]]
+
+        # else 分支
+        var else_branch = nil
+        if self.check(token.TokenType.Else):
+            self.advance()  # consume 'else'
+            self.expect(token.TokenType.Colon, "期望 ':'")
+            self.skip_newlines()
+            else_branch = []
+            while not self.check(token.TokenType.EOF):
+                var stmt = self.parse_statement()
+                if stmt != nil:
+                    else_branch = else_branch + [stmt]
+                self.skip_newlines()
+
+        return ast.IfStmt.new(condition, then_branch, elif_branches, else_branch, tok.line, tok.col)
+
+    # ---- 解析 while 语句 ----
+    func parse_while() -> var:
+        var tok = self.advance()  # consume 'while'
+        var condition = self.parse_expression()
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        var body = []
+        while not self.check(token.TokenType.EOF):
+            var stmt = self.parse_statement()
+            if stmt != nil:
+                body = body + [stmt]
+            self.skip_newlines()
+
+        return ast.WhileStmt.new(condition, body, tok.line, tok.col)
+
+    # ---- 解析 for 语句 ----
+    func parse_for() -> var:
+        var tok = self.advance()  # consume 'for'
+        var var_name = self.expect(token.TokenType.Identifier, "期望变量名")
+        self.expect(token.TokenType.In, "期望 'in'")
+        var iterable = self.parse_expression()
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        var body = []
+        while not self.check(token.TokenType.EOF):
+            var stmt = self.parse_statement()
+            if stmt != nil:
+                body = body + [stmt]
+            self.skip_newlines()
+
+        return ast.ForStmt.new(
+            ast.Identifier.new(var_name.value, var_name.line, var_name.col),
+            iterable,
+            body,
+            tok.line, tok.col
+        )
+
+    # ---- 解析 func 声明 ----
+    func parse_func_decl() -> var:
+        var tok = self.advance()  # consume 'func'
+        var name = self.expect(token.TokenType.Identifier, "期望函数名")
+        self.expect(token.TokenType.LParen, "期望 '('")
+
+        # 参数列表
+        var params = []
+        if not self.check(token.TokenType.RParen):
+            loop:
+                var param_name = self.expect(token.TokenType.Identifier, "期望参数名")
+                var param_type = nil
+                if self.check(token.TokenType.Colon):
+                    self.advance()
+                    param_type = self.parse_type_expr()
+                params = params + [[param_name.value, param_type]]
+                if not self.check(token.TokenType.Comma):
+                    break
+                self.advance()
+
+        self.expect(token.TokenType.RParen, "期望 ')'")
+
+        # 返回类型
+        var return_type = nil
+        if self.check(token.TokenType.Arrow):
+            self.advance()
+            return_type = self.parse_type_expr()
+
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        # 函数体
+        var body = []
+        while not self.check(token.TokenType.EOF):
+            var stmt = self.parse_statement()
+            if stmt != nil:
+                body = body + [stmt]
+            self.skip_newlines()
+
+        return ast.FuncDecl.new(name.value, params, return_type, body, tok.line, tok.col)
+
+    # ---- 解析 struct 声明 ----
+    func parse_struct_decl() -> var:
+        var tok = self.advance()  # consume 'struct'
+        var name = self.expect(token.TokenType.Identifier, "期望结构体名")
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        # 字段列表
+        var fields = []
+        while not self.check(token.TokenType.EOF):
+            var field_name = self.expect(token.TokenType.Identifier, "期望字段名")
+            self.expect(token.TokenType.Colon, "期望 ':'")
+            var field_type = self.parse_type_expr()
+            fields = fields + [[field_name.value, field_type]]
+            self.skip_newlines()
+            # 检查是否遇到方法或结束
+            if self.check(token.TokenType.Func):
+                break
+            if self.check(token.TokenType.RBrace) or self.check(token.TokenType.EOF):
+                break
+
+        # 方法列表（暂不支持）
+        var methods = []
+
+        return ast.StructDecl.new(name.value, fields, methods, tok.line, tok.col)
+
+    # ---- 解析 class 声明 ----
+    func parse_class_decl() -> var:
+        var tok = self.advance()  # consume 'class'
+        var name = self.expect(token.TokenType.Identifier, "期望类名")
+
+        # 继承 (extends)
+        var parent = nil
+        var interfaces = []
+        if self.check(token.TokenType.Colon):
+            self.advance()
+            if self.check(token.TokenType.Identifier):
+                parent = ast.Identifier.new(self.current().value, self.current().line, self.current().col)
+                self.advance()
+
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        # 字段列表
+        var fields = []
+        while not self.check(token.TokenType.EOF):
+            if self.check(token.TokenType.Func):
+                break
+            var field_name = self.expect(token.TokenType.Identifier, "期望字段名")
+            self.expect(token.TokenType.Colon, "期望 ':'")
+            var field_type = self.parse_type_expr()
+            fields = fields + [[field_name.value, field_type]]
+            self.skip_newlines()
+
+        # 方法列表（暂不支持）
+        var methods = []
+
+        return ast.ClassDecl.new(name.value, fields, methods, parent, interfaces, tok.line, tok.col)
+
+    # ---- 解析 enum 声明 ----
+    func parse_enum_decl() -> var:
+        var tok = self.advance()  # consume 'enum'
+        var name = self.expect(token.TokenType.Identifier, "期望枚举名")
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        # 变体列表
+        var variants = []
+        var value = 0
+        while not self.check(token.TokenType.EOF):
+            var variant_name = self.expect(token.TokenType.Identifier, "期望变体名")
+            var variant_value = value
+            if self.check(token.TokenType.Eq):
+                self.advance()
+                var lit = self.expect(token.TokenType.IntLiteral, "期望整数字面量")
+                variant_value = lit.value
+            variants = variants + [[variant_name.value, variant_value]]
+            value = value + 1
+            self.skip_newlines()
+
+        return ast.EnumDecl.new(name.value, variants, tok.line, tok.col)
+
+    # ---- 解析 union 声明 ----
+    func parse_union_decl() -> var:
+        var tok = self.advance()  # consume 'union'
+        var name = self.expect(token.TokenType.Identifier, "期望联合体名")
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        # 变体列表
+        var variants = []
+        while not self.check(token.TokenType.EOF):
+            var variant_name = self.expect(token.TokenType.Identifier, "期望变体名")
+            self.expect(token.TokenType.Colon, "期望 ':'")
+            var variant_type = self.parse_type_expr()
+            variants = variants + [[variant_name.value, variant_type]]
+            self.skip_newlines()
+
+        return ast.UnionDecl.new(name.value, variants, tok.line, tok.col)
+
+    # ---- 解析 macro 定义 ----
+    func parse_macro_def() -> var:
+        var tok = self.advance()  # consume 'macro'
+        var name = self.expect(token.TokenType.Identifier, "期望宏名")
+        self.expect(token.TokenType.LParen, "期望 '('")
+
+        # 宏参数
+        var params = []
+        if not self.check(token.TokenType.RParen):
+            loop:
+                var param = self.expect(token.TokenType.Identifier, "期望参数名")
+                params = params + [param.value]
+                if not self.check(token.TokenType.Comma):
+                    break
+                self.advance()
+
+        self.expect(token.TokenType.RParen, "期望 ')'")
+        self.expect(token.TokenType.Colon, "期望 ':'")
+        self.skip_newlines()
+
+        # 宏体
+        var body = []
+        while not self.check(token.TokenType.EOF):
+            var stmt = self.parse_statement()
+            if stmt != nil:
+                body = body + [stmt]
+            self.skip_newlines()
+
+        return ast.MacroDef.new(name.value, params, body, tok.line, tok.col)
+
+    # ---- 解析 import 语句 ----
+    func parse_import() -> var:
+        var tok = self.advance()  # consume 'import'
+        var path = self.expect(token.TokenType.StringLiteral, "期望模块路径")
+        var alias = nil
+        var names = []
+
+        if self.check(token.TokenType.As):
+            self.advance()
+            alias = self.expect(token.TokenType.Identifier, "期望别名").value
+
+        return ast.ImportStmt.new(path.value, alias, names, tok.line, tok.col)
+
+    # ---- 解析 var 声明 ----
+    func parse_var_decl() -> var:
+        var tok = self.advance()  # consume 'var'
+        var name = self.expect(token.TokenType.Identifier, "期望变量名")
+
+        var var_type = nil
+        if self.check(token.TokenType.Colon):
+            self.advance()
+            var_type = self.parse_type_expr()
+
+        var initializer = nil
+        if self.check(token.TokenType.Eq):
+            self.advance()
+            initializer = self.parse_expression()
+
+        return ast.VarDecl.new(name.value, var_type, initializer, tok.line, tok.col)
+
+    # ---- 解析类型表达式 ----
+    func parse_type_expr() -> var:
+        var tok = self.current()
+        if self.check(token.TokenType.Identifier):
+            self.advance()
+            return ast.TypeExpr.new(tok.value, tok.line, tok.col)
+        if self.check(token.TokenType.IntT):
+            self.advance()
+            return ast.TypeExpr.new("int", tok.line, tok.col)
+        if self.check(token.TokenType.FloatT):
+            self.advance()
+            return ast.TypeExpr.new("float", tok.line, tok.col)
+        if self.check(token.TokenType.BoolT):
+            self.advance()
+            return ast.TypeExpr.new("bool", tok.line, tok.col)
+        if self.check(token.TokenType.VoidT):
+            self.advance()
+            return ast.TypeExpr.new("void", tok.line, tok.col)
+        return ast.TypeExpr.new("var", tok.line, tok.col)
+
+    # ---- 解析表达式语句 ----
+    func parse_expr_statement() -> var:
+        var expr = self.parse_expression()
+        return ast.ExprStmt.new(expr, expr.pos.line, expr.pos.col)
+
+    # ---- 解析表达式 ----
+    func parse_expression() -> var:
+        return self.parse_assignment()
+
+    # ---- 解析赋值表达式 ----
+    func parse_assignment() -> var:
+        var expr = self.parse_or()
+
+        if self.check(token.TokenType.Eq):
+            self.advance()
+            var value = self.parse_assignment()
+            return ast.BinaryOp.new("=", expr, value, expr.pos.line, expr.pos.col)
+
+        return expr
+
+    # ---- 解析 or 表达式 ----
+    func parse_or() -> var:
+        var expr = self.parse_and()
+        while self.check(token.TokenType.Or):
+            var op = self.advance()
+            var right = self.parse_and()
+            expr = ast.BinaryOp.new("or", expr, right, op.line, op.col)
+        return expr
+
+    # ---- 解析 and 表达式 ----
+    func parse_and() -> var:
+        var expr = self.parse_equality()
+        while self.check(token.TokenType.And):
+            var op = self.advance()
+            var right = self.parse_equality()
+            expr = ast.BinaryOp.new("and", expr, right, op.line, op.col)
+        return expr
+
+    # ---- 解析相等性表达式 ----
+    func parse_equality() -> var:
+        var expr = self.parse_comparison()
+        while self.check(token.TokenType.EqEq) or self.check(token.TokenType.Neq):
+            var op = self.advance()
+            var right = self.parse_comparison()
+            expr = ast.BinaryOp.new(op.value, expr, right, op.line, op.col)
+        return expr
+
+    # ---- 解析比较表达式 ----
+    func parse_comparison() -> var:
+        var expr = self.parse_term()
+        while self.check(token.TokenType.Lt) or self.check(token.TokenType.Gt) or
+              self.check(token.TokenType.Le) or self.check(token.TokenType.Ge):
+            var op = self.advance()
+            var right = self.parse_term()
+            expr = ast.BinaryOp.new(op.value, expr, right, op.line, op.col)
+        return expr
+
+    # ---- 解析项（加减） ----
+    func parse_term() -> var:
+        var expr = self.parse_factor()
+        while self.check(token.TokenType.Plus) or self.check(token.TokenType.Minus):
+            var op = self.advance()
+            var right = self.parse_factor()
+            expr = ast.BinaryOp.new(op.value, expr, right, op.line, op.col)
+        return expr
+
+    # ---- 解析因子（乘除） ----
+    func parse_factor() -> var:
+        var expr = self.parse_unary()
+        while self.check(token.TokenType.Star) or self.check(token.TokenType.Slash) or self.check(token.TokenType.Percent):
+            var op = self.advance()
+            var right = self.parse_unary()
+            expr = ast.BinaryOp.new(op.value, expr, right, op.line, op.col)
+        return expr
+
+    # ---- 解析一元表达式 ----
+    func parse_unary() -> var:
+        if self.check(token.TokenType.Minus):
+            var op = self.advance()
+            var operand = self.parse_unary()
+            return ast.UnaryOp.new("-", operand, op.line, op.col)
+        if self.check(token.TokenType.Bang):
+            var op = self.advance()
+            var operand = self.parse_unary()
+            return ast.UnaryOp.new("!", operand, op.line, op.col)
+        if self.check(token.TokenType.Not):
+            var op = self.advance()
+            var operand = self.parse_unary()
+            return ast.UnaryOp.new("not", operand, op.line, op.col)
+        return self.parse_postfix()
+
+    # ---- 解析后缀表达式 ----
+    func parse_postfix() -> var:
+        var expr = self.parse_primary()
+
+        loop:
+            if self.check(token.TokenType.Dot):
+                self.advance()
+                var property = self.expect(token.TokenType.Identifier, "期望属性名")
+                expr = ast.PropertyAccess.new(expr, property.value, property.line, property.col)
+            elif self.check(token.TokenType.LBracket):
+                self.advance()
+                var index = self.parse_expression()
+                self.expect(token.TokenType.RBracket, "期望 ']'")
+                expr = ast.IndexAccess.new(expr, index, expr.pos.line, expr.pos.col)
+            elif self.check(token.TokenType.LParen):
+                self.advance()
+                var args = []
+                if not self.check(token.TokenType.RParen):
+                    loop:
+                        args = args + [self.parse_expression()]
+                        if not self.check(token.TokenType.Comma):
+                            break
+                        self.advance()
+                self.expect(token.TokenType.RParen, "期望 ')'")
+                expr = ast.CallExpr.new(expr, args, expr.pos.line, expr.pos.col)
+            else:
+                break
+
+        return expr
+
+    # ---- 解析初等表达式 ----
+    func parse_primary() -> var:
+        var tok = self.current()
+
+        # 整数字面量
+        if self.check(token.TokenType.IntLiteral):
+            self.advance()
+            return ast.IntLiteral.new(tok.value, tok.line, tok.col)
+
+        # 浮点字面量
+        if self.check(token.TokenType.FloatLiteral):
+            self.advance()
+            return ast.FloatLiteral.new(tok.value, tok.line, tok.col)
+
+        # 字符串字面量
+        if self.check(token.TokenType.StringLiteral):
+            self.advance()
+            return ast.StringLiteral.new(tok.value, tok.line, tok.col)
+
+        # true
+        if self.check(token.TokenType.True):
+            self.advance()
+            return ast.BoolLiteral.new(true, tok.line, tok.col)
+
+        # false
+        if self.check(token.TokenType.False):
+            self.advance()
+            return ast.BoolLiteral.new(false, tok.line, tok.col)
+
+        # nil
+        if self.check(token.TokenType.Nil):
+            self.advance()
+            return ast.NilLiteral.new(tok.line, tok.col)
+
+        # 标识符
+        if self.check(token.TokenType.Identifier):
+            self.advance()
+            return ast.Identifier.new(tok.value, tok.line, tok.col)
+
+        # new 表达式
+        if self.check(token.TokenType.New):
+            self.advance()
+            var class_name = self.expect(token.TokenType.Identifier, "期望类名")
+            self.expect(token.TokenType.LParen, "期望 '('")
+            var args = []
+            if not self.check(token.TokenType.RParen):
+                loop:
+                    args = args + [self.parse_expression()]
+                    if not self.check(token.TokenType.Comma):
+                        break
+                    self.advance()
+            self.expect(token.TokenType.RParen, "期望 ')'")
+            return ast.NewExpr.new(class_name.value, args, tok.line, tok.col)
+
+        # 数组字面量
+        if self.check(token.TokenType.LBracket):
+            self.advance()
+            var elements = []
+            if not self.check(token.TokenType.RBracket):
+                loop:
+                    elements = elements + [self.parse_expression()]
+                    if not self.check(token.TokenType.Comma):
+                        break
+                    self.advance()
+            self.expect(token.TokenType.RBracket, "期望 ']'")
+            return ast.ArrayLiteral.new(elements, tok.line, tok.col)
+
+        # 括号表达式
+        if self.check(token.TokenType.LParen):
+            self.advance()
+            var expr = self.parse_expression()
+            self.expect(token.TokenType.RParen, "期望 ')'")
+            return expr
+
+        # 未知 token，报错
+        var err = ParseError.new("Unexpected token: " + tok.value, tok.line, tok.col)
+        this.errors = this.errors + [err]
+        self.advance()
+        return ast.NilLiteral.new(tok.line, tok.col)
+
+# ---- 便捷函数 ----
+func parse(tokens: var, source: var) -> var:
+    var parser = Parser.new(tokens, source)
+    return parser.parse()

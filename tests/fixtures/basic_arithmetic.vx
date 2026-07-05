@@ -1,0 +1,6 @@
+// 基础算术测试用例
+func main():
+    var a = 3 + 4
+    var b = a * 2
+    var c = b - 5
+    out(c)  // 预期输出: 9

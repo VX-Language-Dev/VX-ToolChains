@@ -2,7 +2,7 @@
   "name": "vx-language",
   "displayName": "VX Language",
   "description": "Syntax highlighting and LSP integration for the VX programming language",
-  "version": "0.1.0",
+  "version": "1.6.0",
   "publisher": "vx-language-team",
   "license": "AGPL-3.0",
   "engines": {

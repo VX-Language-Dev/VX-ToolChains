@@ -1,0 +1,4 @@
+# Smoke test: 验证编译器/运行时基础能力
+func main():
+    out("VX Standard Library Smoke Test\n")
+    out("Hello from VX!\n")

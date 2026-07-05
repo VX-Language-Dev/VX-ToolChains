@@ -1,0 +1,6 @@
+# VX Standard Library - I/O Module
+#
+# Provides basic input/output functions.
+# Implementations are provided by the AOT linker built-in stubs.
+
+extern func out(value: int)

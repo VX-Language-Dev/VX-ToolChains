@@ -1,0 +1,83 @@
+# ============================================================
+# std::char —— 字符分类工具
+# 依赖 VM 内建 ord(c) 返回 Unicode 码点
+# ============================================================
+
+import std.error
+
+class Char:
+    # 是否为 ASCII 数字 '0'..'9'
+    func is_digit(c: var) -> bool:
+        var code = ord(c)
+        return code >= 48 && code <= 57
+
+    # 是否为 ASCII 字母（含大小写）
+    func is_alpha(c: var) -> bool:
+        var code = ord(c)
+        return (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+
+    # 是否为 ASCII 字母或数字
+    func is_alnum(c: var) -> bool:
+        return Char.is_alpha(c) || Char.is_digit(c)
+
+    # 是否为空白字符（空格、\t、\n、\r、全角空格）
+    func is_whitespace(c: var) -> bool:
+        var code = ord(c)
+        return code == 32 || code == 9 || code == 10 || code == 13 || code == 12288
+
+    # 是否为小写 ASCII 字母
+    func is_lower(c: var) -> bool:
+        var code = ord(c)
+        return code >= 97 && code <= 122
+
+    # 是否为大写 ASCII 字母
+    func is_upper(c: var) -> bool:
+        var code = ord(c)
+        return code >= 65 && code <= 90
+
+    # 是否为 CJK 统一表意文字或常见 CJK 符号区
+    func is_cjk(c: var) -> bool:
+        var code = ord(c)
+        return (code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3000 && code <= 0x303F) || (code >= 0xFF00 && code <= 0xFFEF)
+
+    # 是否为下划线
+    func is_underscore(c: var) -> bool:
+        return ord(c) == 95
+
+    # 是否可作为标识符首字符（字母、下划线、CJK）
+    func is_ident_start(c: var) -> bool:
+        return Char.is_alpha(c) || Char.is_underscore(c) || Char.is_cjk(c)
+
+    # 是否可作为标识符后续字符（字母、数字、下划线、CJK）
+    func is_ident_part(c: var) -> bool:
+        return Char.is_alnum(c) || Char.is_underscore(c) || Char.is_cjk(c)
+
+    # 将字符转为小写（仅 ASCII）
+    func to_lower(c: var) -> var:
+        var code = ord(c)
+        if code >= 65 && code <= 90:
+            return chr(code + 32)
+        return c
+
+    # 将字符转为大写（仅 ASCII）
+    func to_upper(c: var) -> var:
+        var code = ord(c)
+        if code >= 97 && code <= 122:
+            return chr(code - 32)
+        return c
+
+# 顶层便捷函数
+func is_digit(c: var) -> bool:
+    return Char.is_digit(c)
+
+func is_alpha(c: var) -> bool:
+    return Char.is_alpha(c)
+
+func is_alnum(c: var) -> bool:
+    return Char.is_alnum(c)
+
+func is_whitespace(c: var) -> bool:
+    return Char.is_whitespace(c)
+
+func is_cjk(c: var) -> bool:
+    return Char.is_cjk(c)

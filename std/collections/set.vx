@@ -1,0 +1,124 @@
+# ============================================================
+# std::collections::set —— 集合
+# 基于 HashMap 实现
+# ============================================================
+
+import std.collections.hashmap
+
+# ---- Set 类：不重复元素集合 ----
+class Set:
+    inner: var          # HashMap 实例
+    len: int            # 元素数量
+
+    # ========== 构造器 ==========
+
+    func new() -> var:
+        var s = new Set()
+        s.inner = new HashMap()
+        s.len = 0
+        return s
+
+    # ========== 基本操作 ==========
+
+    # 插入元素（已存在则忽略）
+    func insert(val: var):
+        if self.inner.contains(val) == false:
+            self.inner.insert(val, true)
+            self.len = self.len + 1
+
+    # 移除元素
+    func remove(val: var) -> var:
+        var r = self.inner.remove(val)
+        if r.is_ok:
+            self.len = self.len - 1
+        return r
+
+    # 检查是否包含
+    func contains(val: var) -> bool:
+        return self.inner.contains(val)
+
+    # 获取大小
+    func size() -> int:
+        return self.len
+
+    # 是否为空
+    func is_empty() -> bool:
+        if self.len == 0:
+            return true
+        return false
+
+    # 清空
+    func clear():
+        self.inner.clear()
+        self.len = 0
+
+    # ========== 集合运算 ==========
+
+    # 并集：返回新 Set，包含 self 和 other 的所有元素
+    func union(other: var) -> var:
+        var result = new Set()
+        # 添加 self 的所有元素
+        var self_keys = self.inner.keys()
+        var i = 0
+        while i < self_keys.size():
+            result.insert(self_keys.get(i).unwrap())
+            i = i + 1
+        # 添加 other 的所有元素
+        var other_keys = other.inner.keys()
+        i = 0
+        while i < other_keys.size():
+            result.insert(other_keys.get(i).unwrap())
+            i = i + 1
+        return result
+
+    # 交集：返回同时存在于 self 和 other 的元素
+    func intersection(other: var) -> var:
+        var result = new Set()
+        var self_keys = self.inner.keys()
+        var i = 0
+        while i < self_keys.size():
+            var key = self_keys.get(i).unwrap()
+            if other.contains(key):
+                result.insert(key)
+            i = i + 1
+        return result
+
+    # 差集：返回在 self 但不在 other 中的元素
+    func difference(other: var) -> var:
+        var result = new Set()
+        var self_keys = self.inner.keys()
+        var i = 0
+        while i < self_keys.size():
+            var key = self_keys.get(i).unwrap()
+            if other.contains(key) == false:
+                result.insert(key)
+            i = i + 1
+        return result
+
+    # 是否为子集
+    func is_subset(other: var) -> bool:
+        var self_keys = self.inner.keys()
+        var i = 0
+        while i < self_keys.size():
+            if other.contains(self_keys.get(i).unwrap()) == false:
+                return false
+            i = i + 1
+        return true
+
+    # 是否为超集
+    func is_superset(other: var) -> bool:
+        return other.is_subset(self)
+
+    # ========== 字符串表示 ==========
+
+    func to_string() -> var:
+        var s = "Set{"
+        var self_keys = self.inner.keys()
+        var i = 0
+        while i < self_keys.size():
+            if i > 0:
+                s = s + ", "
+            s = s + self_keys.get(i).unwrap()
+            i = i + 1
+        s = s + "}"
+        return s

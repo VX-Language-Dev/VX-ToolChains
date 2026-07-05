@@ -8,11 +8,11 @@ license = "AGPL-3.0"
 
 
 [[bin]]
-name = "vxcompiler"
+name = "vxc"
 path = "src/ipt.rs"
 
 [[bin]]
-name = "vxlinker"
+name = "vlnk"
 path = "src/vxlinker.rs"
 
 [[bin]]
@@ -22,6 +22,14 @@ path = "src/pm.rs"
 [[bin]]
 name = "vx-lsp"
 path = "src/lsp/main.rs"
+
+[[bin]]
+name = "vxde"
+path = "src/vxdecompiler.rs"
+
+[[bin]]
+name = "vdlnk"
+path = "src/vxdelinker.rs"
 
 [lib]
 name = "vx_vm"
@@ -34,6 +42,7 @@ lsp-types = "0.95"
 tokio = { version = "1", features = ["full", "io-util"] }
 dashmap = "5"
 target-lexicon = "0.12"
+which = "6"
 
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
@@ -52,6 +61,7 @@ toml = "0.8"
 #   - 32 位目标 (i686, armv7) 理论上支持但未测试
 #
 cranelift-codegen = { version = "0.110", optional = true, features = ["all-arch"] }
+object = { version = "0.36", features = ["read", "write", "elf", "macho", "pe"] }
 cranelift-frontend = { version = "0.110", optional = true }
 cranelift-module = { version = "0.110", optional = true }
 cranelift-object = { version = "0.110", optional = true }

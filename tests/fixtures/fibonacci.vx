@@ -1,0 +1,9 @@
+// 斐波那契数列测试
+func fib(n: int) -> int:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+func main():
+    var result = fib(10)
+    out(result)  // 预期输出: 55

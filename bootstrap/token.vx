@@ -1,0 +1,248 @@
+# ============================================================
+# bootstrap/token.vx —— Token 类型定义
+# VX 自举编译器的词法单元定义
+# ============================================================
+
+# ---- TokenType 枚举 ----
+# 与 Rust 版本的 token.rs 保持一致
+enum TokenType:
+    # 结束符
+    EOF = 0
+    Newline = 1
+
+    # 标识符和字面量
+    Identifier = 100
+    IntLiteral = 101
+    FloatLiteral = 102
+    StringLiteral = 103
+
+    # 关键字 (22 核心 + 5 原生类型)
+    If = 200
+    Else = 201
+    Elif = 202
+    For = 203
+    While = 204
+    Break = 205
+    Continue = 206
+    Func = 207
+    Return = 208
+    True = 209
+    False = 210
+    Nil = 211
+    In = 212
+    Import = 213
+    As = 214
+    VarT = 215        # var 关键字
+    Struct = 216
+    Class = 217
+    Enum = 218
+    Union = 219
+    New = 220
+    Move = 221
+    Macro = 222
+
+    # 原生标量类型
+    IntT = 250
+    FloatT = 251
+    DoubleT = 252
+    BoolT = 253
+    VoidT = 254
+
+    # 运算符
+    Plus = 300
+    Minus = 301
+    Star = 302
+    Slash = 303
+    Percent = 304
+    Caret = 305
+    Bang = 306
+    Ampersand = 307
+    Pipe = 308
+    Tilde = 309
+
+    # 复合赋值运算符
+    PlusAssign = 310
+    MinusAssign = 311
+    StarAssign = 312
+    SlashAssign = 313
+    PercentAssign = 314
+    PowerAssign = 315
+    AmpersandAssign = 316
+
+    # 比较运算符
+    EqEq = 320
+    Neq = 321
+    Lt = 322
+    Gt = 323
+    Le = 324
+    Ge = 325
+    Eq = 326        # 赋值
+
+    # 逻辑运算符 (符号形式)
+    And = 330
+    Or = 331
+    Not = 332
+
+    # 分隔符
+    LParen = 400
+    RParen = 401
+    LBrace = 402
+    RBrace = 403
+    LBracket = 404
+    RBracket = 405
+    Comma = 406
+    Dot = 407
+    Colon = 408
+    Semicolon = 409
+    Arrow = 410
+    Hash = 411      # # 宏调用符号
+    Lt2 = 412       # << 左移
+    Gt2 = 413       # >> 右移
+
+    # 注解
+    Comment = 500
+
+# ---- Token 结构 ----
+class Token:
+    kind: int
+    value: var
+    line: int
+    col: int
+
+    func new(kind: int, value: var, line: int, col: int) -> var:
+        var t = new Token()
+        t.kind = kind
+        t.value = value
+        t.line = line
+        t.col = col
+        return t
+
+    func type_name() -> var:
+        return TokenType.name(self.kind)
+
+    func is_keyword() -> bool:
+        return self.kind >= 200 and self.kind < 250
+
+    func is_literal() -> bool:
+        return self.kind >= 100 and self.kind < 200
+
+    func is_operator() -> bool:
+        return self.kind >= 300 and self.kind < 400
+
+    func to_string() -> var:
+        return "Token(" + self.type_name() + ", " + str(self.value) + ", " + self.line + ":" + self.col + ")"
+
+# ---- TokenType 辅助函数 ----
+class TokenType:
+    func name(t: int) -> var:
+        if t == 0: return "EOF"
+        if t == 1: return "Newline"
+        if t == 100: return "Identifier"
+        if t == 101: return "IntLiteral"
+        if t == 102: return "FloatLiteral"
+        if t == 103: return "StringLiteral"
+        if t == 200: return "If"
+        if t == 201: return "Else"
+        if t == 202: return "Elif"
+        if t == 203: return "For"
+        if t == 204: return "While"
+        if t == 205: return "Break"
+        if t == 206: return "Continue"
+        if t == 207: return "Func"
+        if t == 208: return "Return"
+        if t == 209: return "True"
+        if t == 210: return "False"
+        if t == 211: return "Nil"
+        if t == 212: return "In"
+        if t == 213: return "Import"
+        if t == 214: return "As"
+        if t == 215: return "VarT"
+        if t == 216: return "Struct"
+        if t == 217: return "Class"
+        if t == 218: return "Enum"
+        if t == 219: return "Union"
+        if t == 220: return "New"
+        if t == 221: return "Move"
+        if t == 222: return "Macro"
+        if t == 250: return "IntT"
+        if t == 251: return "FloatT"
+        if t == 252: return "DoubleT"
+        if t == 253: return "BoolT"
+        if t == 254: return "VoidT"
+        if t == 300: return "Plus"
+        if t == 301: return "Minus"
+        if t == 302: return "Star"
+        if t == 303: return "Slash"
+        if t == 304: return "Percent"
+        if t == 305: return "Caret"
+        if t == 306: return "Bang"
+        if t == 307: return "Ampersand"
+        if t == 308: return "Pipe"
+        if t == 309: return "Tilde"
+        if t == 310: return "PlusAssign"
+        if t == 311: return "MinusAssign"
+        if t == 312: return "StarAssign"
+        if t == 313: return "SlashAssign"
+        if t == 314: return "PercentAssign"
+        if t == 315: return "PowerAssign"
+        if t == 316: return "AmpersandAssign"
+        if t == 320: return "EqEq"
+        if t == 321: return "Neq"
+        if t == 322: return "Lt"
+        if t == 323: return "Gt"
+        if t == 324: return "Le"
+        if t == 325: return "Ge"
+        if t == 326: return "Eq"
+        if t == 330: return "And"
+        if t == 331: return "Or"
+        if t == 332: return "Not"
+        if t == 400: return "LParen"
+        if t == 401: return "RParen"
+        if t == 402: return "LBrace"
+        if t == 403: return "RBrace"
+        if t == 404: return "LBracket"
+        if t == 405: return "RBracket"
+        if t == 406: return "Comma"
+        if t == 407: return "Dot"
+        if t == 408: return "Colon"
+        if t == 409: return "Semicolon"
+        if t == 410: return "Arrow"
+        if t == 411: return "Hash"
+        if t == 412: return "Lt2"
+        if t == 413: return "Gt2"
+        if t == 500: return "Comment"
+        return "Unknown(" + t + ")"
+
+# ---- 关键字表 ----
+# 用于将关键字字符串转换为 TokenType
+class Keywords:
+    func lookup(word: var) -> int:
+        if word == "if": return 200
+        if word == "else": return 201
+        if word == "elif": return 202
+        if word == "for": return 203
+        if word == "while": return 204
+        if word == "break": return 205
+        if word == "continue": return 206
+        if word == "func": return 207
+        if word == "return": return 208
+        if word == "true": return 209
+        if word == "false": return 210
+        if word == "nil": return 211
+        if word == "in": return 212
+        if word == "import": return 213
+        if word == "as": return 214
+        if word == "var": return 215
+        if word == "struct": return 216
+        if word == "class": return 217
+        if word == "enum": return 218
+        if word == "union": return 219
+        if word == "new": return 220
+        if word == "move": return 221
+        if word == "macro": return 222
+        if word == "int": return 250
+        if word == "float": return 251
+        if word == "double": return 252
+        if word == "bool": return 253
+        if word == "void": return 254
+        return 0   # 0 表示未找到，作为标识符处理

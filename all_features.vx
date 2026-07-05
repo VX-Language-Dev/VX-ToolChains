@@ -1,0 +1,455 @@
+
+# VX Language - 完整功能展示 / All Features Demo
+# 涵盖: 字面量 / 变量声明 / 运算符 / 控制流 / 函数 /
+#       结构体 / 类 / 枚举 / 联合体 / 导入 / 宏 / 指针 /
+#       所有权 / 数组 / 映射 / 泛型 / 复合赋值 / 多行条件
+# ============================================================
+import std.io
+import std.math as math
+
+# ============================================================
+# 宏定义 (Macro Definition)
+# ============================================================
+macro twice(x) { x + x }
+macro square(x) { x * x }
+macro log(msg) { sys_print(msg) }
+
+# ============================================================
+# 枚举 (Enum)
+# ============================================================
+enum Color:
+    Red
+    Green
+    Blue
+
+enum HttpStatus:
+    OK = 200
+    NotFound = 404
+    Error = 500
+
+# ============================================================
+# 联合体 (Union)
+# ============================================================
+union Value:
+    i: int
+    f: float
+    b: bool
+
+# ============================================================
+# 结构体 (Struct)
+# ============================================================
+struct Point:
+    x: int
+    y: int
+
+struct Rect:
+    x: int
+    y: int
+    w: int
+    h: int
+
+# 泛型结构体 (Generic Struct)
+struct Pair<T>:
+    first: T
+    second: T
+
+struct Option<T>:
+    value: T
+    has_value: bool
+
+# ============================================================
+# 类 (Class) - 含继承
+# ============================================================
+class Animal:
+    name: string
+    age: int
+
+    func speak()
+        sys_print("...")
+
+class Dog : Animal:
+    breed: string
+
+    func speak()
+        sys_print("Woof!")
+
+class Cat : Animal:
+    fur_color: string
+
+    func speak()
+        sys_print("Meow!")
+
+# ============================================================
+# 函数定义 (Function Definitions)
+# ============================================================
+
+# 无参数无返回值
+func greet()
+    sys_print("Hello, VX!")
+
+# 带参数
+func add(a: int, b: int) -> int
+    return a + b
+
+# 多参数
+func calculate(a: int, b: int, c: int) -> int
+    return a + b * c
+
+# 无返回值函数
+func log_message(msg: string)
+    sys_print(msg)
+
+# 带默认返回
+func get_zero() -> int
+    return 0
+
+# 空返回
+func abort_if(cond: bool)
+    if cond
+        return
+    sys_print("继续")
+
+func factorial(n: int) -> int
+    if n <= 1
+        return 1
+    return n * factorial(n - 1)
+
+# ============================================================
+# 演示函数 - 变量声明与字面量
+# ============================================================
+func demo_literals()
+    # 整数 (Int)
+    a: int = 42
+    b: int = 0
+    c: int = 10000
+
+    # 浮点数 (Float)
+    pi: float = 3.14
+    e: float = 2.718
+    sci: float = 1.5e3
+    neg_sci: float = 2.5e-3
+
+    # 双精度 (Double)
+    d: double = 3.141592653589793
+
+    # 布尔 (Bool)
+    t: bool = true
+    f: bool = false
+
+    # 字符串 (String)
+    s1: string = "hello"
+    s2: string = 'world'
+    escaped: string = "line1\nline2\ttab"
+    multiline: string = "hello\nworld"
+
+    # 空值 (Nil)
+    n: pointer = nil
+
+# ============================================================
+# 演示函数 - 变量与可变性
+# ============================================================
+func demo_vars()
+    # 不可变变量 (默认)
+    x: int = 1
+
+    # 可变变量 (mut)
+    mut y: int = 1
+    y = 2
+    y += 3
+    y -= 1
+    y *= 2
+    y /= 4
+    y %= 3
+
+    # 声明但不初始化 (使用默认零值)
+    z: int
+    flag: bool
+    name: string
+
+# ============================================================
+# 演示函数 - 运算符
+# ============================================================
+func demo_operators()
+    # 算术运算符
+    sum: int = 1 + 2
+    diff: int = 5 - 3
+    prod: int = 2 * 3
+    quot: int = 10 / 3
+    rem: int = 10 % 3
+    pow: int = 2 ^ 10
+
+    # 比较运算符
+    eq: bool = 1 == 1
+    ne: bool = 2 != 3
+    lt: bool = 1 < 2
+    gt: bool = 3 > 1
+    le: bool = 2 <= 3
+    ge: bool = 3 >= 2
+
+    # 逻辑运算符 (关键字形式)
+    land: bool = true and false
+    lor: bool = true or false
+    lnot: bool = not true
+
+    # 逻辑运算符 (符号形式)
+    sand: bool = true && false
+    sor: bool = true || false
+    snot: bool = !true
+
+    # 运算符优先级
+    r1: int = 1 + 2 * 3
+    r2: int = (1 + 2) * 3
+    r3: bool = 1 < 2 and 3 > 4
+    r4: int = 2 ^ 3 + 1
+
+# ============================================================
+# 演示函数 - 控制流
+# ============================================================
+func demo_if()
+    x: int = 5
+
+    # if 语句
+    if x > 0
+        sys_print("正数")
+
+    # if-else
+    if x % 2 == 0
+        sys_print("偶数")
+    else
+        sys_print("奇数")
+
+    # if-elif-else
+    if x > 0
+        sys_print("正数")
+    elif x < 0
+        sys_print("负数")
+    else
+        sys_print("零")
+
+    # 多行条件 (续行)
+    a: int = 1
+    b: int = 2
+    c: int = 3
+    if a > 0 or
+       b > 0 or
+       c > 0
+        sys_print("至少一个为正")
+
+func demo_while()
+    mut i: int = 0
+    while i < 10
+        i = i + 1
+    # 最终 i == 10
+
+func demo_for()
+    # for-in 循环
+    total: int = 0
+    for i in range
+        total: int = total + i
+
+    for item in items
+        sys_print(item)
+
+# ============================================================
+# 演示函数 - 模式匹配 (match)
+# ============================================================
+func demo_match()
+    # 基础模式匹配 - 枚举匹配
+    c: Color = Color.Red
+    match c:
+        Color.Red: sys_print("red")
+        Color.Green: sys_print("green")
+        Color.Blue: sys_print("blue")
+
+    # 匹配带值枚举
+    code: HttpStatus = HttpStatus.OK
+    match code:
+        HttpStatus.OK: sys_print("success")
+        HttpStatus.NotFound: sys_print("not found")
+        HttpStatus.Error: sys_print("server error")
+
+    # 整数值匹配
+    x: int = 42
+    match x:
+        0: sys_print("zero")
+        42: sys_print("answer")
+        _: sys_print("something else")
+
+    # 多分支模式匹配
+    n: int = 5
+    match n:
+        0: sys_print("zero")
+        1: sys_print("one")
+        2: sys_print("two")
+        3: sys_print("three")
+        _: sys_print("other")
+
+    # 布尔匹配
+    b: bool = true
+    match b:
+        true: sys_print("yes")
+        false: sys_print("no")
+
+    return
+
+func demo_loop()
+    mut i: int = 0
+    loop:
+        i = i + 1
+        if i > 10
+            break
+        if i % 2 == 0
+            continue
+    # 循环终止时 i == 11
+
+    # 带标签的 loop / break / continue
+    mut j: int = 0
+    loop outer:
+        j = j + 1
+        loop inner:
+            if j > 5
+                break outer
+            break inner
+
+# ============================================================
+# 演示函数 - 指针与内存操作
+# ============================================================
+func demo_pointers()
+    # new 分配
+    p: pointer = new int
+    q: pointer = new Point
+    r: pointer = new Point
+
+    # 取地址（不可变借用）
+    x: int = 42
+    addr: pointer = &x
+    val: int = *addr
+
+    # 取地址（可变借用，使用不同变量避免冲突）
+    mut y: int = 100
+    mut_addr: pointer = &mut y
+    v2: int = *mut_addr
+
+    # 指针成员访问
+    pt: pointer = new Point
+    px: int = pt->x
+
+    # move 语义
+    a: pointer = new int
+    b: pointer = move a
+
+    # free (通过函数调用)
+    p2: pointer = new int
+    free(p2)
+
+# ============================================================
+# 演示函数 - 属性访问与方法调用
+# ============================================================
+func demo_properties()
+    pt: Point
+    pt.x = 10
+    pt.y = 20
+    rx: int = pt.x
+    ry: int = pt.y
+
+    # 方法调用
+    dog: Dog
+    dog.speak()
+    dog.name = "Buddy"
+    dog.age = 3
+    dog.breed = "Labrador"
+    n: string = dog.name
+
+    # 链式调用
+    # obj.method1().method2()
+
+# ============================================================
+# 演示函数 - 数组与映射
+# ============================================================
+func demo_arrays()
+    # 数组
+    arr: array = [1, 2, 3]
+    empty: array = []
+    first: int = arr[0]
+    arr[1] = 42
+
+    # 映射
+    m: map = {"key": "value"}
+    v: string = m["key"]
+
+# ============================================================
+# 演示函数 - 导入
+# ============================================================
+import std.collections.vec
+import std.error as err
+
+# ============================================================
+# 演示函数 - 宏调用
+# ============================================================
+func demo_macros()
+    # 宏展开（宏调用目前仅支持语句级别）
+    #twice(5)
+    #square(3)
+    #log("宏调用演示")
+
+# ============================================================
+# 演示函数 - 嵌套控制流与复杂场景
+# ============================================================
+func demo_nested()
+    mut result: int = 0
+    for i in range
+        if i == 0
+            continue
+        if i % 2 == 0
+            result = result + i
+        else
+            result = result - i
+        if result > 100
+            break
+    return result
+
+func demo_deeply_nested()
+    mut i: int = 0
+    while i < 10
+        if i % 2 == 0
+            i = i + 1
+        else
+            i = i + 2
+
+# ============================================================
+# 演示函数 - 函数作为参数 (高阶函数)
+# ============================================================
+func apply(f: pointer, x: int) -> int
+    return x
+
+func compose(f: pointer, g: pointer, x: int) -> int
+    return x
+
+# ============================================================
+# 主函数
+# ============================================================
+func main()
+    greet()
+    s: int = add(1, 2)
+    r: int = calculate(1, 2, 3)
+    f: int = factorial(5)
+
+    demo_literals()
+    demo_vars()
+    demo_operators()
+    demo_if()
+    demo_while()
+    demo_for()
+    demo_loop()
+    demo_match()
+    demo_pointers()
+    demo_properties()
+    demo_arrays()
+    demo_macros()
+    demo_nested()
+    demo_deeply_nested()
+
+    # 泛型使用
+    pair: Pair<int>
+    pair.first = 1
+    pair.second = 2

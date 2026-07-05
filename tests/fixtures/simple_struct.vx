@@ -1,0 +1,10 @@
+# Simple struct test
+struct Point:
+    x: int
+    y: int
+
+func main():
+    var p = new Point(10, 20)
+    out(p.x)
+    out(p.y)
+    out(p.x + p.y)

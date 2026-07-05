@@ -1,0 +1,84 @@
+# ============================================================
+# std::string::pattern —— 模式匹配
+# 第一版支持基本通配符 * 和 ?
+# ============================================================
+
+import std.error
+import std.collections.vec
+
+# ---- Pattern 类：通配符/正则匹配 ----
+class Pattern:
+    raw: var            # 模式字符串
+
+    func new(pattern_str: var) -> var:
+        var p = new Pattern()
+        p.raw = pattern_str
+        return p
+
+    # 测试是否匹配（通配符模式）
+    # * 匹配任意字符序列（包括空）
+    # ? 匹配单个字符
+    func test(text: var) -> bool:
+        var t_len = len(text)
+        var p_len = len(self.raw)
+        # dp[i][j] = text[0..i] 是否匹配 pattern[0..j]
+        # 简化实现：递归匹配
+        return Pattern._match(text, self.raw, 0, 0, t_len, p_len)
+
+    # 内部递归匹配
+    func _match(text: var, pat: var, ti: int, pi: int, t_len: int, p_len: int) -> bool:
+        # 到达模式末尾
+        if pi >= p_len:
+            if ti >= t_len:
+                return true
+            return false
+
+        # 处理 *
+        if pat[pi] == "*":
+            # 匹配 0 个字符
+            if Pattern._match(text, pat, ti, pi + 1, t_len, p_len):
+                return true
+            # 匹配 n 个字符
+            if ti < t_len:
+                if Pattern._match(text, pat, ti + 1, pi, t_len, p_len):
+                    return true
+            return false
+
+        if ti >= t_len:
+            return false
+
+        # 处理 ?
+        if pat[pi] == "?":
+            return Pattern._match(text, pat, ti + 1, pi + 1, t_len, p_len)
+
+        # 处理普通字符
+        if text[ti] == pat[pi]:
+            return Pattern._match(text, pat, ti + 1, pi + 1, t_len, p_len)
+
+        return false
+
+    # 匹配并返回捕获组（通配符模式下无捕获组，返回单个匹配）
+    func match(text: var) -> var:
+        if self.test(text):
+            # 返回单个匹配（完整文本）
+            return Result.ok(text)
+        return Result.err(error.value_error("Pattern.match: no match"))
+
+    # 全局搜索所有匹配（通配符模式简化：返回完整匹配位置）
+    func find_all(text: var) -> var:
+        var results = new Vec()
+        var t_len = len(text)
+        var p_len = len(self.raw)
+        var start = 0
+        while start < t_len:
+            if Pattern._match(text, self.raw, start, 0, t_len, p_len):
+                # 找到匹配，计算匹配长度
+                results.push(start)
+            start = start + 1
+        return results
+
+    # 替换匹配
+    func replace(text: var, replacement: var) -> var:
+        if self.test(text) == false:
+            return text
+        return replacement

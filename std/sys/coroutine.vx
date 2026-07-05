@@ -1,0 +1,46 @@
+# ============================================================
+# std::sys::coroutine —— 协程（用户态轻量级并发）
+# 第一版：占位定义，等待 VM 层支持
+# ============================================================
+
+import std.error
+
+# ---- CoroutineState 枚举 ----
+enum CoroutineState:
+    Ready     = 0
+    Running   = 1
+    Suspended = 2
+    Done      = 3
+
+# ---- Coroutine 类：协程句柄 ----
+class Coroutine:
+    id: int
+    state: int
+
+    # 创建协程
+    func spawn(func: var) -> var:
+        # TODO: 需要 VM 层 CallFrame 保存/恢复机制
+        var co = new Coroutine()
+        co.id = 0
+        co.state = CoroutineState.Ready
+        return co
+
+    # 恢复执行
+    func resume() -> var:
+        # TODO: 需要 VM 支持
+        return Result.err(error.runtime_error("Coroutine.resume: not implemented"))
+
+    # 让出执行权
+    func yield_co():
+        # TODO: 需要 VM 支持
+        pass
+
+    # 是否完成
+    func is_done() -> bool:
+        if self.state == CoroutineState.Done:
+            return true
+        return false
+
+    # 获取协程 ID
+    func get_id() -> int:
+        return self.id

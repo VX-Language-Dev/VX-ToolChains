@@ -1,0 +1,68 @@
+# ============================================================
+# std::option —— Option[T] 替代实现
+# 提供 some/none、map、unwrap_or 等常用操作
+# ============================================================
+
+import std.error
+
+class Option:
+    is_some: bool
+    value: var
+
+    # 创建 Some 值
+    func some(v: var) -> var:
+        var o = new Option()
+        o.is_some = true
+        o.value = v
+        return o
+
+    # 创建 None 值
+    func none() -> var:
+        var o = new Option()
+        o.is_some = false
+        o.value = nil
+        return o
+
+    # 是否有值
+    func is_some() -> bool:
+        return self.is_some
+
+    # 是否为空
+    func is_none() -> bool:
+        return self.is_some == false
+
+    # 解包，失败时返回 default
+    func unwrap_or(default: var) -> var:
+        if self.is_some:
+            return self.value
+        return default
+
+    # 强制解包（失败时返回错误对象）
+    func unwrap() -> var:
+        if self.is_some:
+            return self.value
+        return error.value_error("Option.unwrap on None")
+
+    # 映射函数
+    func map(f: var) -> var:
+        if self.is_some:
+            return Option.some(f(self.value))
+        return Option.none()
+
+    # 若 Some 则执行副作用函数
+    func if_some(f: var):
+        if self.is_some:
+            f(self.value)
+
+    # 字符串表示
+    func to_string() -> var:
+        if self.is_some:
+            return "Some(" + self.value + ")"
+        return "None"
+
+# 顶层便捷函数
+func some(v: var) -> var:
+    return Option.some(v)
+
+func none() -> var:
+    return Option.none()

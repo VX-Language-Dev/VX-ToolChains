@@ -1,0 +1,10 @@
+struct Point:
+    x: int
+    y: int
+
+func main():
+    p: Point = new Point(10, 20) 
+    out(p.x)
+    out(p.y)
+    out(999)
+    free(p)

@@ -1,0 +1,65 @@
+# ============================================================
+# std::bytes —— 字节缓冲区
+# 为 VXOBJ 二进制生成提供基础支持
+# 底层用 Vec<int> 存储 0..255
+# ============================================================
+
+import std.collections.vec
+import std.error
+
+class ByteBuffer:
+    data: Vec<int>   # Vec<int>
+
+    func new() -> ByteBuffer:
+        b = new ByteBuffer()
+        b.data = new Vec<int>()
+        return b
+
+    # 写入单字节（0..255）
+    func write_u8(v: int):
+        self.data.push(v % 256)
+
+    # 大端写入 32 位无符号整数
+    func write_u32_be(v: int):
+        self.write_u8(v / 16777216 % 256)
+        self.write_u8(v / 65536 % 256)
+        self.write_u8(v / 256 % 256)
+        self.write_u8(v % 256)
+
+    # 写入原始字节数组
+    func write_bytes(arr: Vec<int>):
+        i = 0
+        while i < len(arr):
+            self.data.push(arr[i] % 256)
+            i = i + 1
+
+    # 将字符串按 UTF-8 字节写入（每个字符一个码点字节，仅适合 ASCII/字节串）
+    func write_str(s: str):                                     
+        var i = 0
+        while i < len(s):
+            self.data.push(ord(s[i]) % 256)
+            i = i + 1
+
+    # 返回原始字节数组
+    func to_vec() -> Vec<int>:
+        return self.data.to_array()
+
+    # 当前缓冲区大小
+    func size() -> int:
+        return self.data.size()
+
+    # 清空缓冲区
+    func clear():
+        self.data.clear()
+
+    # 写入另一个 ByteBuffer 的内容
+    func write_buffer(other: ByteBuffer):
+        var bytes = other.to_vec()
+        self.write_bytes(bytes)
+
+    # 生成 4 字节大端长度前缀 + 内容
+    func write_with_length_prefix() -> ByteBuffer:
+        result = new ByteBuffer()
+        result.write_u32_be(self.size())
+        result.write_buffer(self)
+        return result

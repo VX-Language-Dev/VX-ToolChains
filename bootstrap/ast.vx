@@ -1,0 +1,541 @@
+# ============================================================
+# bootstrap/ast.vx —— AST 节点定义
+# VX 自举编译器的语法树节点
+# ============================================================
+
+# ---- AST 节点类型枚举 ----
+enum AstNodeType:
+    # 字面量
+    IntLiteral = 1
+    FloatLiteral = 2
+    StringLiteral = 3
+    BoolLiteral = 4
+    NilLiteral = 5
+    ArrayLiteral = 6
+    MapLiteral = 7
+
+    # 标识符和引用
+    Identifier = 10
+    TypeExpr = 11
+
+    # 表达式
+    BinaryOp = 20
+    UnaryOp = 21
+    CallExpr = 22
+    IndexAccess = 23
+    PropertyAccess = 24
+    NewExpr = 25
+
+    # 声明
+    VarDecl = 30
+    FuncDecl = 31
+    StructDecl = 32
+    ClassDecl = 33
+    EnumDecl = 34
+    UnionDecl = 35
+
+    # 语句
+    ExprStmt = 40
+    ReturnStmt = 41
+    IfStmt = 42
+    WhileStmt = 43
+    ForStmt = 44
+    BreakStmt = 45
+    ContinueStmt = 46
+    ImportStmt = 47
+    MatchStmt = 48
+
+    # 宏
+    MacroDef = 50
+    MacroCall = 51
+
+    # 其他
+    Program = 100
+    Block = 101
+
+# ---- 位置信息 ----
+class Pos:
+    line: int
+    col: int
+
+    func new(line: int, col: int) -> var:
+        var p = new Pos()
+        p.line = line
+        p.col = col
+        return p
+
+# ---- AST 节点基类 ----
+class AstNode:
+    node_type: int
+    pos: var
+
+    func node_type_name() -> var:
+        return AstNodeType.name(self.node_type)
+
+# ---- 字面量节点 ----
+class IntLiteral:
+    node_type = 1
+    value: int
+    pos: var
+
+    func new(value: int, line: int, col: int) -> var:
+        var n = new IntLiteral()
+        n.value = value
+        n.pos = Pos.new(line, col)
+        return n
+
+class FloatLiteral:
+    node_type = 2
+    value: float
+    pos: var
+
+    func new(value: float, line: int, col: int) -> var:
+        var n = new FloatLiteral()
+        n.value = value
+        n.pos = Pos.new(line, col)
+        return n
+
+class StringLiteral:
+    node_type = 3
+    value: var
+    pos: var
+
+    func new(value: var, line: int, col: int) -> var:
+        var n = new StringLiteral()
+        n.value = value
+        n.pos = Pos.new(line, col)
+        return n
+
+class BoolLiteral:
+    node_type = 4
+    value: bool
+    pos: var
+
+    func new(value: bool, line: int, col: int) -> var:
+        var n = new BoolLiteral()
+        n.value = value
+        n.pos = Pos.new(line, col)
+        return n
+
+class NilLiteral:
+    node_type = 5
+    pos: var
+
+    func new(line: int, col: int) -> var:
+        var n = new NilLiteral()
+        n.pos = Pos.new(line, col)
+        return n
+
+class ArrayLiteral:
+    node_type = 6
+    elements: var  # Vec[Expr]
+    pos: var
+
+    func new(elements: var, line: int, col: int) -> var:
+        var n = new ArrayLiteral()
+        n.elements = elements
+        n.pos = Pos.new(line, col)
+        return n
+
+class MapLiteral:
+    node_type = 7
+    pairs: var  # Vec[(Expr, Expr)]
+    pos: var
+
+    func new(pairs: var, line: int, col: int) -> var:
+        var n = new MapLiteral()
+        n.pairs = pairs
+        n.pos = Pos.new(line, col)
+        return n
+
+# ---- 标识符节点 ----
+class Identifier:
+    node_type = 10
+    name: var
+    pos: var
+
+    func new(name: var, line: int, col: int) -> var:
+        var n = new Identifier()
+        n.name = name
+        n.pos = Pos.new(line, col)
+        return n
+
+class TypeExpr:
+    node_type = 11
+    name: var
+    pos: var
+
+    func new(name: var, line: int, col: int) -> var:
+        var n = new TypeExpr()
+        n.name = name
+        n.pos = Pos.new(line, col)
+        return n
+
+# ---- 表达式节点 ----
+class BinaryOp:
+    node_type = 20
+    operator: var
+    left: var
+    right: var
+    pos: var
+
+    func new(operator: var, left: var, right: var, line: int, col: int) -> var:
+        var n = new BinaryOp()
+        n.operator = operator
+        n.left = left
+        n.right = right
+        n.pos = Pos.new(line, col)
+        return n
+
+class UnaryOp:
+    node_type = 21
+    operator: var
+    operand: var
+    pos: var
+
+    func new(operator: var, operand: var, line: int, col: int) -> var:
+        var n = new UnaryOp()
+        n.operator = operator
+        n.operand = operand
+        n.pos = Pos.new(line, col)
+        return n
+
+class CallExpr:
+    node_type = 22
+    callee: var
+    args: var  # Vec[Expr]
+    pos: var
+
+    func new(callee: var, args: var, line: int, col: int) -> var:
+        var n = new CallExpr()
+        n.callee = callee
+        n.args = args
+        n.pos = Pos.new(line, col)
+        return n
+
+class IndexAccess:
+    node_type = 23
+    object: var
+    index: var
+    pos: var
+
+    func new(object: var, index: var, line: int, col: int) -> var:
+        var n = new IndexAccess()
+        n.object = object
+        n.index = index
+        n.pos = Pos.new(line, col)
+        return n
+
+class PropertyAccess:
+    node_type = 24
+    object: var
+    property: var
+    pos: var
+
+    func new(object: var, property: var, line: int, col: int) -> var:
+        var n = new PropertyAccess()
+        n.object = object
+        n.property = property
+        n.pos = Pos.new(line, col)
+        return n
+
+class NewExpr:
+    node_type = 25
+    class_name: var
+    args: var  # Vec[Expr]
+    pos: var
+
+    func new(class_name: var, args: var, line: int, col: int) -> var:
+        var n = new NewExpr()
+        n.class_name = class_name
+        n.args = args
+        n.pos = Pos.new(line, col)
+        return n
+
+# ---- 声明节点 ----
+class VarDecl:
+    node_type = 30
+    name: var
+    var_type: var      # TypeExpr 或 nil
+    initializer: var    # Expr 或 nil
+    pos: var
+
+    func new(name: var, var_type: var, initializer: var, line: int, col: int) -> var:
+        var n = new VarDecl()
+        n.name = name
+        n.var_type = var_type
+        n.initializer = initializer
+        n.pos = Pos.new(line, col)
+        return n
+
+class FuncDecl:
+    node_type = 31
+    name: var
+    params: var         # Vec[(name, type)]
+    return_type: var    # TypeExpr 或 nil
+    body: var           # Vec[Stmt]
+    pos: var
+
+    func new(name: var, params: var, return_type: var, body: var, line: int, col: int) -> var:
+        var n = new FuncDecl()
+        n.name = name
+        n.params = params
+        n.return_type = return_type
+        n.body = body
+        n.pos = Pos.new(line, col)
+        return n
+
+class StructDecl:
+    node_type = 32
+    name: var
+    fields: var         # Vec[(name, type)]
+    methods: var         # Vec[FuncDecl]
+    pos: var
+
+    func new(name: var, fields: var, methods: var, line: int, col: int) -> var:
+        var n = new StructDecl()
+        n.name = name
+        n.fields = fields
+        n.methods = methods
+        n.pos = Pos.new(line, col)
+        return n
+
+class ClassDecl:
+    node_type = 33
+    name: var
+    fields: var         # Vec[(name, type)]
+    methods: var         # Vec[FuncDecl]
+    parent: var         # Identifier 或 nil (extends)
+    interfaces: var     # Vec[Identifier] (implements)
+    pos: var
+
+    func new(name: var, fields: var, methods: var, parent: var, interfaces: var, line: int, col: int) -> var:
+        var n = new ClassDecl()
+        n.name = name
+        n.fields = fields
+        n.methods = methods
+        n.parent = parent
+        n.interfaces = interfaces
+        n.pos = Pos.new(line, col)
+        return n
+
+class EnumDecl:
+    node_type = 34
+    name: var
+    variants: var       # Vec[(name, value)]
+    pos: var
+
+    func new(name: var, variants: var, line: int, col: int) -> var:
+        var n = new EnumDecl()
+        n.name = name
+        n.variants = variants
+        n.pos = Pos.new(line, col)
+        return n
+
+class UnionDecl:
+    node_type = 35
+    name: var
+    variants: var       # Vec[(name, type)]
+    pos: var
+
+    func new(name: var, variants: var, line: int, col: int) -> var:
+        var n = new UnionDecl()
+        n.name = name
+        n.variants = variants
+        n.pos = Pos.new(line, col)
+        return n
+
+# ---- 语句节点 ----
+class ExprStmt:
+    node_type = 40
+    expr: var
+    pos: var
+
+    func new(expr: var, line: int, col: int) -> var:
+        var n = new ExprStmt()
+        n.expr = expr
+        n.pos = Pos.new(line, col)
+        return n
+
+class ReturnStmt:
+    node_type = 41
+    value: var   # Expr 或 nil
+    pos: var
+
+    func new(value: var, line: int, col: int) -> var:
+        var n = new ReturnStmt()
+        n.value = value
+        n.pos = Pos.new(line, col)
+        return n
+
+class IfStmt:
+    node_type = 42
+    condition: var
+    then_branch: var   # Vec[Stmt]
+    elif_branches: var  # Vec[(condition, Vec[Stmt])]
+    else_branch: var    # Vec[Stmt] 或 nil
+    pos: var
+
+    func new(condition: var, then_branch: var, elif_branches: var, else_branch: var, line: int, col: int) -> var:
+        var n = new IfStmt()
+        n.condition = condition
+        n.then_branch = then_branch
+        n.elif_branches = elif_branches
+        n.else_branch = else_branch
+        n.pos = Pos.new(line, col)
+        return n
+
+class WhileStmt:
+    node_type = 43
+    condition: var
+    body: var   # Vec[Stmt]
+    pos: var
+
+    func new(condition: var, body: var, line: int, col: int) -> var:
+        var n = new WhileStmt()
+        n.condition = condition
+        n.body = body
+        n.pos = Pos.new(line, col)
+        return n
+
+class ForStmt:
+    node_type = 44
+    variable: var      # Identifier
+    iterable: var       # Expr
+    body: var          # Vec[Stmt]
+    pos: var
+
+    func new(variable: var, iterable: var, body: var, line: int, col: int) -> var:
+        var n = new ForStmt()
+        n.variable = variable
+        n.iterable = iterable
+        n.body = body
+        n.pos = Pos.new(line, col)
+        return n
+
+class BreakStmt:
+    node_type = 45
+    pos: var
+
+    func new(line: int, col: int) -> var:
+        var n = new BreakStmt()
+        n.pos = Pos.new(line, col)
+        return n
+
+class ContinueStmt:
+    node_type = 46
+    pos: var
+
+    func new(line: int, col: int) -> var:
+        var n = new ContinueStmt()
+        n.pos = Pos.new(line, col)
+        return n
+
+class ImportStmt:
+    node_type = 47
+    path: var
+    alias: var   # String 或 nil
+    names: var    # Vec[String] 或空
+    pos: var
+
+    func new(path: var, alias: var, names: var, line: int, col: int) -> var:
+        var n = new ImportStmt()
+        n.path = path
+        n.alias = alias
+        n.names = names
+        n.pos = Pos.new(line, col)
+        return n
+
+class MatchStmt:
+    node_type = 48
+    value: var
+    arms: var  # Vec[(pattern, body)]
+    pos: var
+
+    func new(value: var, arms: var, line: int, col: int) -> var:
+        var n = new MatchStmt()
+        n.value = value
+        n.arms = arms
+        n.pos = Pos.new(line, col)
+        return n
+
+# ---- 宏节点 ----
+class MacroDef:
+    node_type = 50
+    name: var
+    params: var        # Vec[String]
+    body: var           # Vec[Stmt]
+    pos: var
+
+    func new(name: var, params: var, body: var, line: int, col: int) -> var:
+        var n = new MacroDef()
+        n.name = name
+        n.params = params
+        n.body = body
+        n.pos = Pos.new(line, col)
+        return n
+
+class MacroCall:
+    node_type = 51
+    name: var
+    args: var   # Vec[Expr]
+    pos: var
+
+    func new(name: var, args: var, line: int, col: int) -> var:
+        var n = new MacroCall()
+        n.name = name
+        n.args = args
+        n.pos = Pos.new(line, col)
+        return n
+
+# ---- 程序节点 ----
+class Program:
+    node_type = 100
+    statements: var  # Vec[Stmt]
+
+    func new() -> var:
+        var n = new Program()
+        n.statements = []
+        return n
+
+    func add(stmt: var):
+        self.statements = self.statements + [stmt]
+
+# ---- AstNodeType 辅助函数 ----
+class AstNodeType:
+    func name(t: int) -> var:
+        if t == 1: return "IntLiteral"
+        if t == 2: return "FloatLiteral"
+        if t == 3: return "StringLiteral"
+        if t == 4: return "BoolLiteral"
+        if t == 5: return "NilLiteral"
+        if t == 6: return "ArrayLiteral"
+        if t == 7: return "MapLiteral"
+        if t == 10: return "Identifier"
+        if t == 11: return "TypeExpr"
+        if t == 20: return "BinaryOp"
+        if t == 21: return "UnaryOp"
+        if t == 22: return "CallExpr"
+        if t == 23: return "IndexAccess"
+        if t == 24: return "PropertyAccess"
+        if t == 25: return "NewExpr"
+        if t == 30: return "VarDecl"
+        if t == 31: return "FuncDecl"
+        if t == 32: return "StructDecl"
+        if t == 33: return "ClassDecl"
+        if t == 34: return "EnumDecl"
+        if t == 35: return "UnionDecl"
+        if t == 40: return "ExprStmt"
+        if t == 41: return "ReturnStmt"
+        if t == 42: return "IfStmt"
+        if t == 43: return "WhileStmt"
+        if t == 44: return "ForStmt"
+        if t == 45: return "BreakStmt"
+        if t == 46: return "ContinueStmt"
+        if t == 47: return "ImportStmt"
+        if t == 48: return "MatchStmt"
+        if t == 50: return "MacroDef"
+        if t == 51: return "MacroCall"
+        if t == 100: return "Program"
+        if t == 101: return "Block"
+        return "Unknown"

@@ -1,0 +1,67 @@
+# ============================================================
+# std::iter —— 数组/Vec 通用迭代工具
+# 补充 Vec 未提供的 find / any / all / reduce
+# ============================================================
+
+import std.error
+import std.collections.vec
+
+class Iter:
+    # 查找第一个满足 pred 的元素，返回 Result
+    func find(arr: var, pred: var) -> var:
+        var i = 0
+        var n = len(arr)
+        while i < n:
+            if pred(arr[i]):
+                return Result.ok(arr[i])
+            i = i + 1
+        return Result.err(error.value_error("Iter.find: no matching element"))
+
+    # 是否存在满足 pred 的元素
+    func any(arr: var, pred: var) -> bool:
+        var i = 0
+        var n = len(arr)
+        while i < n:
+            if pred(arr[i]):
+                return true
+            i = i + 1
+        return false
+
+    # 是否所有元素都满足 pred
+    func all(arr: var, pred: var) -> bool:
+        var i = 0
+        var n = len(arr)
+        while i < n:
+            if pred(arr[i]) == false:
+                return false
+            i = i + 1
+        return true
+
+    # 从左到右归约
+    func reduce(arr: var, init: var, f: var) -> var:
+        var acc = init
+        var i = 0
+        var n = len(arr)
+        while i < n:
+            acc = f(acc, arr[i])
+            i = i + 1
+        return acc
+
+    # 将数组复制到新 Vec
+    func collect(arr: var) -> var:
+        var v = new Vec()
+        var i = 0
+        var n = len(arr)
+        while i < n:
+            v.push(arr[i])
+            i = i + 1
+        return v
+
+    # 反转数组得到新数组
+    func reversed(arr: var) -> var:
+        var result = []
+        var i = len(arr) - 1
+        while i >= 0:
+            result = result + [arr[i]]
+            i = i - 1
+        return result

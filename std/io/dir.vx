@@ -1,0 +1,50 @@
+# ============================================================
+# std::io::dir —— 目录遍历
+# ============================================================
+
+import std.error
+import std.collections.vec
+
+# ---- Dir 类：目录操作 ----
+class Dir:
+    path: var           # 目录路径
+
+    # 打开目录
+    func open(path: var) -> var:
+        var d = new Dir()
+        d.path = path
+        return d
+
+    # 创建目录（占位：需要 VM 支持）
+    func create(path: var) -> var:
+        # TODO: 需要 VM 内建 mkdir 指令
+        return Result.err(error.io_error("Dir.create: not implemented"))
+
+    # 递归创建目录
+    func create_all(path: var) -> var:
+        return Result.err(error.io_error("Dir.create_all: not implemented"))
+
+    # 获取目录下的条目列表（占位）
+    func entries() -> var:
+        # TODO: 需要 VM 内建 read_dir 指令
+        return Result.err(error.io_error("Dir.entries: not implemented"))
+
+    # 获取目录下的文件列表
+    func files() -> var:
+        return Result.err(error.io_error("Dir.files: not implemented"))
+
+    # 获取目录下的子目录列表
+    func dirs() -> var:
+        return Result.err(error.io_error("Dir.dirs: not implemented"))
+
+    # 递归遍历（占位）
+    func walk() -> var:
+        return Result.err(error.io_error("Dir.walk: not implemented"))
+
+    # 删除目录
+    func remove(path: var) -> var:
+        return Result.err(error.io_error("Dir.remove: not implemented"))
+
+    # 递归删除
+    func remove_all(path: var) -> var:
+        return Result.err(error.io_error("Dir.remove_all: not implemented"))

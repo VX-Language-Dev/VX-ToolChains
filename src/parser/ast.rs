@@ -71,6 +71,15 @@ pub enum Expr {
     // dirs 已裁减 → ImportStmt 支持可变路径列表
     ImportStmt(String, Option<String>, Vec<String>, usize, usize),
     
+    // extern 外部函数声明 (由链接器提供实现)
+    ExternDecl(
+        String,                          // 函数名
+        Vec<String>,                     // 泛型参数列表
+        Vec<(String, String)>,           // 参数列表: (参数名, 类型名)
+        Option<String>,                  // 返回类型 (None 表示无返回值)
+        usize,                           // 行号
+        usize,                           // 列号
+    ),
     // 宏系统相关节点
     MacroDef(String, Vec<String>, Vec<Box<Expr>>, usize, usize),  // macro name(params) { body }
     MacroCall(String, Vec<Box<Expr>>, usize, usize),              // #macro_name(args)
@@ -135,7 +144,7 @@ pub fn pos(e: &Expr) -> (usize, usize) {
         Expr::MoveExpr(_, l, c) => (*l, *c),
         Expr::ExprStmt(_, l, c) => (*l, *c),
         Expr::ImportStmt(_, _, _, l, c) => (*l, *c),
-        
+        Expr::ExternDecl(_, _, _, _, l, c) => (*l, *c),
         // 宏系统节点
         Expr::MacroDef(_, _, _, l, c) => (*l, *c),
         Expr::MacroCall(_, _, l, c) => (*l, *c),

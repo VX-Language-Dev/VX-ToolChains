@@ -1,0 +1,154 @@
+# ============================================================
+# std::io::file —— 文件操作
+# 封装 VM 内建的 file_read/file_write/file_exists 指令
+# ============================================================
+
+import std.error
+import std.collections.vec
+import std.string.util
+
+# ---- File 类：文件操作 ----
+class File:
+    path: var           # 文件路径
+    mode: var           # 打开模式："r" | "w" | "a"
+    open: bool          # 是否已打开
+
+    # ========== 构造器/析构 ==========
+
+    func new() -> var:
+        var f = new File()
+        f.path = ""
+        f.mode = ""
+        f.open = false
+        return f
+
+    # 打开文件
+    func open(path: var, mode: var) -> var:
+        var f = new File()
+        f.path = path
+        f.mode = mode
+        f.open = true
+        return f
+
+    # 关闭文件
+    func close():
+        self.open = false
+
+    # 是否打开
+    func is_open() -> bool:
+        return self.open
+
+    # ========== 读取操作 ==========
+
+    # 读取全部文本内容
+    func read_all() -> var:
+        if self.open == false:
+            return Result.err(error.io_error("File.read_all: file not open"))
+        var content = file_read(self.path)
+        if content == nil:
+            return Result.err(error.io_error("File.read_all: failed to read '" + self.path + "'"))
+        return Result.ok(content)
+
+    # 读取全部字节（返回整数数组）
+    func read_bytes() -> var:
+        if self.open == false:
+            return Result.err(error.io_error("File.read_bytes: file not open"))
+        var content = file_read(self.path)
+        if content == nil:
+            return Result.err(error.io_error("File.read_bytes: failed to read '" + self.path + "'"))
+        # 转换为字节数组
+        var bytes = []
+        var i = 0
+        var n = len(content)
+        while i < n:
+            bytes = bytes + [content[i]]
+            i = i + 1
+        return Result.ok(bytes)
+
+    # 读取一行
+    func read_line() -> var:
+        var r = self.read_all()
+        if r.is_ok == false:
+            return r
+        var content = r.value
+        var lines = StringUtil.lines(content)
+        if lines.size() > 0:
+            return Result.ok(lines.get(0).unwrap())
+        return Result.ok("")
+
+    # 读取所有行
+    func read_lines() -> var:
+        var r = self.read_all()
+        if r.is_ok == false:
+            return r
+        return Result.ok(StringUtil.lines(r.value))
+
+    # ========== 写入操作 ==========
+
+    # 写入文本
+    func write(content: var) -> var:
+        if self.open == false:
+            return Result.err(error.io_error("File.write: file not open"))
+        file_write(self.path, content)
+        return Result.ok(nil)
+
+    # 写入字节
+    func write_bytes(data: var) -> var:
+        if self.open == false:
+            return Result.err(error.io_error("File.write_bytes: file not open"))
+        # 将字节数组转为字符串写入
+        var s = ""
+        var i = 0
+        while i < len(data):
+            s = s + data[i]
+            i = i + 1
+        file_write(self.path, s)
+        return Result.ok(nil)
+
+    # 写入行（自动添加换行）
+    func write_line(line: var) -> var:
+        if self.open == false:
+            return Result.err(error.io_error("File.write_line: file not open"))
+        file_write(self.path, line + "\n")
+        return Result.ok(nil)
+
+    # ========== 静态方法：元数据与文件操作 ==========
+
+    # 检查文件是否存在
+    func exists(path: var) -> bool:
+        return file_exists(path)
+
+    # 检查是否为目录（简化判断：无扩展名且不存在文件）
+    func is_dir(path: var) -> bool:
+        if file_exists(path):
+            return false
+        return true
+
+    # 检查是否为文件
+    func is_file(path: var) -> bool:
+        return file_exists(path)
+
+    # 删除文件
+    func delete(path: var) -> var:
+        if file_exists(path) == false:
+            return Result.err(error.io_error("File.delete: file not found: '" + path + "'"))
+        # 通过写入空内容来"删除"
+        file_write(path, "")
+        return Result.ok(nil)
+
+    # 重命名（通过读+写+删实现）
+    func rename(from: var, to: var) -> var:
+        if file_exists(from) == false:
+            return Result.err(error.io_error("File.rename: source not found: '" + from + "'"))
+        var content = file_read(from)
+        file_write(to, content)
+        file_write(from, "")
+        return Result.ok(nil)
+
+    # 复制文件
+    func copy(src: var, dst: var) -> var:
+        if file_exists(src) == false:
+            return Result.err(error.io_error("File.copy: source not found: '" + src + "'"))
+        var content = file_read(src)
+        file_write(dst, content)
+        return Result.ok(nil)

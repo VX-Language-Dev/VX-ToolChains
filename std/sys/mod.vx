@@ -1,0 +1,10 @@
+# ============================================================
+# std::sys —— 模块入口
+# ============================================================
+
+import std.sys.time
+import std.sys.duration
+import std.sys.datetime
+import std.sys.coroutine
+import std.sys.sync
+import std.sys.env

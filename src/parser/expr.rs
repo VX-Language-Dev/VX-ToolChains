@@ -315,6 +315,11 @@ impl Parser {
                 self.expect(TokenType::RParen, None)?;
                 Ok(e)
             }
+            TokenType::Match => {
+                // match 分支中的模式表达式（如 Color.Red）
+                self.advance();
+                Ok(Expr::Identifier("match".to_string(), t.line, t.col))
+            }
             _ => Err(VXError {
                 msg: format!("意外token: {:?}", t.kind),
                 line: t.line,

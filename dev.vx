@@ -1,0 +1,4 @@
+import rpm
+
+func main():
+    rpm.tx()

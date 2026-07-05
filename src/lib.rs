@@ -30,6 +30,16 @@ pub mod cache;
 // 宏系统：编译时宏展开支持
 pub mod macros;
 
+// 反编译器：TypeIR → VX 源码
+pub mod decompiler;
+
+// 反链接器：从可执行文件提取 VXOBJ v4 数据
+pub mod delinker;
+
+// 链接器模块
+pub mod target_profile;
+pub mod lld_linker;
+
 // Re-export public API
 pub use opcode::OpCode;
 pub use vxsetting::VxSettings;

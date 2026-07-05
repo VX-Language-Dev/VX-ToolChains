@@ -1,0 +1,49 @@
+# ============================================================
+# std::string::iter —— 字符串迭代器
+# 提供基于索引的字符迭代，避免重复 split
+# ============================================================
+
+import std.error
+
+class StringIter:
+    source: var
+    pos: int
+    length: int
+
+    func new(s: var) -> var:
+        var it = new StringIter()
+        it.source = s
+        it.pos = 0
+        it.length = len(s)
+        return it
+
+    # 是否还有下一个字符
+    func has_next() -> bool:
+        return self.pos < self.length
+
+    # 返回下一个字符并前进；到达末尾返回 nil
+    func next() -> var:
+        if self.pos >= self.length:
+            return nil
+        var c = self.source[self.pos]
+        self.pos = self.pos + 1
+        return c
+
+    # 预读下一个字符但不前进；到达末尾返回 nil
+    func peek() -> var:
+        if self.pos >= self.length:
+            return nil
+        return self.source[self.pos]
+
+    # 回退一个字符
+    func back():
+        if self.pos > 0:
+            self.pos = self.pos - 1
+
+    # 当前索引
+    func index() -> int:
+        return self.pos
+
+    # 重置到起始位置
+    func reset():
+        self.pos = 0

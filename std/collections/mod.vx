@@ -1,0 +1,8 @@
+# ============================================================
+# std::collections —— 模块入口
+# ============================================================
+
+import std.collections.vec
+import std.collections.hashmap
+import std.collections.linked_list
+import std.collections.set

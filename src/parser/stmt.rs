@@ -24,6 +24,7 @@ impl Parser {
             TokenType::Mut => self.parse_var_decl(),
             TokenType::Import => self.parse_import_stmt(),
             TokenType::Func => self.parse_func_decl(),
+            TokenType::Extern => self.parse_extern_decl(),
             TokenType::If => self.parse_if_stmt(),
             TokenType::Else | TokenType::Elif => {
                 // 自举兼容: else/elif 出现在 parse_block while 循环中通常表示
@@ -37,7 +38,7 @@ impl Parser {
                     source: Some(self.source.clone()),
                 });
             }
-            TokenType::Identifier if self.current().value == "match" => self.parse_match_stmt(),
+            TokenType::Match => self.parse_match_stmt(),
             TokenType::While => self.parse_while_stmt(),
             TokenType::For => self.parse_for_stmt(),
             TokenType::Return => self.parse_return_stmt(),
@@ -295,6 +296,50 @@ impl Parser {
         }
         let b = self.parse_block()?;
         Ok(Expr::FuncDecl(n, gp, p, rt, b, l, c))
+    }
+
+    /// extern func name(params) -> Type
+    ///
+    /// extern 声明了一个由链接器提供实现的外部函数（FFI），
+    /// 没有函数体，只有签名。
+    fn parse_extern_decl(&mut self) -> Result<Stmt, VXError> {
+        self.advance(); // 消费 extern
+        // 期望后面跟着 func 关键字
+        if self.current().kind != TokenType::Func {
+            return Err(VXError {
+                msg: format!("Expected 'func' after 'extern', got {:?}", self.current().kind),
+                line: self.current().line,
+                col: self.current().col,
+                source: Some(self.source.clone()),
+            });
+        }
+        let t = self.advance(); // 消费 func
+        let (l, c) = (t.line, t.col);
+        let n = self.expect_identifier_or_keyword()?.value;
+        let gp = self.parse_generic_params()?;
+        self.expect(TokenType::LParen, None)?;
+        let mut p = vec![];
+        if !self.match_kind(&[TokenType::RParen]) {
+            let pn = self.expect_identifier_or_keyword()?.value;
+            self.expect(TokenType::Colon, None)?;
+            let pt = expr_to_type_name(&self.parse_type()?);
+            p.push((pn, pt));
+            while self.current().kind == TokenType::Comma {
+                self.advance();
+                let pn = self.expect_identifier_or_keyword()?.value;
+                self.expect(TokenType::Colon, None)?;
+                let pt = expr_to_type_name(&self.parse_type()?);
+                p.push((pn, pt));
+            }
+        }
+        self.expect(TokenType::RParen, None)?;
+        let mut rt = None;
+        if self.current().kind == TokenType::Arrow {
+            self.advance();
+            rt = Some(expr_to_type_name(&self.parse_type()?));
+        }
+        // extern 声明没有函数体
+        Ok(Expr::ExternDecl(n, gp, p, rt, l, c))
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt, VXError> {

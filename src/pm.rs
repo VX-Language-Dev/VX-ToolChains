@@ -24,9 +24,7 @@ const PACKAGE_DIR: &str = "package";
 const INFO_FILE: &str = "info.toml";
 const VXSETTING_FILE: &str = "vxsetting.toml";
 
-const SUPPORTED_LANGUAGES: &[&str] = &[
-    "python", "ts", "js", "java", "rust", "go", "c", "cpp",
-];
+const SUPPORTED_LANGUAGES: &[&str] = &[];
 
 // ==================== 错误处理 ====================
 #[derive(Debug)]
@@ -147,10 +145,9 @@ fn normalize_language(lang: &str) -> String {
     }
 }
 
-/// 判断语言是否被支持 (先规范化别名再查表，避免 py/js/typescript 等大小写不一致)
-fn is_language_supported(lang: &str) -> bool {
-    let normalized = normalize_language(lang);
-    SUPPORTED_LANGUAGES.contains(&normalized.as_str())
+/// 判断语言是否被支持 (VX 已移除语言限制，允许任意实现语言的外部库)
+fn is_language_supported(_lang: &str) -> bool {
+    true
 }
 
 /// 解析简单 TOML 格式的 info 文件为键值对
@@ -213,7 +210,7 @@ fn cmd_help() {
     println!("说明:");
     println!("  .vack 文件是重命名的 7z 压缩包，安装前请确保系统已安装 p7zip/7-Zip。");
     println!("  安装包将解压到当前工作区的 package/<包名>/ 目录下。");
-    println!("  支持的语言: {}", SUPPORTED_LANGUAGES.join(", "));
+    println!("  支持的语言: 任意 (已移除语言限制)");
     println!();
     println!("vpm build 构建路径:");
     println!("  多文件项目 (vxsetting.toml 含 [bin]/[vxlib]/[lib]/[[module]]):");
@@ -751,8 +748,10 @@ mod tests {
         assert!(is_language_supported("Python"));
         assert!(is_language_supported("js"));
         assert!(is_language_supported("rust"));
-        assert!(!is_language_supported("lua"));
-        assert!(!is_language_supported("ruby"));
+        assert!(is_language_supported("lua"));
+        assert!(is_language_supported("ruby"));
+        assert!(is_language_supported("fortran"));
+        assert!(is_language_supported("zig"));
     }
 
     #[test]

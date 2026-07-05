@@ -1,0 +1,117 @@
+# ============================================================
+# std::macros —— 编译时宏工具库
+# 提供常用的代码生成模板，在编译阶段展开，零运行时开销
+# ============================================================
+# 使用方式：
+#   import std              # 通过 prelude 自动导入
+#   import std.macros       # 按需显式导入
+# ============================================================
+
+# ============================================================
+# 一、调试与日志宏
+# ============================================================
+
+# 断言：条件不成立时输出错误信息
+# 用法：#assert(x > 0, "x 必须为正数")
+macro assert(condition, message) {
+    if !condition {
+        out("Assertion failed: " + message)
+    }
+}
+
+# 调试打印：输出变量名与值
+# 用法：#debug_print("x", x)
+macro debug_print(name, value) {
+    out("DEBUG: " + name + " = " + value)
+}
+
+# 日志级别宏
+# 用法：#log_info("服务已启动")
+macro log_info(message) {
+    out("[INFO] " + message)
+}
+
+macro log_warn(message) {
+    out("[WARN] " + message)
+}
+
+macro log_error(message) {
+    out("[ERROR] " + message)
+}
+
+macro log_debug(message) {
+    out("[DEBUG] " + message)
+}
+
+# ============================================================
+# 二、控制流宏
+# ============================================================
+
+# 条件为真时执行
+# 用法：#when(flag, out("flag 为 true"))
+macro when(condition, action) {
+    if condition {
+        action
+    }
+}
+
+# 条件为假时执行
+# 用法：#unless(flag, out("flag 为 false"))
+macro unless(condition, action) {
+    if !condition {
+        action
+    }
+}
+
+# 重复执行 n 次
+# 用法：#repeat(3, out("Hello"))
+macro repeat(n, body) {
+    var __vx_macro_i = 0
+    while __vx_macro_i < n {
+        body
+        __vx_macro_i = __vx_macro_i + 1
+    }
+}
+
+# repeat 的别名
+macro times(n, body) {
+    var __vx_macro_i = 0
+    while __vx_macro_i < n {
+        body
+        __vx_macro_i = __vx_macro_i + 1
+    }
+}
+
+# ============================================================
+# 三、变量操作宏
+# ============================================================
+
+# 交换两个可赋值变量的值
+# 用法：#swap(a, b)
+# 注意：a、b 必须是可修改的左值（如变量、字段）
+macro swap(a, b) {
+    var __vx_macro_temp = a
+    a = b
+    b = __vx_macro_temp
+}
+
+# ============================================================
+# 四、Result 辅助宏
+# ============================================================
+
+# 确保 Result 成功，否则输出错误信息
+# 用法：#ensure_ok(result, "读取配置失败")
+macro ensure_ok(result, message) {
+    if !result.is_ok {
+        out("Error: " + message)
+    }
+}
+
+# 如果 Result 失败则直接返回该 Result
+# 用法：#try_return(read_file(path))
+# 注意：仅在返回 Result 的函数中使用
+macro try_return(result) {
+    if !result.is_ok {
+        return result
+    }
+}

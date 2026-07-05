@@ -1,0 +1,53 @@
+# ============================================================
+# std::sys::duration —— 时间间隔
+# ============================================================
+
+# ---- Duration 类：时间段 ----
+class Duration:
+    secs: int
+    nanos: int
+
+    # 从秒创建
+    func from_secs(s: float) -> var:
+        var dur = new Duration()
+        dur.secs = s
+        var frac = s - dur.secs
+        dur.nanos = frac * 1000000000.0
+        return dur
+
+    # 从毫秒创建
+    func from_millis(ms: int) -> var:
+        var dur = new Duration()
+        dur.secs = ms / 1000
+        dur.nanos = (ms % 1000) * 1000000
+        return dur
+
+    # 从微秒创建
+    func from_micros(us: int) -> var:
+        var dur = new Duration()
+        dur.secs = us / 1000000
+        dur.nanos = (us % 1000000) * 1000
+        return dur
+
+    # 从纳秒创建
+    func from_nanos(ns: int) -> var:
+        var dur = new Duration()
+        dur.secs = ns / 1000000000
+        dur.nanos = ns % 1000000000
+        return dur
+
+    # 转为秒（浮点）
+    func as_secs() -> float:
+        return self.secs + self.nanos / 1000000000.0
+
+    # 转为毫秒
+    func as_millis() -> int:
+        return self.secs * 1000 + self.nanos / 1000000
+
+    # 转为微秒
+    func as_micros() -> int:
+        return self.secs * 1000000 + self.nanos / 1000
+
+    # 转为纳秒
+    func as_nanos() -> int:
+        return self.secs * 1000000000 + self.nanos

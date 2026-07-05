@@ -225,8 +225,22 @@ impl VxSettings {
     }
 
     /// 获取指定库的路径 (向后兼容旧 vxmodel 查询语义)
+    ///
+    /// 支持点分模块路径：`std.io` 会先查找 `std.io`，没找到则拆成 `std` + `io`。
     pub fn library_path(&self, name: &str) -> Option<String> {
-        self.libraries.get(name).cloned()
+        // 先尝试完整名称匹配
+        if let Some(path) = self.libraries.get(name) {
+            return Some(path.clone());
+        }
+        // 点分路径：拆出根模块
+        if let Some(dot_pos) = name.find('.') {
+            let root = &name[..dot_pos];
+            let sub = &name[dot_pos + 1..];
+            if let Some(base) = self.libraries.get(root) {
+                return Some(format!("{}/{}", base, sub));
+            }
+        }
+        None
     }
 
     /// 判断是否为多文件构建项目

@@ -1,0 +1,7 @@
+# ============================================================
+# std::string —— 模块入口
+# ============================================================
+
+import std.string.util
+import std.string.pattern
+import std.string.codec

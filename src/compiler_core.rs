@@ -77,7 +77,10 @@ pub struct Compiler {
     /// 宏注册表，用于编译时宏展开
     pub(crate) macros: crate::macros::MacroRegistry,
     /// 外部依赖（import 语句），用于静态链接时的动态库链接
+    #[allow(dead_code)]
     pub(crate) external_deps: Vec<String>,
+    /// slot 号 -> KnownType 映射，用于 TypeIR 生成
+    pub(crate) slot_types: HashMap<u32, KnownType>,
 }
 
 impl Compiler {
@@ -98,6 +101,7 @@ impl Compiler {
             error_dead_code: false,
             macros: crate::macros::MacroRegistry::new(),
             external_deps: Vec::new(),
+            slot_types: HashMap::new(),
         }
     }
 
@@ -258,12 +262,21 @@ impl Compiler {
         let slot = self.next_slot;
         self.next_slot += 1;
         self.var_slots.insert(name.to_string(), slot);
+        // 同时记录该变量的类型，用于后续 TypeIR 生成
+        if let Some(ty) = self.var_types.get(name).copied() {
+            self.slot_types.insert(slot, ty);
+        }
         slot
     }
 
     pub(crate) fn push_stack_type(&mut self, t: KnownType) { self.stack_types.push(t); }
     pub(crate) fn pop_stack_type(&mut self) -> KnownType { self.stack_types.pop().unwrap_or(KnownType::Unknown) }
-    pub(crate) fn set_var_type(&mut self, name: &str, t: KnownType) { self.var_types.insert(name.to_string(), t); }
+    pub(crate) fn set_var_type(&mut self, name: &str, t: KnownType) { self.var_types.insert(name.to_string(), t); 
+        // 如果 slot 已经分配，同步更新 slot_types
+        if let Some(&slot) = self.var_slots.get(name) {
+            self.slot_types.insert(slot, t);
+        }
+    }
     pub(crate) fn get_var_type(&self, name: &str) -> KnownType { self.var_types.get(name).copied().unwrap_or(KnownType::Unknown) }
 
     /// 将类型名字符串解析为 KnownType。VX 为纯静态类型，所有声明必须有显式类型。

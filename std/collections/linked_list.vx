@@ -1,0 +1,166 @@
+# ============================================================
+# std::collections::linked_list —— 双向链表
+# ============================================================
+
+import std.error
+
+# ---- Node 类：链表节点 ----
+class Node:
+    value: var
+    prev: var           # Node 或 nil
+    next: var           # Node 或 nil
+
+    func new(val: var) -> var:
+        var n = new Node()
+        n.value = val
+        n.prev = nil
+        n.next = nil
+        return n
+
+# ---- LinkedList 类：双向链表 ----
+class LinkedList:
+    head: var           # Node 或 nil
+    tail: var           # Node 或 nil
+    len: int
+
+    # ========== 构造器 ==========
+
+    func new() -> var:
+        var ll = new LinkedList()
+        ll.head = nil
+        ll.tail = nil
+        ll.len = 0
+        return ll
+
+    # ========== 头部操作 ==========
+
+    func push_front(val: var):
+        var node = new Node(val)
+        if self.head == nil:
+            self.head = node
+            self.tail = node
+        else:
+            node.next = self.head
+            self.head.prev = node
+            self.head = node
+        self.len = self.len + 1
+
+    func pop_front() -> var:
+        if self.head == nil:
+            return Result.err(error.value_error("LinkedList.pop_front: empty list"))
+        var val = self.head.value
+        if self.head == self.tail:
+            self.head = nil
+            self.tail = nil
+        else:
+            self.head = self.head.next
+            self.head.prev = nil
+        self.len = self.len - 1
+        return Result.ok(val)
+
+    func peek_front() -> var:
+        if self.head == nil:
+            return Result.err(error.value_error("LinkedList.peek_front: empty list"))
+        return Result.ok(self.head.value)
+
+    # ========== 尾部操作 ==========
+
+    func push_back(val: var):
+        var node = new Node(val)
+        if self.tail == nil:
+            self.head = node
+            self.tail = node
+        else:
+            node.prev = self.tail
+            self.tail.next = node
+            self.tail = node
+        self.len = self.len + 1
+
+    func pop_back() -> var:
+        if self.tail == nil:
+            return Result.err(error.value_error("LinkedList.pop_back: empty list"))
+        var val = self.tail.value
+        if self.head == self.tail:
+            self.head = nil
+            self.tail = nil
+        else:
+            self.tail = self.tail.prev
+            self.tail.next = nil
+        self.len = self.len - 1
+        return Result.ok(val)
+
+    func peek_back() -> var:
+        if self.tail == nil:
+            return Result.err(error.value_error("LinkedList.peek_back: empty list"))
+        return Result.ok(self.tail.value)
+
+    # ========== 查询 ==========
+
+    func size() -> int:
+        return self.len
+
+    func is_empty() -> bool:
+        if self.len == 0:
+            return true
+        return false
+
+    # 查找元素，返回第一个匹配的索引
+    func index_of(val: var) -> int:
+        var current = self.head
+        var idx = 0
+        while current != nil:
+            if current.value == val:
+                return idx
+            current = current.next
+            idx = idx + 1
+        return -1
+
+    # 检查是否包含
+    func contains(val: var) -> bool:
+        if self.index_of(val) >= 0:
+            return true
+        return false
+
+    # ========== 修改 ==========
+
+    # 清空链表
+    func clear():
+        self.head = nil
+        self.tail = nil
+        self.len = 0
+
+    # ========== 转换 ==========
+
+    # 转为 Vec
+    func to_vec() -> var:
+        import std.collections.vec
+        var result = new Vec()
+        var current = self.head
+        while current != nil:
+            result.push(current.value)
+            current = current.next
+        return result
+
+    # 转为内建数组
+    func to_array() -> var:
+        var result = []
+        var current = self.head
+        while current != nil:
+            result = result + [current.value]
+            current = current.next
+        return result
+
+    # ========== 字符串表示 ==========
+
+    func to_string() -> var:
+        var s = "["
+        var current = self.head
+        var first = true
+        while current != nil:
+            if first == false:
+                s = s + " <-> "
+            s = s + current.value
+            first = false
+            current = current.next
+        s = s + "]"
+        return s

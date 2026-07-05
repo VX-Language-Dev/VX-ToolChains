@@ -1,0 +1,288 @@
+# ============================================================
+# std::collections::vec —— 动态数组
+# 包装内建 Array 类型，提供丰富 API
+# ============================================================
+
+import std.error
+
+# ---- Vec 类：动态数组 ----
+# 底层直接使用 VX 内建数组 [item, ...]
+class Vec:
+    inner: var          # 内建数组
+    len: int
+    cap: int
+
+    # ========== 构造器 ==========
+
+    # 创建空数组
+    func new() -> var:
+        var v = new Vec()
+        v.inner = []
+        v.len = 0
+        v.cap = 0
+        return v
+
+    # 预分配容量
+    func with_capacity(cap: int) -> var:
+        var v = new Vec()
+        v.inner = []
+        v.len = 0
+        v.cap = cap
+        return v
+
+    # 从内建数组字面量构造
+    func from_array(arr: var) -> var:
+        var v = new Vec()
+        v.inner = arr
+        v.len = len(arr)
+        v.cap = len(arr)
+        return v
+
+    # ========== 容量管理 ==========
+
+    # 获取长度
+    func size() -> int:
+        return self.len
+
+    # 检查是否为空
+    func is_empty() -> bool:
+        if self.len == 0:
+            return true
+        return false
+
+    # 获取当前容量
+    func capacity() -> int:
+        return self.cap
+
+    # 预留容量（如果 cap 不足则扩展）
+    func reserve(additional: int):
+        if self.len + additional <= self.cap:
+            return
+        # 扩展策略：取 max(new_len, cap * 2, 4)
+        var new_cap = self.cap * 2
+        if new_cap < 4:
+            new_cap = 4
+
+        var new_len = self.len + additional
+        if new_cap < new_len:
+            new_cap = new_len
+
+        # 创建新数组并复制元素
+        var new_inner = []
+        var i = 0
+        while i < self.len:
+            new_inner = new_inner + [self.inner[i]]
+            i = i + 1
+        self.inner = new_inner
+        self.cap = new_cap
+
+    # ========== 元素访问 ==========
+
+    # 安全索引访问，返回 Result
+    func get(idx: int) -> var:
+        if idx < 0:
+            return Result.err(error.value_error("Vec.get: index " + idx + " < 0"))
+        if idx >= self.len:
+            return Result.err(error.value_error("Vec.get: index " + idx + " out of bounds (len=" + self.len + ")"))
+        return Result.ok(self.inner[idx])
+
+    # 设置指定位置的值
+    func set(idx: int, val: var):
+        if idx < 0:
+            return
+        if idx >= self.len:
+            return
+        self.inner[idx] = val
+
+    # 获取第一个元素
+    func first() -> var:
+        if self.len == 0:
+            return Result.err(error.value_error("Vec.first: empty vector"))
+        return Result.ok(self.inner[0])
+
+    # 获取最后一个元素
+    func last() -> var:
+        if self.len == 0:
+            return Result.err(error.value_error("Vec.last: empty vector"))
+        return Result.ok(self.inner[self.len - 1])
+
+    # ========== 修改操作 ==========
+
+    # 追加元素到末尾
+    func push(val: var):
+        if self.len >= self.cap:
+            self.reserve(1)
+        self.inner = self.inner + [val]
+        self.len = self.len + 1
+        if self.cap < self.len:
+            self.cap = self.len
+
+    # 弹出末尾元素
+    func pop() -> var:
+        if self.len == 0:
+            return Result.err(error.value_error("Vec.pop: empty vector"))
+        var val = self.inner[self.len - 1]
+        # 缩容（创建去掉最后一个元素的新数组）
+        var new_inner = []
+        var i = 0
+        while i < self.len - 1:
+            new_inner = new_inner + [self.inner[i]]
+            i = i + 1
+        self.inner = new_inner
+        self.len = self.len - 1
+        return Result.ok(val)
+
+    # 在指定位置插入
+    func insert(idx: int, val: var):
+        if idx < 0:
+            idx = 0
+        if idx > self.len:
+            idx = self.len
+
+        var new_inner = []
+        var i = 0
+        while i < idx:
+            new_inner = new_inner + [self.inner[i]]
+            i = i + 1
+        new_inner = new_inner + [val]
+        while i < self.len:
+            new_inner = new_inner + [self.inner[i]]
+            i = i + 1
+        self.inner = new_inner
+        self.len = self.len + 1
+        self.cap = self.len
+
+    # 移除指定位置的元素
+    func remove(idx: int) -> var:
+        if idx < 0:
+            return Result.err(error.value_error("Vec.remove: index " + idx + " < 0"))
+        if idx >= self.len:
+            return Result.err(error.value_error("Vec.remove: index " + idx + " out of bounds"))
+        var val = self.inner[idx]
+        var new_inner = []
+        var i = 0
+        while i < idx:
+            new_inner = new_inner + [self.inner[i]]
+            i = i + 1
+        i = idx + 1
+        while i < self.len:
+            new_inner = new_inner + [self.inner[i]]
+            i = i + 1
+        self.inner = new_inner
+        self.len = self.len - 1
+        return Result.ok(val)
+
+    # 清空
+    func clear():
+        self.inner = []
+        self.len = 0
+        self.cap = 0
+
+    # ========== 查找 ==========
+
+    # 线性查找，返回索引
+    func index_of(val: var) -> int:
+        var i = 0
+        while i < self.len:
+            if self.inner[i] == val:
+                return i
+            i = i + 1
+        return -1
+
+    # 检查是否包含
+    func contains(val: var) -> bool:
+        if self.index_of(val) >= 0:
+            return true
+        return false
+
+    # 从右侧查找
+    func rindex_of(val: var) -> int:
+        var i = self.len - 1
+        while i >= 0:
+            if self.inner[i] == val:
+                return i
+            i = i - 1
+        return -1
+
+    # ========== 排序 ==========
+
+    # 冒泡排序（简单实现，后续可优化为快速排序）
+    func sort():
+        var i = 0
+        while i < self.len:
+            var j = 0
+            while j < self.len - i - 1:
+                if self.inner[j] > self.inner[j + 1]:
+                    var tmp = self.inner[j]
+                    self.inner[j] = self.inner[j + 1]
+                    self.inner[j + 1] = tmp
+                j = j + 1
+            i = i + 1
+
+    # 使用自定义比较函数排序
+    func sort_by(cmp: var):
+        var i = 0
+        while i < self.len:
+            var j = 0
+            while j < self.len - i - 1:
+                if cmp(self.inner[j], self.inner[j + 1]):
+                    var tmp = self.inner[j]
+                    self.inner[j] = self.inner[j + 1]
+                    self.inner[j + 1] = tmp
+                j = j + 1
+            i = i + 1
+
+    # ========== 转换 ==========
+
+    # 映射
+    func map(f: var) -> var:
+        var result = new Vec()
+        var i = 0
+        while i < self.len:
+            result.push(f(self.inner[i]))
+            i = i + 1
+        return result
+
+    # 过滤
+    func filter(f: var) -> var:
+        var result = new Vec()
+        var i = 0
+        while i < self.len:
+            if f(self.inner[i]):
+                result.push(self.inner[i])
+            i = i + 1
+        return result
+
+    # 折叠/归约
+    func fold(init_val: var, f: var) -> var:
+        var acc = init_val
+        var i = 0
+        while i < self.len:
+            acc = f(acc, self.inner[i])
+            i = i + 1
+        return acc
+
+    # 转为内建数组
+    func to_array() -> var:
+        return self.inner
+
+    # 复制一份新的 Vec
+    func clone() -> var:
+        var v = new Vec()
+        v.inner = self.inner
+        v.len = self.len
+        v.cap = self.cap
+        return v
+
+    # ========== 字符串表示 ==========
+
+    func to_string() -> var:
+        var s = "["
+        var i = 0
+        while i < self.len:
+            if i > 0:
+                s = s + ", "
+            s = s + self.inner[i]
+            i = i + 1
+        s = s + "]"
+        return s

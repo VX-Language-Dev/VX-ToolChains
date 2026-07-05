@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use target_lexicon::Triple;
 
-use cranelift_codegen::ir::{InstBuilder, UserExternalNameRef, UserFuncName};
+use cranelift_codegen::ir::{InstBuilder, UserFuncName};
 use cranelift_codegen::settings::Configurable;
 use cranelift_module::Module;
 
@@ -218,6 +218,9 @@ impl AotBackend {
             self.compile_function(func, cl_id, &declared_ids, type_module)?;
         }
 
+        // ===== 阶段 2.5: 生成 _start 入口函数（替代 C CRT 启动桩） =====
+        self.generate_start_entry(&declared_ids, type_module)?;
+
         // ===== 阶段 3: 生成对象文件 =====
         let product = self.module.take().unwrap().finish();
         let obj_data = product
@@ -225,6 +228,85 @@ impl AotBackend {
             .map_err(|e| format!("Object emit failed: {}", e))?;
 
         Ok(obj_data)
+    }
+
+    /// 生成 _start 入口函数，替代 C CRT 的 _start → __libc_start_main → main 启动链
+    ///
+    /// _start 直接调用 VX 入口函数 __main__/main，并将返回值传给 exit()，
+    /// 彻底消除对 C 运行时启动桩的依赖。
+    fn generate_start_entry(
+        &mut self,
+        declared_ids: &HashMap<FuncId, clm::FuncId>,
+        type_module: &TypeModule,
+    ) -> Result<(), String> {
+        let module = self.module.as_mut().unwrap();
+        // 找到 VX 入口函数（__main__ 优先，其次 main）
+        let entry_func_name = if type_module.functions.iter().any(|f| f.name == "__main__") {
+            "__main__"
+        } else if type_module.functions.iter().any(|f| f.name == "main") {
+            "main"
+        } else {
+            // 没有入口函数，跳过 _start 生成
+            return Ok(());
+        };
+        let entry_func = type_module.functions.iter()
+            .find(|f| f.name == entry_func_name)
+            .ok_or_else(|| format!("Entry function '{}' not found", entry_func_name))?;
+        let entry_clif_id = declared_ids.get(&entry_func.id)
+            .ok_or_else(|| format!("Entry function {} not declared", entry_func_name))?;
+
+        // 声明 exit 为导入函数
+        let mut exit_sig = cl::ir::Signature::new(self.isa.default_call_conv());
+        exit_sig.params.push(cl::ir::AbiParam::new(types::I64));
+        let exit_id = module
+            .declare_function("exit", clm::Linkage::Import, &exit_sig)
+            .map_err(|e| format!("Failed to declare exit: {}", e))?;
+
+        // 声明 _start 为导出函数
+        let start_sig = cl::ir::Signature::new(self.isa.default_call_conv());
+        let start_id = module
+            .declare_function("_start", clm::Linkage::Export, &start_sig)
+            .map_err(|e| format!("Failed to declare _start: {}", e))?;
+
+        // 编译 _start 函数体
+        let name = UserFuncName::user(0, start_id.as_u32());
+        let mut clif_func = cl::ir::Function::with_name_signature(name, start_sig);
+
+        let mut builder = clf::FunctionBuilder::new(&mut clif_func, &mut self.builder_ctx);
+        let block = builder.create_block();
+        builder.switch_to_block(block);
+        builder.seal_block(block);
+
+        // 调用入口函数 __main__() / main()
+        let entry_ref = module.declare_func_in_func(*entry_clif_id, builder.func);
+        let call_inst = builder.ins().call(entry_ref, &[]);
+        let has_return = !builder.inst_results(call_inst).is_empty();
+
+        // 调用 exit(返回值)，确保退出码正确传递
+        let exit_ref = module.declare_func_in_func(exit_id, builder.func);
+        if has_return {
+            // 重新获取返回值（to_vec 释放借用后再用 iconst 获取会丢失值引用，
+            // 所以用 se(value) 的方式直接取）
+            let ret_vals = builder.inst_results(call_inst).to_vec();
+            builder.ins().call(exit_ref, &[ret_vals[0]]);
+        } else {
+            // 没有返回值时传递 0
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder.ins().call(exit_ref, &[zero]);
+        }
+
+        // _start 不应返回（exit 不会返回），但 cranelift 要求有终结指令
+        builder.ins().return_(&[]);
+        builder.finalize();
+
+        // 定义 _start
+        self.ctx.func = clif_func;
+        module
+            .define_function(start_id, &mut self.ctx)
+            .map_err(|e| format!("Failed to define _start: {}", e))?;
+        module.clear_context(&mut self.ctx);
+
+        Ok(())
     }
 
     /// 编译单个 TypeIR 函数 → CLIF IR → 机器码
@@ -279,9 +361,28 @@ impl AotBackend {
             }
         }
 
+        // 补齐：确保 [0, var_count) 范围内的所有变量都已声明，
+        // 防止因上游未记录 local_types 导致 LoadVar/StoreVar 失败
+        for vid in 0..func.var_count {
+            if let std::collections::hash_map::Entry::Vacant(e) = var_map.entry(vid) {
+                let var = clf::Variable::from_u32(vid);
+                builder.declare_var(var, types::I64);
+                e.insert(var);
+            }
+        }
+
         // ===== 逐指令翻译 TypeIR → CLIF IR =====
         let module_ref = self.module.as_mut().unwrap();
-        let result = compile_body(&mut builder, func, &mut var_map, all_func_ids, type_module, module_ref);
+        let mut external_func_ids: HashMap<String, clm::FuncId> = HashMap::new();
+        let result = compile_body(
+            &mut builder,
+            func,
+            &mut var_map,
+            all_func_ids,
+            &mut external_func_ids,
+            type_module,
+            module_ref,
+        );
 
         builder.finalize();
 
@@ -303,13 +404,29 @@ impl AotBackend {
     }
 }
 
+/// 当前块已终结后，切换到新的空块继续接收指令
+fn switch_to_fresh_block(
+    builder: &mut clf::FunctionBuilder,
+    value_stack: &mut Vec<cl::ir::Value>,
+    stack_homes: &mut Vec<Option<VarId>>,
+) {
+    if let Some(current_block) = builder.current_block() {
+        builder.seal_block(current_block);
+    }
+    let next_block = builder.create_block();
+    builder.switch_to_block(next_block);
+    value_stack.clear();
+    stack_homes.clear();
+}
+
 /// 翻译 TypeIR 指令体到 CLIF IR
 fn compile_body(
     builder: &mut clf::FunctionBuilder,
     func: &TypeFunction,
     var_map: &mut HashMap<VarId, clf::Variable>,
     all_func_ids: &HashMap<FuncId, clm::FuncId>,
-    type_module: &TypeModule,
+    external_func_ids: &mut HashMap<String, clm::FuncId>,
+    _type_module: &TypeModule,
     module: &mut clo::ObjectModule,
 ) -> Result<(), String> {
         use TypedInstruction::*;
@@ -326,7 +443,7 @@ fn compile_body(
         let mut block_stack_heights: HashMap<u32, u32> = HashMap::new();
 
         // 辅助闭包: 在跳转前将栈值刷新回变量
-        let flush_stack_to_vars = |builder: &mut clf::FunctionBuilder,
+        let _flush_stack_to_vars = |builder: &mut clf::FunctionBuilder,
                                    value_stack: &[cl::ir::Value],
                                    stack_homes: &[Option<VarId>],
                                    var_map: &HashMap<VarId, clf::Variable>,
@@ -348,7 +465,7 @@ fn compile_body(
         };
 
         // 辅助闭包: 在跳转后从变量重新加载栈值
-        let reload_stack_from_vars = |builder: &mut clf::FunctionBuilder,
+        let _reload_stack_from_vars = |builder: &mut clf::FunctionBuilder,
                                       stack_homes: &[Option<VarId>],
                                       var_map: &HashMap<VarId, clf::Variable>|
          -> Vec<cl::ir::Value> {
@@ -404,6 +521,7 @@ fn compile_body(
                             }
                         }
                         I32Add(_, _) | I32Sub(_, _) | I32Mul(_, _) | I32Div(_, _) | I32Mod(_, _) |
+                        I32And(_, _) | I32Or(_, _) |
                         F64Add(_, _) | F64Sub(_, _) | F64Mul(_, _) | F64Div(_, _) |
                         I32Eq(_, _) | I32Ne(_, _) | I32Lt(_, _) | I32Gt(_, _) | I32Le(_, _) | I32Ge(_, _) => {
                             // 二元操作: 弹出 2 个，压入 1 个
@@ -414,7 +532,7 @@ fn compile_body(
                         I32Neg(_) | F64Neg(_) | BoolNot(_) => {
                             // 一元操作: 弹出 1 个，压入 1 个 (栈高度不变)
                         }
-                        Call(_, args) => {
+                        Call(_, _, _) => {
                             // 调用: 参数通过变量 ID 传递，不从栈中弹出
                             // 但会压入返回值
                             current_stack_height += 1;
@@ -456,6 +574,19 @@ fn compile_body(
                 for _ in 0..stack_height {
                     builder.append_block_param(*block, types::I64);
                 }
+            }
+        }
+
+        // 调试: 打印函数体
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("[compile_body] func={}, n_inst={}, current_block={:?}, block_map={:?}, block_stack_heights={:?}",
+                func.name, func.body.len(),
+                builder.current_block(),
+                block_map.keys().collect::<Vec<_>>(),
+                block_stack_heights.keys().collect::<Vec<_>>());
+            for (i, inst) in func.body.iter().enumerate() {
+                eprintln!("  [{:3}] {:?}", i, inst);
             }
         }
 
@@ -544,6 +675,18 @@ fn compile_body(
                 I32Mod(a, b) => {
                     let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
                     let r = builder.ins().srem(va, vb);
+                    value_stack.push(r);
+                    stack_homes.push(None);
+                }
+                I32And(a, b) => {
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
+                    let r = builder.ins().band(va, vb);
+                    value_stack.push(r);
+                    stack_homes.push(None);
+                }
+                I32Or(a, b) => {
+                    let (va, vb) = binary_operands(builder, var_map, *a, *b, &mut value_stack, &mut stack_homes)?;
+                    let r = builder.ins().bor(va, vb);
                     value_stack.push(r);
                     stack_homes.push(None);
                 }
@@ -713,17 +856,12 @@ fn compile_body(
                     let current_block = builder.current_block().unwrap();
                     builder.seal_block(current_block);
                     
-                    // 切换到目标块
-                    builder.switch_to_block(target_block);
-                    
-                    // 从参数中恢复栈状态
-                    let block_params_slice = builder.block_params(target_block);
+                    // [修复] 不切换到目标块（目标块可能已封口，如循环反向边）
+                    // 而是创建新块承接线性指令列表中的后续指令
+                    let next_block = builder.create_block();
+                    builder.switch_to_block(next_block);
                     value_stack.clear();
                     stack_homes.clear();
-                    for (i, param_val) in block_params_slice.iter().enumerate() {
-                        value_stack.push(*param_val);
-                        stack_homes.push(None); // 参数没有明确的源变量
-                    }
                 }
                 JumpIfFalse(cond_var, target) => {
                     let cond = get_var_value(builder, var_map, *cond_var, &mut value_stack, &mut stack_homes)?;
@@ -803,7 +941,7 @@ fn compile_body(
                 }
 
                 // ---- 函数调用 ----
-                Call(callee_id, args) => {
+                Call(callee_id, args, ext_name) => {
                     // 收集参数
                     let mut arg_vals: Vec<cl::ir::Value> = Vec::new();
                     for arg_vid in args {
@@ -823,14 +961,41 @@ fn compile_body(
                             stack_homes.push(None);
                         }
                     } else if *callee_id == u32::MAX {
-                        // 未解析的函数调用，生成 trap
+                        // 未解析的外部函数调用：按名称动态声明为导入符号
+                        let name = ext_name.as_deref().unwrap_or("vx_unknown");
+                        let cl_callee_id = if let Some(&id) = external_func_ids.get(name) {
+                            id
+                        } else {
+                            let mut sig = cl::ir::Signature::new(builder.func.signature.call_conv);
+                            for v in &arg_vals {
+                                sig.params.push(cl::ir::AbiParam::new(builder.func.dfg.value_type(*v)));
+                            }
+                            // 外部函数按约定无返回值
+                            let id = module
+                                .declare_function(name, clm::Linkage::Import, &sig)
+                                .map_err(|e| format!("Failed to declare external '{}': {}", name, e))?;
+                            external_func_ids.insert(name.to_string(), id);
+                            id
+                        };
+
+                        let callee_ref = module.declare_func_in_func(cl_callee_id, builder.func);
+                        let call_inst = builder.ins().call(callee_ref, &arg_vals);
+                        let results = builder.inst_results(call_inst);
+                        if !results.is_empty() {
+                            value_stack.push(results[0]);
+                            stack_homes.push(None);
+                        }
+                    } else {
+                        // 真正未解析的内部调用：生成 trap 并切到新块，避免后续指令添加到已终结块
                         builder.ins().trap(cl::ir::TrapCode::UnreachableCodeReached);
+                        switch_to_fresh_block(builder, &mut value_stack, &mut stack_homes);
                     }
                 }
                 CallIndirect(_func_ptr_var, args) => {
                     // 间接调用: 暂不支持，生成 trap
                     let _arg_count = args.len();
                     builder.ins().trap(cl::ir::TrapCode::UnreachableCodeReached);
+                    switch_to_fresh_block(builder, &mut value_stack, &mut stack_homes);
                 }
 
                 // ---- 返回 ----

@@ -1,0 +1,146 @@
+# ============================================================
+# std::string::codec —— 编码转换
+# 支持 hex、base64 编解码
+# ============================================================
+
+import std.error
+import std.collections.vec
+import std.string.util
+
+# ---- Codec 类：编码工具（纯静态方法）----
+class Codec:
+
+    # ========== Hex 编码 ==========
+
+    # 字节数组转十六进制字符串
+    func to_hex(bytes: var) -> var:
+        var hex_chars = "0123456789ABCDEF"
+        var result = ""
+        var i = 0
+        var n = len(bytes)
+        while i < n:
+            var byte_val = bytes[i]
+            var hi = byte_val / 16
+            var lo = byte_val % 16
+            result = result + hex_chars[hi] + hex_chars[lo]
+            i = i + 1
+        return result
+
+    # 十六进制字符串转字节数组
+    func from_hex(hex_str: var) -> var:
+        var s = StringUtil.to_upper(hex_str)
+        var s_len = len(s)
+        if s_len % 2 != 0:
+            return Result.err(error.value_error("from_hex: odd length hex string"))
+
+        var result = []
+        var i = 0
+        while i < s_len:
+            var hi = Codec._hex_digit(s[i])
+            var lo = Codec._hex_digit(s[i + 1])
+            if hi < 0:
+                return Result.err(error.value_error("from_hex: invalid hex digit '" + s[i] + "'"))
+            if lo < 0:
+                return Result.err(error.value_error("from_hex: invalid hex digit '" + s[i + 1] + "'"))
+            result = result + [(hi * 16 + lo)]
+            i = i + 2
+        return Result.ok(result)
+
+    # 十六进制数字值，-1 表示无效
+    func _hex_digit(ch: var) -> int:
+        if ch >= "0":
+            if ch <= "9":
+                return ch[0] - "0"[0]
+        if ch >= "A":
+            if ch <= "F":
+                return ch[0] - "A"[0] + 10
+        return -1
+
+    # ========== Base64 编码 ==========
+
+    # Base64 编码表
+    func _b64_table() -> var:
+        return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+    # 字节数组转 Base64 字符串
+    func to_base64(bytes: var) -> var:
+        var table = Codec._b64_table()
+        var result = ""
+        var n = len(bytes)
+        var i = 0
+        while i < n:
+            # 取出 3 个字节（或剩余）
+            var b0 = bytes[i]
+            var b1 = -1
+            var b2 = -1
+            if i + 1 < n:
+                b1 = bytes[i + 1]
+            if i + 2 < n:
+                b2 = bytes[i + 2]
+
+            # 编码为 4 个 Base64 字符
+            var c0 = (b0 / 4) % 64
+            result = result + table[c0]
+
+            if b1 >= 0:
+                var c1 = ((b0 % 4) * 16) + (b1 / 16)
+                result = result + table[c1]
+            else:
+                var c1 = (b0 % 4) * 16
+                result = result + table[c1] + "=="
+                return result
+
+            if b2 >= 0:
+                var c2 = ((b1 % 16) * 4) + (b2 / 64)
+                var c3 = b2 % 64
+                result = result + table[c2] + table[c3]
+            else:
+                var c2 = (b1 % 16) * 4
+                result = result + table[c2] + "="
+                return result
+
+            i = i + 3
+
+        return result
+
+    # Base64 字符串解码（简化版）
+    func from_base64(b64_str: var) -> var:
+        var s = b64_str
+        # 去除末尾的 =
+        var pad = 0
+        var s_len = len(s)
+        if s_len > 0:
+            if s[s_len - 1] == "=":
+                pad = pad + 1
+            if s_len > 1:
+                if s[s_len - 2] == "=":
+                    pad = pad + 1
+
+        var table = Codec._b64_table()
+        var result = []
+        var i = 0
+        var byte_count = s_len - pad
+        while i < byte_count:
+            # 取 4 个 Base64 字符
+            if i + 3 >= byte_count:
+                return Result.err(error.value_error("from_base64: invalid length"))
+            var v0 = StringUtil.find(table, s[i])
+            var v1 = StringUtil.find(table, s[i + 1])
+            var v2 = StringUtil.find(table, s[i + 2])
+            var v3 = StringUtil.find(table, s[i + 3])
+
+            if v0 < 0:
+                if v1 < 0:
+                    if v2 < 0:
+                        if v3 < 0:
+                            return Result.err(error.value_error("from_base64: invalid character"))
+
+            result = result + [(v0 * 4 + v1 / 16) % 256]
+            if s[i + 2] != "=":
+                result = result + [((v1 % 16) * 16 + v2 / 4) % 256]
+            if s[i + 3] != "=":
+                result = result + [((v2 % 4) * 64 + v3) % 256]
+
+            i = i + 4
+
+        return Result.ok(result)

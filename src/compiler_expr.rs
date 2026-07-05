@@ -239,6 +239,7 @@ impl Compiler {
             | Expr::UnionDecl(..)
             | Expr::FuncDecl(..)
             | Expr::ImportStmt(..)
+            | Expr::ExternDecl(..)
             | Expr::TypeExpr(..)
             | Expr::ExprStmt(..)
             | Expr::VarDecl(..)

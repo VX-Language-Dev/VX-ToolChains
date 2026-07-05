@@ -1,0 +1,28 @@
+# ============================================================
+# std::sys::time —— 时间日期处理
+# ============================================================
+
+import std.error
+
+# ---- Instant 类：单调时钟（不受系统时间调整影响）----
+class Instant:
+    secs: int
+    nanos: int
+
+    # 创建当前时刻
+    func now() -> var:
+        var inst = new Instant()
+        # TODO: 需要 VM 内建 monotonic_clock 指令
+        inst.secs = 0
+        inst.nanos = 0
+        return inst
+
+    # 计算与另一时刻的时间差
+    func duration_since(earlier: var) -> var:
+        var dur = new Duration()
+        dur.secs = self.secs - earlier.secs
+        dur.nanos = self.nanos - earlier.nanos
+        if dur.nanos < 0:
+            dur.nanos = dur.nanos + 1000000000
+            dur.secs = dur.secs - 1
+        return dur

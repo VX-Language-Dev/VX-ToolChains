@@ -1,0 +1,369 @@
+# ============================================================
+# std::string —— 字符串处理模块
+# 扩展内建字符串操作
+# ============================================================
+
+import std.error
+import std.collections.vec
+
+# ---- String 工具类（静态方法集合）----
+# 所有方法都是静态的，接收 string 作为首个参数
+class StringUtil:
+
+    # ========== 基本信息 ==========
+
+    # 字符串长度
+    func size(s: var) -> int:
+        return len(s)
+
+    # 是否为空
+    func is_empty(s: var) -> bool:
+        if len(s) == 0:
+            return true
+        return false
+
+    # ========== 拼接 & 截取 ==========
+
+    # 字符串拼接（等于使用 + 运算符）
+    func concat(a: var, b: var) -> var:
+        return a + b
+
+    # 重复字符串 n 次
+    func repeat(s: var, n: int) -> var:
+        var result = ""
+        var i = 0
+        while i < n:
+            result = result + s
+            i = i + 1
+        return result
+
+    # 截取子串 [start, end)
+    func slice(s: var, start: int, end: int) -> var:
+        var s_len = len(s)
+        if start < 0:
+            start = 0
+        if end > s_len:
+            end = s_len
+        if start >= end:
+            return ""
+
+        var result = ""
+        var i = start
+        while i < end:
+            result = result + s[i]
+            i = i + 1
+        return result
+
+    # 从 start 到末尾
+    func slice_from(s: var, start: int) -> var:
+        return StringUtil.slice(s, start, len(s))
+
+    # 从头到 end
+    func slice_to(s: var, end: int) -> var:
+        return StringUtil.slice(s, 0, end)
+
+    # ========== 查找 & 匹配 ==========
+
+    # 查找子串首次出现位置，-1 表示未找到
+    func find(s: var, pattern: var) -> int:
+        var s_len = len(s)
+        var p_len = len(pattern)
+        if p_len == 0:
+            return 0
+        if p_len > s_len:
+            return -1
+
+        var i = 0
+        while i <= s_len - p_len:
+            var match = true
+            var j = 0
+            while j < p_len:
+                if s[i + j] != pattern[j]:
+                    match = false
+                    j = p_len
+                j = j + 1
+            if match:
+                return i
+            i = i + 1
+        return -1
+
+    # 从右侧查找
+    func rfind(s: var, pattern: var) -> int:
+        var s_len = len(s)
+        var p_len = len(pattern)
+        if p_len == 0:
+            return s_len
+        if p_len > s_len:
+            return -1
+
+        var i = s_len - p_len
+        while i >= 0:
+            var match = true
+            var j = 0
+            while j < p_len:
+                if s[i + j] != pattern[j]:
+                    match = false
+                    j = p_len
+                j = j + 1
+            if match:
+                return i
+            i = i - 1
+        return -1
+
+    # 是否包含子串
+    func contains(s: var, pattern: var) -> bool:
+        if StringUtil.find(s, pattern) >= 0:
+            return true
+        return false
+
+    # 是否以 prefix 开头
+    func starts_with(s: var, prefix: var) -> bool:
+        var p_len = len(prefix)
+        if p_len > len(s):
+            return false
+        var i = 0
+        while i < p_len:
+            if s[i] != prefix[i]:
+                return false
+            i = i + 1
+        return true
+
+    # 是否以 suffix 结尾
+    func ends_with(s: var, suffix: var) -> bool:
+        var s_len = len(s)
+        var sf_len = len(suffix)
+        if sf_len > s_len:
+            return false
+        var i = 0
+        while i < sf_len:
+            if s[s_len - sf_len + i] != suffix[i]:
+                return false
+            i = i + 1
+        return true
+
+    # 子串出现次数
+    func count(s: var, pattern: var) -> int:
+        var c = 0
+        var pos = StringUtil.find(s, pattern)
+        while pos >= 0:
+            c = c + 1
+            s = StringUtil.slice_from(s, pos + len(pattern))
+            pos = StringUtil.find(s, pattern)
+        return c
+
+    # ========== 变换 ==========
+
+    # 替换首次出现的子串
+    func replace(s: var, from: var, to: var) -> var:
+        var pos = StringUtil.find(s, from)
+        if pos < 0:
+            return s
+        var before = StringUtil.slice_to(s, pos)
+        var after = StringUtil.slice_from(s, pos + len(from))
+        return before + to + after
+
+    # 替换所有出现的子串
+    func replace_all(s: var, from: var, to: var) -> var:
+        var result = ""
+        var current = s
+        var pos = StringUtil.find(current, from)
+        while pos >= 0:
+            result = result + StringUtil.slice_to(current, pos) + to
+            current = StringUtil.slice_from(current, pos + len(from))
+            pos = StringUtil.find(current, from)
+        result = result + current
+        return result
+
+    # 去除首尾空白（空格、tab、换行）
+    func trim(s: var) -> var:
+        return StringUtil.trim_end(StringUtil.trim_start(s))
+
+    # 去除首部空白
+    func trim_start(s: var) -> var:
+        var i = 0
+        var s_len = len(s)
+        while i < s_len:
+            var ch = s[i]
+            if ch != " ":
+                if ch != "\t":
+                    if ch != "\n":
+                        if ch != "\r":
+                            i = s_len
+            if i < s_len:
+                if ch != " ":
+                    if ch != "\t":
+                        if ch != "\n":
+                            if ch != "\r":
+                                i = s_len
+                else:
+                    i = i + 1
+        return StringUtil.slice_from(s, i)
+
+    # 去除尾部空白
+    func trim_end(s: var) -> var:
+        var i = len(s) - 1
+        while i >= 0:
+            var ch = s[i]
+            if ch != " ":
+                if ch != "\t":
+                    if ch != "\n":
+                        if ch != "\r":
+                            i = -1
+            if i >= 0:
+                if ch != " ":
+                    if ch != "\t":
+                        if ch != "\n":
+                            if ch != "\r":
+                                i = -1
+                else:
+                    i = i - 1
+        return StringUtil.slice_to(s, i + 1)
+
+    # 转换为小写（ASCII）
+    func to_lower(s: var) -> var:
+        var result = ""
+        var i = 0
+        var s_len = len(s)
+        while i < s_len:
+            var ch = s[i]
+            # ASCII 'A'~'Z' = 65~90, 'a'~'z' = 97~122
+            var code = ch[0]
+            if code >= "A"[0]:
+                if code <= "Z"[0]:
+                    # 转为小写：ch + 32
+                    var lower_code = code - "A"[0] + "a"[0]
+                    result = result + lower_code
+                    i = i + 1
+                    continue
+            result = result + ch
+            i = i + 1
+        return result
+
+    # 转换为大写（ASCII）
+    func to_upper(s: var) -> var:
+        var result = ""
+        var i = 0
+        var s_len = len(s)
+        while i < s_len:
+            var ch = s[i]
+            var code = ch[0]
+            if code >= "a"[0]:
+                if code <= "z"[0]:
+                    var upper_code = code - "a"[0] + "A"[0]
+                    result = result + upper_code
+                    i = i + 1
+                    continue
+            result = result + ch
+            i = i + 1
+        return result
+
+    # 首字母大写
+    func capitalize(s: var) -> var:
+        if len(s) == 0:
+            return ""
+        var first = StringUtil.to_upper(StringUtil.slice_to(s, 1))
+        var rest = StringUtil.to_lower(StringUtil.slice_from(s, 1))
+        return first + rest
+
+    # ========== 分割 & 连接 ==========
+
+    # 按分隔符分割
+    func split(s: var, delim: var) -> var:
+        var result = new Vec()
+        var current = s
+        var delim_len = len(delim)
+        if delim_len == 0:
+            # 拆分为单字符
+            var i = 0
+            while i < len(s):
+                result.push(StringUtil.slice(s, i, i + 1))
+                i = i + 1
+            return result
+
+        var pos = StringUtil.find(current, delim)
+        while pos >= 0:
+            var part = StringUtil.slice_to(current, pos)
+            result.push(part)
+            current = StringUtil.slice_from(current, pos + delim_len)
+            pos = StringUtil.find(current, delim)
+        result.push(current)
+        return result
+
+    # 按空白分割
+    func split_whitespace(s: var) -> var:
+        var result = new Vec()
+        var current = ""
+        var i = 0
+        var s_len = len(s)
+        while i < s_len:
+            var ch = s[i]
+            if ch == " ":
+                if current != "":
+                    result.push(current)
+                    current = ""
+            elif ch == "\t":
+                if current != "":
+                    result.push(current)
+                    current = ""
+            elif ch == "\n":
+                if current != "":
+                    result.push(current)
+                    current = ""
+            else:
+                current = current + ch
+            i = i + 1
+        if current != "":
+            result.push(current)
+        return result
+
+    # 按行分割
+    func lines(s: var) -> var:
+        var result = new Vec()
+        var current = ""
+        var i = 0
+        var s_len = len(s)
+        while i < s_len:
+            var ch = s[i]
+            if ch == "\n":
+                result.push(current)
+                current = ""
+            elif ch == "\r":
+                # 跳过 \r
+                if i + 1 < s_len:
+                    if s[i + 1] == "\n":
+                        i = i + 1
+                result.push(current)
+                current = ""
+            else:
+                current = current + ch
+            i = i + 1
+        # 最后一行（既使是空行）
+        result.push(current)
+        return result
+
+    # 用分隔符连接字符串数组
+    func join(strings: var, sep: var) -> var:
+        var result = ""
+        var i = 0
+        var n = len(strings)
+        while i < n:
+            if i > 0:
+                result = result + sep
+            result = result + strings[i]
+            i = i + 1
+        return result
+
+    # ========== 字符访问 ==========
+
+    # 安全字符访问（返回单字符字符串）
+    func char_at(s: var, idx: int) -> var:
+        var s_len = len(s)
+        if idx < 0:
+            return Result.err(error.value_error("char_at: index " + idx + " < 0"))
+        if idx >= s_len:
+            return Result.err(error.value_error("char_at: index " + idx + " out of bounds"))
+        return Result.ok(StringUtil.slice(s, idx, idx + 1))
+
+    # 获取所有字符列表
+    func chars(s: var) -> var:
+        return StringUtil.split(s, "")

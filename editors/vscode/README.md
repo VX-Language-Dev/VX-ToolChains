@@ -4,15 +4,32 @@ VS Code extension for the VX programming language, providing syntax highlighting
 
 ## Features
 
+### Syntax & Formatting
 - Syntax highlighting for `.vx` files
 - Bracket/comment configuration
-- LSP client that connects to the official `vx-lsp` language server
-  - Diagnostics
-  - Hover information
-  - Go to definition
-  - Document symbols
-  - Workspace symbols
-  - Completion
+
+### LSP Server (`vx-lsp`) Features
+
+#### Completion (自动补全)
+- **Function signature snippets**: 参数占位符，Tab 切换
+- **Struct/Class `new` templates**: `new Type(...)` 模板
+- **Member access completion**: `.` 和 `->` 触发成员（字段/方法）补全
+- **Import path completion**: `import` 语句模块路径补全
+- **Scope-based sorting**: 局部变量优先于全局符号
+
+#### Hover (悬停提示)
+- **Precise token highlighting**: 精确的 token 范围高亮
+- **Struct/Class member hover**: 字段与方法的类型信息
+- **Function call signature**: 调用点显示函数签名
+- **Builtin functions**: `out`, `sys_argv`, `len`, `panic` 内置函数说明
+
+#### Go to Definition (跳转定义)
+- **Scope-aware lookup**: 作用域内最近定义优先
+- **Supports**: 函数参数、局部变量、`import` 别名、方法内精确跳转
+
+#### Symbols (符号导航)
+- Document symbols: 结构化大纲视图
+- Workspace symbols: 全局符号搜索
 
 ## Prerequisites
 

@@ -1,0 +1,6 @@
+# VX Standard Library - System Module
+#
+# Provides system-level functions like process exit.
+# Implementations are provided by the AOT linker built-in stubs.
+
+extern func exit(code: int)

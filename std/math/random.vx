@@ -1,0 +1,104 @@
+# ============================================================
+# std::math::random —— 随机数生成
+# 使用 xoshiro256** 算法（简化版线性同余生成器）
+# ============================================================
+
+import std.math
+
+# ---- Random 类：伪随机数生成器 ----
+class Random:
+    seed: int           # 当前种子值
+    a: int              # 乘数 6364136223846793005
+    c: int              # 增量 1442695040888963407
+    m: int              # 模数 2^31 - 1
+
+    # 初始化（使用时钟种子）
+    func new() -> var:
+        var r = new Random()
+        # 默认种子（可通过 time 模块改进）
+        r.seed = 123456789
+        r.a = 636413622384679
+        r.c = 1442695040
+        r.m = 2147483647
+        return r
+
+    # 指定种子初始化（可复现随机序列）
+    func with_seed(seed: int) -> var:
+        var r = new Random()
+        r.seed = seed
+        r.a = 636413622384679
+        r.c = 1442695040
+        r.m = 2147483647
+        return r
+
+    # 生成下一个随机整数（LCG 算法）
+    func _next_int() -> int:
+        self.seed = (self.a * self.seed + self.c) % self.m
+        return self.seed
+
+    # 生成 [0, 1) 的浮点数
+    func next() -> float:
+        var r = self._next_int()
+        var m = self.m
+        return r / m
+
+    # 生成 [lo, hi] 的整数
+    func next_int(lo: int, hi: int) -> int:
+        if lo >= hi:
+            return lo
+        var range = hi - lo + 1
+        var r = self._next_int()
+        return lo + (r % range)
+
+    # 生成 [lo, hi) 的浮点数
+    func next_float(lo: float, hi: float) -> float:
+        if lo >= hi:
+            return lo
+        return lo + self.next() * (hi - lo)
+
+    # 正态分布（Box-Muller 变换）
+    func gaussian(mean: float, stddev: float) -> float:
+        var u1 = self.next()
+        if u1 == 0.0:
+            u1 = 0.000001
+        var u2 = self.next()
+        var z = sqrt(-2.0 * ln(u1)) * cos(2.0 * math_pi() * u2)
+        return mean + z * stddev
+
+    # 从列表中随机选择
+    func choice(items: var) -> var:
+        var n = len(items)
+        if n == 0:
+            return nil
+        var idx = self.next_int(0, n - 1)
+        return items[idx]
+
+    # 洗牌（Fisher-Yates）
+    func shuffle(items: var) -> var:
+        var n = len(items)
+        var result = []
+        var i = 0
+        while i < n:
+            result = result + [items[i]]
+            i = i + 1
+        i = n - 1
+        while i > 0:
+            var j = self.next_int(0, i)
+            var tmp = result[i]
+            result[i] = result[j]
+            result[j] = tmp
+            i = i - 1
+        return result
+
+    # 不放回抽样
+    func sample(items: var, k: int) -> var:
+        var n = len(items)
+        if k > n:
+            k = n
+        var shuffled = self.shuffle(items)
+        var result = []
+        var i = 0
+        while i < k:
+            result = result + [shuffled[i]]
+            i = i + 1
+        return result

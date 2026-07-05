@@ -1,0 +1,7 @@
+[project]
+name = "vx-bootstrap"
+version = "1.3.4"
+
+[libraries]
+std = "../std"
+bootstrap = "."

@@ -1,9 +1,16 @@
-# Rust
-target
+# Rust build artifacts
+target/
 
-# IDE
+# Zig build artifacts
+vlnk_tmp/zig-out/
+vlnk_tmp/.zig-cache/
+
+# IDE/Tools
 .vscode/
 .idea/
+.air/
+.codebuddy/
+.mcp.json
 *.swp
 *.swo
 *~
@@ -13,22 +20,30 @@ target
 .DS_Store
 Thumbs.db
 
-# VX
+# VX compiled outputs
 *.vxobj
-*.vx
-*.out
-!vxsetting.toml
-vxmod.toml
-!vxmod.toml
+*.vxco
 *.vack
-*.json
-# Logs
-logs/
+*.out
 
-# Qodana
-qodana.yaml
-*.toml
-package
+# Test/build binaries
+hello
+ret0
+ret0_*
+test_*
+vxedit
+zig-out/
+bootstrap/vxbootstrap
+
+# Debug
+.dbg/
+logs/
+debug-vxlinker-native-crash.md
+
+# Package artifacts
+package/
 *.zip
-test_fib190_out
-test_debugger
+*.tar.gz
+
+# Misc
+rpm.py

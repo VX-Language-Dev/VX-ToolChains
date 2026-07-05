@@ -6,11 +6,11 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    InitializeParams, InitializeResult, InitializedParams, MessageType, SaveOptions,
-    ServerCapabilities, ServerInfo, SymbolInformation, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions,
-    WorkspaceSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverProviderCapability, HoverParams, InitializeParams, InitializeResult, InitializedParams,
+    MessageType, SaveOptions, ServerCapabilities, ServerInfo, SymbolInformation,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -72,6 +72,7 @@ impl LanguageServer for VxLspBackend {
                     ..Default::default()
                 }),
                 definition_provider: Some(tower_lsp::lsp_types::OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(tower_lsp::lsp_types::OneOf::Left(true)),
                 workspace_symbol_provider: Some(tower_lsp::lsp_types::OneOf::Left(true)),
                 ..Default::default()

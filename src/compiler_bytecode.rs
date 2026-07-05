@@ -3,6 +3,7 @@
 // 不再作为可持久化或执行的输出格式。
 
 use crate::OpCode;
+use crate::type_ir::Type;
 
 #[derive(Debug, Clone)]
 pub enum BytecodeArg {
@@ -54,6 +55,8 @@ pub struct BytecodeFunction {
     pub num_params: usize,
     pub has_return: bool,
     pub param_names: Vec<String>,
+    /// 参数类型（VX 静态类型，以 TypeIR Type 表示）
+    pub param_types: Vec<Type>,
 }
 
 #[derive(Debug, Clone)]

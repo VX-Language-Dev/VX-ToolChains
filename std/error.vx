@@ -1,0 +1,165 @@
+# ============================================================
+# std::error —— 错误处理模块（零依赖基础模块）
+# ============================================================
+
+# ---- ErrorKind 枚举：错误类别标签 ----
+enum ErrorKind:
+    None      = 0
+    IO        = 1
+    Parse     = 2
+    TypeError = 3
+    Runtime   = 4
+    ValueError = 5
+    Index     = 6
+    Key       = 7
+    Math      = 8
+    System    = 9
+    Other     = 99
+
+# ---- Error 类：标准错误类型 ----
+class Error:
+    kind: int           # ErrorKind 值
+    msg: var            # 人类可读的错误描述
+    code: int           # 错误码（0 表示无错误）
+    source: var         # 源文件路径（字符串或空串）
+    line: int           # 出错行号（0 表示未知）
+    col: int            # 出错列号（0 表示未知）
+
+    # 构造器：创建基本错误
+    func new(kind: int, msg: var) -> var:
+        var e = new Error()
+        e.kind = kind
+        e.msg = msg
+        e.code = 0
+        e.source = ""
+        e.line = 0
+        e.col = 0
+        return e
+
+    # 设置错误码，返回自身（链式调用）
+    func with_code(code: int) -> var:
+        self.code = code
+        return self
+
+    # 设置源码位置，返回自身
+    func with_location(file: var, line: int, col: int) -> var:
+        self.source = file
+        self.line = line
+        self.col = col
+        return self
+
+    # 是否为严重错误（code != 0）
+    func is_critical() -> bool:
+        if self.code != 0:
+            return true
+        return false
+
+    # 格式化输出
+    func to_string() -> var:
+        var result = ""
+        if self.source != "":
+            result = result + self.source
+            if self.line > 0:
+                result = result + ":" + self.line
+                if self.col > 0:
+                    result = result + ":" + self.col
+            result = result + " "
+        result = result + "[" + self.kind + "] "
+        result = result + self.msg
+        if self.code != 0:
+            result = result + " (code=" + self.code + ")"
+        return result
+
+# ---- Result 类：替代泛型枚举 Result[T, E] ----
+# 使用方式：
+#   成功：var r = Result.ok(value)
+#   失败：var r = Result.err(error)
+#   检查：if r.is_ok: ... else: ...
+class Result:
+    is_ok: bool
+    value: var          # 成功时的值
+    error: var          # 失败时的 Error 对象
+
+    # 创建成功结果
+    func ok(val: var) -> var:
+        var r = new Result()
+        r.is_ok = true
+        r.value = val
+        r.error = nil
+        return r
+
+    # 创建失败结果
+    func err(err: var) -> var:
+        var r = new Result()
+        r.is_ok = false
+        r.value = nil
+        r.error = err
+        return r
+
+    # 如果成功则解包值，否则返回默认值
+    func unwrap_or(default_val: var) -> var:
+        if self.is_ok:
+            return self.value
+        return default_val
+
+    # 解包值，失败时触发错误
+    func unwrap() -> var:
+        if self.is_ok:
+            return self.value
+        return self.error
+
+# ---- Backtrace 类：堆栈追踪 ----
+# 第一版简化实现：存储函数名和位置的字符串列表
+class Backtrace:
+    frames: var          # 字符串列表，每帧 "func @ file:line"
+    depth: int
+
+    func new() -> var:
+        var bt = new Backtrace()
+        bt.frames = []
+        bt.depth = 0
+        return bt
+
+    # 捕获当前堆栈（VM 内建支持，当前用占位实现）
+    func capture() -> var:
+        var bt = new Backtrace()
+        bt.frames = []
+        bt.depth = 0
+        # TODO: VM 层支持 CallFrame 内省时替换为实际捕获
+        return bt
+
+    # 添加一帧
+    func push_frame(frame_info: var):
+        # frame_info 格式："func_name @ file:line"
+        self.frames = self.frames + [frame_info]
+        self.depth = self.depth + 1
+
+    # 格式化输出堆栈
+    func render() -> var:
+        var output = "Stack trace (depth=" + self.depth + "):\n"
+        var i = 0
+        while i < self.depth:
+            output = output + "  #" + i + " " + self.frames[i] + "\n"
+            i = i + 1
+        return output
+
+# ---- 快捷构造函数 ----
+# 创建 IO 错误
+func io_error(msg: var) -> var:
+    return new Error(ErrorKind.IO, msg)
+
+# 创建解析错误
+func parse_error(msg: var) -> var:
+    return new Error(ErrorKind.Parse, msg)
+
+# 创建类型错误
+func type_error(msg: var) -> var:
+    return new Error(ErrorKind.TypeError, msg)
+
+# 创建运行时错误
+func runtime_error(msg: var) -> var:
+    return new Error(ErrorKind.Runtime, msg)
+
+# 创建值错误
+func value_error(msg: var) -> var:
+    return new Error(ErrorKind.ValueError, msg)

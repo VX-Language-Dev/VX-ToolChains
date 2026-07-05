@@ -1,0 +1,57 @@
+# ============================================================
+# std::conv —— 类型转换工具
+# 依赖 VM 内建 int/float/str/parse_int/parse_float
+# ============================================================
+
+import std.error
+
+class Conv:
+    # 字符串 -> 整数，失败返回 nil
+    func parse_int(s: var) -> var:
+        return parse_int(s)
+
+    # 字符串 -> 浮点数，失败返回 nil
+    func parse_float(s: var) -> var:
+        return parse_float(s)
+
+    # 任意 -> 整数（与 int 内建等价）
+    func to_int(v: var) -> int:
+        return int(v)
+
+    # 任意 -> 浮点数（与 float 内建等价）
+    func to_float(v: var) -> float:
+        return float(v)
+
+    # 任意 -> 字符串（与 str 内建等价）
+    func to_str(v: var) -> var:
+        return str(v)
+
+    # 安全解析整数，返回 Result
+    func parse_int_result(s: var) -> var:
+        var r = parse_int(s)
+        if r == nil:
+            return Result.err(error.value_error("Conv.parse_int: invalid integer '" + s + "'"))
+        return Result.ok(r)
+
+    # 安全解析浮点数，返回 Result
+    func parse_float_result(s: var) -> var:
+        var r = parse_float(s)
+        if r == nil:
+            return Result.err(error.value_error("Conv.parse_float: invalid float '" + s + "'"))
+        return Result.ok(r)
+
+# 顶层便捷函数
+func parse_int(s: var) -> var:
+    return Conv.parse_int(s)
+
+func parse_float(s: var) -> var:
+    return Conv.parse_float(s)
+
+func to_int(v: var) -> int:
+    return Conv.to_int(v)
+
+func to_float(v: var) -> float:
+    return Conv.to_float(v)
+
+func to_str(v: var) -> var:
+    return Conv.to_str(v)

@@ -1,0 +1,341 @@
+# ============================================================
+# std::math —— 基础数学运算模块
+# ============================================================
+
+import std.collections.vec
+
+# ---- 数学常量 ----
+# 注：VX 当前无 const 关键字，使用函数返回常量值
+
+func math_pi() -> float:
+    return 3.141592653589793
+
+func math_e() -> float:
+    return 2.718281828459045
+
+func math_tau() -> float:
+    return 6.283185307179586
+
+func deg_to_rad() -> float:
+    return 0.017453292519943295
+
+func rad_to_deg() -> float:
+    return 57.29577951308232
+
+# ========== 基础函数 ==========
+
+func abs(x: float) -> float:
+    if x < 0.0:
+        return -x
+    return x
+
+func abs_int(x: int) -> int:
+    if x < 0:
+        return -x
+    return x
+
+func min(a: var, b: var) -> var:
+    if a < b:
+        return a
+    return b
+
+func max(a: var, b: var) -> var:
+    if a > b:
+        return a
+    return b
+
+func clamp(val: var, lo: var, hi: var) -> var:
+    if val < lo:
+        return lo
+    if val > hi:
+        return hi
+    return val
+
+func floor(x: float) -> int:
+    var i = x
+    if i > x:
+        i = i - 1
+    return i
+
+func ceil(x: float) -> int:
+    var i = x
+    if i < x:
+        i = i + 1
+    return i
+
+func round(x: float) -> int:
+    return floor(x + 0.5)
+
+func trunc(x: float) -> int:
+    if x >= 0.0:
+        return floor(x)
+    return ceil(x)
+
+func fract(x: float) -> float:
+    return x - floor(x)
+
+func sign(x: float) -> int:
+    if x > 0.0:
+        return 1
+    if x < 0.0:
+        return -1
+    return 0
+
+# ========== 幂/对数 ==========
+
+# 整数幂运算
+func pow_int(base: int, exp: int) -> int:
+    if exp < 0:
+        return 0
+    var result = 1
+    var i = 0
+    while i < exp:
+        result = result * base
+        i = i + 1
+    return result
+
+# 浮点幂运算（整数指数递归快速幂）
+func pow(base: float, exp: int) -> float:
+    if exp == 0:
+        return 1.0
+    if exp < 0:
+        return 1.0 / pow(base, -exp)
+    var half = pow(base, exp / 2)
+    if exp % 2 == 0:
+        return half * half
+    return half * half * base
+
+# 平方根（牛顿迭代法）
+func sqrt(x: float) -> float:
+    if x < 0.0:
+        return 0.0
+    if x == 0.0:
+        return 0.0
+    var guess = x
+    var i = 0
+    while i < 20:
+        guess = (guess + x / guess) / 2.0
+        i = i + 1
+    return guess
+
+# 立方根
+func cbrt(x: float) -> float:
+    if x == 0.0:
+        return 0.0
+    var neg = false
+    if x < 0.0:
+        neg = true
+        x = -x
+    var guess = x
+    var i = 0
+    while i < 30:
+        guess = (2.0 * guess + x / (guess * guess)) / 3.0
+        i = i + 1
+    if neg:
+        return -guess
+    return guess
+
+# e^x（泰勒级数）
+func exp(x: float) -> float:
+    var result = 1.0
+    var term = 1.0
+    var n = 1
+    while n < 20:
+        term = term * x / n
+        result = result + term
+        n = n + 1
+    return result
+
+# 自然对数 ln(x)（牛顿法）
+func ln(x: float) -> float:
+    if x <= 0.0:
+        return 0.0
+    if x == 1.0:
+        return 0.0
+    var guess = x - 1.0
+    var i = 0
+    while i < 20:
+        var exp_guess = exp(guess)
+        guess = guess + (x - exp_guess) / exp_guess
+        i = i + 1
+    return guess
+
+# 任意底对数
+func log(base: float, x: float) -> float:
+    return ln(x) / ln(base)
+
+func log2(x: float) -> float:
+    return ln(x) / 0.6931471805599453
+
+func log10(x: float) -> float:
+    return ln(x) / 2.302585092994046
+
+# ========== 三角函数（泰勒级数近似） ==========
+
+# 角度参数规约到 [-pi, pi]
+func _normalize_angle(x: float) -> float:
+    var pi = math_pi()
+    var two_pi = 2.0 * pi
+    while x > pi:
+        x = x - two_pi
+    while x < -pi:
+        x = x + two_pi
+    return x
+
+# 正弦（泰勒级数）
+func sin(x: float) -> float:
+    x = _normalize_angle(x)
+    var result = x
+    var term = x
+    var n = 1
+    while n < 10:
+        term = term * (-x * x) / ((2 * n) * (2 * n + 1))
+        result = result + term
+        n = n + 1
+    return result
+
+# 余弦
+func cos(x: float) -> float:
+    var pi = math_pi()
+    return sin(x + pi / 2.0)
+
+# 正切
+func tan(x: float) -> float:
+    var c = cos(x)
+    if c == 0.0:
+        return 0.0
+    return sin(x) / c
+
+# 反正弦（牛顿法 + 区间判断）
+func asin(x: float) -> float:
+    if x < -1.0:
+        return -math_pi() / 2.0
+    if x > 1.0:
+        return math_pi() / 2.0
+    if x == 0.0:
+        return 0.0
+    # 牛顿法求解 sin(y) - x = 0
+    var guess = x
+    var i = 0
+    while i < 10:
+        var s = sin(guess)
+        var c = cos(guess)
+        if c == 0.0:
+            return guess
+        guess = guess - (s - x) / c
+        i = i + 1
+    return guess
+
+# 反余弦
+func acos(x: float) -> float:
+    return math_pi() / 2.0 - asin(x)
+
+# 反正切
+func atan(x: float) -> float:
+    if x == 0.0:
+        return 0.0
+    # 用 asin 实现：atan(x) = asin(x / sqrt(1 + x²))
+    return asin(x / sqrt(1.0 + x * x))
+
+# atan2(y, x)
+func atan2(y: float, x: float) -> float:
+    if x > 0.0:
+        return atan(y / x)
+    if x < 0.0:
+        if y >= 0.0:
+            return atan(y / x) + math_pi()
+        return atan(y / x) - math_pi()
+    # x == 0
+    if y > 0.0:
+        return math_pi() / 2.0
+    if y < 0.0:
+        return -math_pi() / 2.0
+    return 0.0
+
+# 双曲正弦
+func sinh(x: float) -> float:
+    var ex = exp(x)
+    return (ex - 1.0 / ex) / 2.0
+
+# 双曲余弦
+func cosh(x: float) -> float:
+    var ex = exp(x)
+    return (ex + 1.0 / ex) / 2.0
+
+# 双曲正切
+func tanh(x: float) -> float:
+    if x == 0.0:
+        return 0.0
+    var sh = sinh(x)
+    var ch = cosh(x)
+    if ch == 0.0:
+        return 0.0
+    return sh / ch
+
+# ========== 数值检查 ==========
+
+func is_nan(x: float) -> bool:
+    # NaN 不等于自身
+    if x == x:
+        return false
+    return true
+
+func is_finite(x: float) -> bool:
+    if is_nan(x):
+        return false
+    if x == 1.0:
+        if x / 1000000000000000000000000000.0 == 0.0:
+            return true
+    return true
+
+# ========== 通用数学工具 ==========
+
+func hypot(x: float, y: float) -> float:
+    return sqrt(x * x + y * y)
+
+func lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+func gcd(a: int, b: int) -> int:
+    a = abs_int(a)
+    b = abs_int(b)
+    while b != 0:
+        var t = b
+        b = a % b
+        a = t
+    return a
+
+func lcm(a: int, b: int) -> int:
+    if a == 0:
+        if b == 0:
+            return 0
+        return abs_int(b)
+    return abs_int(a * b) / gcd(a, b)
+
+func is_prime(n: int) -> bool:
+    if n < 2:
+        return false
+    if n <= 3:
+        return true
+    if n % 2 == 0:
+        return false
+    if n % 3 == 0:
+        return false
+    var i = 5
+    while i * i <= n:
+        if n % i == 0:
+            return false
+        if n % (i + 2) == 0:
+            return false
+        i = i + 6
+    return true
+
+func factorial(n: int) -> int:
+    if n < 0:
+        return 0
+    var result = 1
+    var i = 2
+    while i <= n:
+        result = result * i
+        i = i + 1
+    return result

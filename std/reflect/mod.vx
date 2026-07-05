@@ -1,0 +1,129 @@
+# ============================================================
+# std::reflect —— 反射工具模块
+# 提供运行时类型检查和反射能力，依赖 VM 内建函数
+# ============================================================
+
+import std.error
+
+# ---- 类型名称常量 ----
+class TypeNames:
+    NIL      = "Nil"
+    INT      = "Int"
+    FLOAT    = "Float"
+    BOOL     = "Bool"
+    STRING   = "String"
+    ARRAY    = "Array"
+    MAP      = "Map"
+    INSTANCE = "Instance"
+
+# ---- Reflect 类：反射工具 ----
+class Reflect:
+    # 获取值的类型名称
+    func type_name(v: var) -> var:
+        return typeof(v)
+
+    # 检查值是否为 nil
+    func is_nil(v: var) -> bool:
+        return is_nil(v)
+
+    # 检查值是否为整数
+    func is_int(v: var) -> bool:
+        return is_int(v)
+
+    # 检查值是否为浮点数
+    func is_float(v: var) -> bool:
+        return is_float(v)
+
+    # 检查值是否为布尔值
+    func is_bool(v: var) -> bool:
+        return is_bool(v)
+
+    # 检查值是否为字符串
+    func is_string(v: var) -> bool:
+        return is_string(v)
+
+    # 检查值是否为数组
+    func is_array(v: var) -> bool:
+        return is_array(v)
+
+    # 检查值是否为映射（HashMap）
+    func is_map(v: var) -> bool:
+        return is_map(v)
+
+    # 检查值是否为实例对象
+    func is_instance(v: var) -> bool:
+        return is_instance(v)
+
+    # 检查值是否为数字类型（int 或 float）
+    func is_number(v: var) -> bool:
+        return is_int(v) or is_float(v)
+
+    # 检查值是否为基础类型（int/float/bool/string/nil）
+    func is_primitive(v: var) -> bool:
+        return is_nil(v) or is_int(v) or is_float(v) or is_bool(v) or is_string(v)
+
+    # 检查值是否为容器类型（array 或 map）
+    func is_container(v: var) -> bool:
+        return is_array(v) or is_map(v)
+
+    # 获取类型的字符串表示
+    func type_str(v: var) -> var:
+        var t = typeof(v)
+        if t == TypeNames.INSTANCE:
+            return "class instance"
+        if t == TypeNames.NIL:
+            return "nil"
+        if t == TypeNames.INT:
+            return "int"
+        if t == TypeNames.FLOAT:
+            return "float"
+        if t == TypeNames.BOOL:
+            return "bool"
+        if t == TypeNames.STRING:
+            return "string"
+        if t == TypeNames.ARRAY:
+            return "array"
+        if t == TypeNames.MAP:
+            return "map"
+        return t
+
+    # 断言类型，失败时返回错误
+    func assert_type(v: var, expected: var) -> var:
+        var actual = typeof(v)
+        if actual != expected:
+            return Result.err(error.type_error("expected " + expected + ", got " + actual))
+        return Result.ok(v)
+
+    # 断言非 nil
+    func assert_not_nil(v: var, msg: var) -> var:
+        if is_nil(v):
+            return Result.err(error.value_error(msg))
+        return Result.ok(v)
+
+# ---- 顶层便捷函数 ----
+func typeof(v: var) -> var:
+    return typeof(v)
+
+func is_nil(v: var) -> bool:
+    return is_nil(v)
+
+func is_int(v: var) -> bool:
+    return is_int(v)
+
+func is_float(v: var) -> bool:
+    return is_float(v)
+
+func is_bool(v: var) -> bool:
+    return is_bool(v)
+
+func is_string(v: var) -> bool:
+    return is_string(v)
+
+func is_array(v: var) -> bool:
+    return is_array(v)
+
+func is_map(v: var) -> bool:
+    return is_map(v)
+
+func is_instance(v: var) -> bool:
+    return is_instance(v)
