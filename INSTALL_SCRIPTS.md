@@ -17,33 +17,26 @@ Both scripts implement the following functionality:
 - Windows script detects: x86, x86_64, ARM64
 
 ### 2. Project Root Verification
-- Checks for `Cargo.toml` in current directory
-- Verifies `src/` directory exists
-- Validates that the project is actually the VX Toolkit by checking for specific identifiers
+- Checks for `src-zig/build.zig` in current directory
+- Verifies `src-zig/src/` directory exists
 
-### 3. Cargo Environment Check & Installation
-- Detects if Cargo is already installed
+### 3. Zig Environment Check & Installation
+- Detects if Zig is already installed
 - If installed: proceeds directly to build
-- If not installed: automatically downloads and installs via rustup
-  - Unix: Uses `curl` to download from https://sh.rustup.rs
-  - Windows: Downloads rustup-init.exe from https://win.rustup.rs
+- If not installed: automatically downloads and installs Zig 0.13+
+  - Unix: Downloads from ziglang.org and installs to /usr/local/bin
+  - Windows: Downloads zip archive and extracts locally
 
 ### 4. Build Process
-- Executes `cargo build --release` to compile all binaries
+- Executes `zig build -Doptimize=ReleaseSafe` to compile all binaries
 - Provides progress feedback and error handling
 
 ### 5. Artifact Installation
 - Creates `toolkit/` directory in project root
-- Moves all compiled binaries to `toolkit/`:
-  - `vxcompiler` / `vxcompiler.exe`
-  - `vxlinker` / `vxlinker.exe`
-  - `vx_runtime` / `vx_runtime.exe`
-  - `vpm` / `vpm.exe`
-  - `vx-lsp` / `vx-lsp.exe`
-  - `vxdbg` / `vxdbg.exe`
-- Also moves library files:
-  - Unix: `libvx_vm.so` / `libvx_vm.dylib`, `libvx_vm.a`
-  - Windows: `vx_vm.dll`, `vx_vm.lib`
+- Moves all compiled Zig binaries to `toolkit/`:
+  - `vxc` / `vxc.exe` — VX 编译器
+  - `vlnk` / `vlnk.exe` — 原生链接器
+  - `vpm` / `vpm.exe` — 包管理器
 
 ### 6. User Feedback
 - Color-coded output (Unix) for better readability
@@ -100,9 +93,9 @@ To make this permanent, add the export/set command to your shell profile or syst
 
 ## Requirements
 
-- **Unix**: bash, curl (for Cargo installation)
-- **Windows**: curl (for Cargo installation)
-- Both scripts will install Cargo/Rust if not present
+- **Unix**: bash, curl (for Zig installation)
+- **Windows**: curl (for Zig installation)
+- Both scripts will install Zig if not present
 
 ## Troubleshooting
 
@@ -113,9 +106,9 @@ chmod +x unix-unixlike-install-vxtoolkit.bash
 ```
 
 ### Windows Script
-If Cargo is not found after installation, open a new Command Prompt window to refresh the PATH.
+If Zig is not found after installation, add the extracted `zig-*` directory to your system PATH.
 
 ### Both Scripts
-- Ensure you're in the project root directory (where Cargo.toml is located)
-- Check that you have internet connectivity for Cargo installation
+- Ensure you're in the project root directory (where `src-zig/build.zig` is located)
+- Check that you have internet connectivity for Zig installation
 - Review error messages for specific build failures

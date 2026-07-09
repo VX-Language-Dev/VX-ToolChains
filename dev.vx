@@ -1,4 +1,3 @@
-import rpm
-
+import browser_detect
 func main():
-    rpm.tx()
+    browser_detect.detect()

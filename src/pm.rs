@@ -341,6 +341,10 @@ fn cmd_install(vack_path: &str) -> Result<(), VpmError> {
 
     copy_dir_all(&pkg_source_dir, &target_dir)?;
 
+    // 10.5 自动生成 VX 入口文件 + 注册到 vxsetting.toml
+    generate_vx_entry(&target_dir, pkg_name, &info)?;
+    register_library_in_vxsetting(&workspace_root, pkg_name, &target_dir)?;
+
     // 11. 更新 vxmod.tmol
     append_to_vxmod(&workspace_root, pkg_name, pkg_version, pkg_lang)?;
 
@@ -472,6 +476,212 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), io::Error> {
             fs::copy(entry.path(), &dest)?;
         }
     }
+    Ok(())
+}
+
+/// 扫描包目录，如果缺少 .vx 文件则根据 info.toml 自动生成 mod.vx 入口
+fn generate_vx_entry(
+    pkg_dir: &Path,
+    pkg_name: &str,
+    info: &HashMap<String, String>,
+) -> Result<(), VpmError> {
+    // 如果包目录内已有任何 .vx 文件，跳过生成
+    let has_vx = fs::read_dir(pkg_dir)
+        .map_err(VpmError::Io)?
+        .filter_map(|e| e.ok())
+        .any(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("vx"));
+    if has_vx {
+        return Ok(());
+    }
+
+    // 从 info.toml 读取 language 字段
+    let lang = info.get("language").map(|s| s.as_str()).unwrap_or("unknown");
+
+    // 根据 language 生成 mod.vx 外部声明
+    let mod_vx_path = pkg_dir.join("mod.vx");
+    let default_desc = pkg_name.to_string();
+    let description = info.get("description").unwrap_or(&default_desc);
+
+    // 扫描包目录下的源文件，收集可能的函数名
+    let mut extern_fns: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(pkg_dir) {
+        for entry in entries.flatten() {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            let fpath = entry.path();
+
+            if fname == "info.toml" || fname == "mod.vx" || fname.starts_with('.') {
+                continue;
+            }
+
+            match lang {
+                "python" => {
+                    // 从 .py 文件中提取顶层 def 函数名
+                    if fpath.extension().and_then(|e| e.to_str()) == Some("py") {
+                        if let Ok(content) = fs::read_to_string(&fpath) {
+                            for line in content.lines() {
+                                let trimmed = line.trim();
+                                if trimmed.starts_with("def ") && !trimmed.starts_with("def _") {
+                                    if let Some(name) = trimmed
+                                        .strip_prefix("def ")
+                                        .and_then(|s| s.split('(').next())
+                                    {
+                                        let name = name.trim().to_string();
+                                        if !name.is_empty() && !name.starts_with('_') {
+                                            extern_fns.push(name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "js" | "typescript" | "ts" => {
+                    // 从 .js/.ts 文件中提取 export function / function 声明
+                    if let Some(ext) = fpath.extension().and_then(|e| e.to_str()) {
+                        if ext == "js" || ext == "ts" || ext == "mjs" {
+                            if let Ok(content) = fs::read_to_string(&fpath) {
+                                for line in content.lines() {
+                                    let trimmed = line.trim();
+                                    let name_opt = if trimmed.starts_with("export function ") {
+                                        trimmed.strip_prefix("export function ")
+                                    } else if trimmed.starts_with("function ") {
+                                        trimmed.strip_prefix("function ")
+                                    } else {
+                                        None
+                                    };
+                                    if let Some(name) = name_opt.and_then(|s| s.split('(').next()) {
+                                        let name = name.trim().to_string();
+                                        if !name.is_empty() && !name.starts_with('_') {
+                                            extern_fns.push(name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "rust" => {
+                    // 从 .rs 文件中提取 pub fn 声明
+                    if fpath.extension().and_then(|e| e.to_str()) == Some("rs") {
+                        if let Ok(content) = fs::read_to_string(&fpath) {
+                            for line in content.lines() {
+                                let trimmed = line.trim();
+                                if trimmed.starts_with("pub fn ") {
+                                    if let Some(name) = trimmed
+                                        .strip_prefix("pub fn ")
+                                        .and_then(|s| s.split('(').next())
+                                    {
+                                        let name = name.trim().to_string();
+                                        if !name.is_empty() {
+                                            extern_fns.push(name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // 生成 mod.vx 内容
+    let mut vx_content = String::new();
+    vx_content.push_str(&format!("# Auto-generated VX entry for package '{}'\n", pkg_name));
+    vx_content.push_str(&format!("# Description: {}\n", description));
+    vx_content.push_str(&format!("# Language: {}\n", lang));
+
+    if extern_fns.is_empty() {
+        // 没有发现导出函数，生成通用占位
+        vx_content.push_str("# NOTE: No exported functions detected; add extern declarations manually\n");
+    } else {
+        vx_content.push('\n');
+        for fn_name in &extern_fns {
+            vx_content.push_str(&format!("extern func {}() -> int\n", fn_name));
+        }
+    }
+
+    fs::write(&mod_vx_path, vx_content).map_err(VpmError::Io)?;
+
+    eprintln!("[VPM] Generated mod.vx with {} extern declaration(s) for package '{}'", extern_fns.len(), pkg_name);
+    Ok(())
+}
+
+/// 自动将包注册到 vxsetting.toml 的 [libraries] 段
+fn register_library_in_vxsetting(
+    workspace_root: &Path,
+    pkg_name: &str,
+    pkg_dir: &Path,
+) -> Result<(), VpmError> {
+    let vxsetting_path = workspace_root.join(VXSETTING_FILE);
+    if !vxsetting_path.exists() {
+        // 没有 vxsetting.toml，跳过注册
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&vxsetting_path)?;
+
+    // 检查 [libraries] 段是否存在
+    if !content.contains("[libraries]") {
+        // 没有 [libraries] 段，追加
+        let mut new_content = content.trim_end().to_string();
+        new_content.push_str("\n\n[libraries]\n");
+        let rel_path = pkg_dir.strip_prefix(workspace_root)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| pkg_dir.to_string_lossy().to_string());
+        new_content.push_str(&format!("{} = \"{}\"\n", pkg_name, rel_path));
+        fs::write(&vxsetting_path, new_content)?;
+        eprintln!("[VPM] Registered '{}' in [libraries] of {}", pkg_name, VXSETTING_FILE);
+        return Ok(());
+    }
+
+    // 检查是否已注册
+    let lib_key = format!("{} =", pkg_name);
+    if content.lines().any(|l| l.trim().starts_with(&lib_key)) {
+        // 已注册，跳过
+        return Ok(());
+    }
+
+    // 在 [libraries] 段末尾追加新条目
+    let rel_path = pkg_dir.strip_prefix(workspace_root)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| pkg_dir.to_string_lossy().to_string());
+    let entry = format!("{} = \"{}\"", pkg_name, rel_path);
+
+    let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+    let mut new_lines = Vec::with_capacity(lines.len() + 1);
+    let mut in_libraries = false;
+
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed == "[libraries]" {
+            in_libraries = true;
+            new_lines.push(line.clone());
+            continue;
+        }
+        if in_libraries {
+            if trimmed.starts_with('[') && !trimmed.starts_with("[[") {
+                // 离开 [libraries] 段，先插入新条目
+                new_lines.push(entry.clone());
+                in_libraries = false;
+            }
+        }
+        new_lines.push(line.clone());
+    }
+
+    // 如果 [libraries] 在文件末尾，追加条目
+    if in_libraries {
+        new_lines.push(entry);
+    }
+
+    let mut result = new_lines.join("\n");
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+
+    fs::write(&vxsetting_path, result)?;
+    eprintln!("[VPM] Registered '{}' in [libraries] of {}", pkg_name, VXSETTING_FILE);
     Ok(())
 }
 

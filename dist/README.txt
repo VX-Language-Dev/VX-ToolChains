@@ -1,1 +1,1 @@
-#!/bin/bash\nDIR=$(dirname "$0")\necho "VX 工具链版本 1.0.0"\necho "可用工具:"\necho "  - $DIR/vxcompiler: VX 编译器"\necho "  - $DIR/vxlinker: VX 链接器"\necho "  - $DIR/vx_runtime: VX 运行时"\necho "  - $DIR/vxdbg: VX 调试器"\necho "使用 <tool> --help 查看具体用法"
+#!/bin/bash\nDIR=$(dirname "$0")\necho "VX 工具链版本 1.6.0"\necho "可用工具:"\necho "  - $DIR/vxcompiler: VX 编译器"\necho "  - $DIR/vxlinker: VX 链接器"\necho "  - $DIR/vx_runtime: VX 运行时"\necho "  - $DIR/vxdbg: VX 调试器"\necho "使用 <tool> --help 查看具体用法"

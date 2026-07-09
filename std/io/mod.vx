@@ -1,8 +1,5 @@
-# ============================================================
-# std::io —— 模块入口
-# ============================================================
+# VX Standard I/O Library
+# Provides input/output functions via C ABI system calls
 
-import std.io.file
-import std.io.stream
-import std.io.path
-import std.io.dir
+extern func write(fd: int, buf: int, count: int) -> int
+extern func exit(code: int)

@@ -1,20 +1,26 @@
 # VX-ToolKit
 
-**VX 编程语言的完整工具链** — 编译器、原生链接器、包管理器、语言服务器、反编译器。
+**VX 编程语言的完整工具链** — 编译器、原生链接器、包管理器。
 
-> 语言版本: v1.6  
+> 语言版本: v1.6.0
 > 协议: [AGPL-3.0](LICENSE)
 
 ---
 
 ## 项目介绍
 
-VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Rust + Zig 双语言架构**：
+VX-ToolKit 是 VX 语言的完整工具链实现，核心模块已从 Rust 迁移到 **Zig**：
 
-| 语言  | 模块                     | 职责                       |
-| ----- | ------------------------ | -------------------------- |
-| Rust  | 编译器、LSP、VPM、反编译 | 源码分析、语言服务、包管理 |
-| Zig   | 原生链接器 (vxlinker)    | TypeIR 代码生成 + 可执行文件生成 |
+| 模块                     | 实现语言 | 职责                       |
+| ------------------------ | -------- | -------------------------- |
+| 编译器 (vxc)             | Zig      | 源码分析、TypeIR 生成      |
+| 原生链接器 (vlnk)        | Zig      | TypeIR 代码生成 + 可执行文件生成 |
+| VPM 包管理器 (vpm)       | Zig      | 多语言包管理               |
+| 项目构建器 / 增量缓存    | Rust     | vxsetting.toml 驱动的构建系统 |
+| 链接器后端 (lld_linker)  | Rust     | LLD 原生链接               |
+
+> **注意**: LSP 语言服务器、反编译器、反链接器的 Rust 实现已被移除，
+> 等待后续 Zig 实现。
 
 ### 编译流水线
 
@@ -25,7 +31,7 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Rust + Zig 双语言
   ↓ OwnershipChecker → 内存安全验证
   ↓ TypeIR 生成器 → 类型化中间表示
   ↓ serialize → VXOBJ v4 跨平台文件
-  ↓ Zig vxlinker 解析 TypeIR
+  ↓ Zig vlnk 解析 TypeIR
   ↓ 原生代码生成 (x86_64 / aarch64 / ARM32 / RISC-V)
   ↓ ELF / Mach-O / PE 可执行文件
 ```
@@ -37,7 +43,6 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Rust + Zig 双语言
 - **原生编译** — TypeIR 直接编译为原生机器码，无 VM 解释执行层
 - **跨平台中间格式** — VXOBJ v4 不包含平台特征，链接器自动适配目标平台
 - **多架构支持** — x86_64、aarch64、ARM32、RISC-V (rv32/rv64)
-- **LSP 语言服务器** — 代码补全、诊断、悬停信息、符号导航、跳转定义
 - **VPM 包管理器** — 多语言包管理 (Python/TypeScript/Java/Rust/Go/C/C++)
 - **编译时宏系统** — 参数化宏，零运行时开销
 
@@ -49,7 +54,6 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Rust + Zig 双语言
 
 | 组件        | 最低版本      |
 | ----------- | ------------- |
-| Rust 工具链 | 1.70+         |
 | Zig 工具链  | 0.13+         |
 | 操作系统    | Linux / macOS / Windows |
 
@@ -60,30 +64,26 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Rust + Zig 双语言
 git clone https://gitee.com/vx-language-dev/vx-toolkit.git
 cd vx-toolkit
 
-# 2. 构建 Zig 原生链接器
-cd vlnk_tmp
-zig build
-cd ..
+# 2. 构建工具链 (Debug)
+cd src-zig && zig build
 
-# 3. 构建 Rust 工具链
-cargo build --release
+# 构建工具链 (Release)
+cd src-zig && zig build -Doptimize=ReleaseSafe
 
 # 构建产物:
-#   target/release/vxc       — VX 编译器
-#   target/release/vlnk      — 链接器 CLI (Zig vxlinker 前端)
-#   target/release/vpm       — 包管理器
-#   target/release/vx-lsp    — 语言服务器
-#   target/release/vxde      — 反编译器
-#   target/release/vdlnk     — 反链接器
+#   src-zig/zig-out/bin/vxc    — VX 编译器
+#   src-zig/zig-out/bin/vlnk   — 原生链接器
+#   src-zig/zig-out/bin/vpm    — 包管理器
 ```
 
 ### 运行测试
 
 ```bash
-cargo test                    # 全部测试
-cargo test --lib              # 库测试
-cargo test --bin vxc          # 编译器测试
-```
+# Zig 测试
+cd src-zig && zig build test
+
+# Rust 库测试 (builder/cache/vxsetting)
+cargo test
 
 ---
 
@@ -291,21 +291,6 @@ func main():
 │   ├── lld_linker.rs     LLD 链接器 (备用)
 │   ├── target_profile.rs 目标平台配置
 │   └── aot_backend.rs    Cranelift AOT (实验性)
-├── vlnk_tmp/             # Zig 原生链接器源码
-│   └── src/
-│       ├── main.zig      链接器入口
-│       ├── linker.zig    链接主流程
-│       ├── typeir.zig    TypeIR 解析器
-│       ├── codegen.zig   代码生成调度
-│       ├── codegen_x86_64.zig   x86_64 代码生成
-│       ├── codegen_aarch64.zig  ARM64 代码生成
-│       ├── codegen_arm32.zig    ARM32 代码生成
-│       ├── codegen_riscv.zig    RISC-V 代码生成
-│       ├── elf_linker.zig   ELF 可执行文件生成
-│       ├── macho_linker.zig  Mach-O 可执行文件生成
-│       ├── pe_linker.zig     PE 可执行文件生成
-│       ├── vxobj.zig       VXOBJ v4 解析
-│       └── platform_io.zig  平台 IO 抽象
 ├── editors/vscode/       # VS Code 扩展
 ├── dist/                 # 运行时库分发
 ├── Cargo.toml

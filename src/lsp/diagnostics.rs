@@ -70,6 +70,13 @@ pub fn run_diagnostics(_uri: &Url, source: &str) -> DiagnosticResult {
 
 /// 转换 VXError 为 LSP Diagnostic
 fn vx_error_to_diagnostic(err: &VXError) -> Diagnostic {
+    let severity = match err.severity {
+        vx_vm::token::Severity::Error => DiagnosticSeverity::ERROR,
+        vx_vm::token::Severity::Warning => DiagnosticSeverity::WARNING,
+        vx_vm::token::Severity::Note => DiagnosticSeverity::INFORMATION,
+        vx_vm::token::Severity::Help => DiagnosticSeverity::HINT,
+    };
+    let code = err.code.clone().map(tower_lsp::lsp_types::NumberOrString::String);
     Diagnostic {
         range: Range {
             start: Position {
@@ -77,13 +84,40 @@ fn vx_error_to_diagnostic(err: &VXError) -> Diagnostic {
                 character: err.col.saturating_sub(1) as u32,
             },
             end: Position {
-                line: err.line.saturating_sub(1) as u32,
-                character: err.col as u32,
+                line: err.end_line.saturating_sub(1) as u32,
+                character: err.end_col as u32,
             },
         },
-        severity: Some(DiagnosticSeverity::ERROR),
-        message: err.msg.clone(),
+        severity: Some(severity),
+        code,
+        code_description: None,
         source: Some("vx".to_string()),
+        message: err.msg.clone(),
+        related_information: if err.related.is_empty() {
+            None
+        } else {
+            Some(
+                err.related
+                    .iter()
+                    .map(|info| tower_lsp::lsp_types::DiagnosticRelatedInformation {
+                        location: tower_lsp::lsp_types::Location {
+                            uri: Url::parse("file:///dummy.vx").unwrap_or_else(|_| Url::parse("file:///").unwrap()),
+                            range: Range {
+                                start: Position {
+                                    line: info.span.start_line.saturating_sub(1) as u32,
+                                    character: info.span.start_col.saturating_sub(1) as u32,
+                                },
+                                end: Position {
+                                    line: info.span.end_line.saturating_sub(1) as u32,
+                                    character: info.span.end_col as u32,
+                                },
+                            },
+                        },
+                        message: info.message.clone(),
+                    })
+                    .collect(),
+            )
+        },
         ..Default::default()
     }
 }
@@ -143,12 +177,7 @@ mod tests {
 
     #[test]
     fn test_vx_error_to_diagnostic() {
-        let err = VXError {
-            msg: "测试错误".to_string(),
-            line: 2,
-            col: 5,
-            source: None,
-        };
+        let err = VXError::new("测试错误", 2, 5);
         let diag = vx_error_to_diagnostic(&err);
         assert_eq!(diag.message, "测试错误");
         assert_eq!(diag.range.start.line, 1);

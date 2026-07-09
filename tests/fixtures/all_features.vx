@@ -128,7 +128,7 @@ func control_flow()
 
     # loop 循环（无限循环，带 label）
     mut count: int = 0
-    loop outer
+    loop outer:
         count = count + 1
         if count > 5
             break outer

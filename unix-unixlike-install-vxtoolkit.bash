@@ -110,60 +110,84 @@ locate_or_clone_repo() {
 
 # ── Step 3: Verify project root ─────────────────────────────────────────────
 verify_project_root() {
-    if [[ ! -f "Cargo.toml" ]]; then
-        error "Cargo.toml not found after locating/cloning."
+    if [[ ! -f "src-zig/build.zig" ]]; then
+        error "src-zig/build.zig not found after locating/cloning."
         error "Something went wrong. Please clone the repo manually."
         exit 1
     fi
 
-    if [[ ! -d "src" ]]; then
-        error "'src/' directory not found. This does not look like the project root."
-        exit 1
-    fi
-
-    # Verify this is actually the VX project
-    if ! grep -q 'vx_language_toolkit\|vxcompiler\|vxlinker' Cargo.toml 2>/dev/null; then
-        error "Cargo.toml does not appear to belong to the VX Toolkit project."
+    if [[ ! -d "src-zig/src" ]]; then
+        error "'src-zig/src/' directory not found. This does not look like the project root."
         exit 1
     fi
 
     success "Project root verified."
 }
 
-# ── Step 3: Check & install Cargo ───────────────────────────────────────────
-ensure_cargo() {
-    if command -v cargo &>/dev/null; then
-        local cargo_ver
-        cargo_ver="$(cargo --version)"
-        success "Cargo is already installed: ${cargo_ver}"
+# ── Step 3: Check & install Zig ─────────────────────────────────────────────
+ensure_zig() {
+    if command -v zig &>/dev/null; then
+        local zig_ver
+        zig_ver="$(zig version)"
+        success "Zig is already installed: ${zig_ver}"
         return 0
     fi
 
-    warn "Cargo is not installed."
+    warn "Zig is not installed."
 
-    # Check for curl (needed for rustup)
+    # Check for curl (needed for Zig download)
     if ! command -v curl &>/dev/null; then
-        error "curl is required to install Cargo but was not found."
+        error "curl is required to install Zig but was not found."
         error "Please install curl first, then re-run this script."
         exit 1
     fi
 
-    info "Installing Cargo via rustup..."
-    info "This will run the official Rust installer in non-interactive mode."
+    info "Installing Zig 0.13+..."
+    local zig_url
+    case "$PLATFORM" in
+        linux)
+            case "$ARCH" in
+                x86_64)  zig_url="https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz" ;;
+                aarch64) zig_url="https://ziglang.org/download/0.13.0/zig-linux-aarch64-0.13.0.tar.xz" ;;
+                *)       error "Unsupported architecture for Zig: $ARCH"; exit 1 ;;
+            esac
+            ;;
+        macos)
+            case "$ARCH" in
+                x86_64)  zig_url="https://ziglang.org/download/0.13.0/zig-macos-x86_64-0.13.0.tar.xz" ;;
+                aarch64) zig_url="https://ziglang.org/download/0.13.0/zig-macos-aarch64-0.13.0.tar.xz" ;;
+                *)       error "Unsupported architecture for Zig: $ARCH"; exit 1 ;;
+            esac
+            ;;
+        *)
+            error "Automatic Zig installation is not supported for $PLATFORM."
+            error "Please install Zig manually: https://ziglang.org/download/"
+            exit 1
+            ;;
+    esac
 
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    info "Downloading Zig from: $zig_url"
+    curl -fSL "$zig_url" | tar -xJ -C "$tmp_dir"
 
-    # Source the cargo environment so 'cargo' is available in this session
-    if [[ -f "$HOME/.cargo/env" ]]; then
-        # shellcheck disable=SC1091
-        source "$HOME/.cargo/env"
+    local zig_dir
+    zig_dir="$(find "$tmp_dir" -maxdepth 1 -name 'zig-*' -type d | head -1)"
+    if [[ -z "$zig_dir" ]]; then
+        error "Failed to extract Zig archive."
+        rm -rf "$tmp_dir"
+        exit 1
     fi
 
-    if command -v cargo &>/dev/null; then
-        success "Cargo installed successfully: $(cargo --version)"
+    sudo mkdir -p /usr/local/bin
+    sudo cp "$zig_dir/zig" /usr/local/bin/zig
+    sudo chmod +x /usr/local/bin/zig
+    rm -rf "$tmp_dir"
+
+    if command -v zig &>/dev/null; then
+        success "Zig installed successfully: $(zig version)"
     else
-        error "Cargo installation appeared to fail."
-        error "Try opening a new terminal and running this script again."
+        error "Zig installation appeared to fail."
         exit 1
     fi
 }
@@ -173,10 +197,12 @@ build_project() {
     info "Building VX Toolkit in release mode..."
     info "This may take several minutes on first build."
 
-    if ! cargo build --release 2>&1; then
+    cd src-zig
+    if ! zig build -Doptimize=ReleaseSafe 2>&1; then
         error "Build failed. Please check the compiler errors above."
         exit 1
     fi
+    cd ..
 
     success "Build completed successfully."
 }
@@ -184,18 +210,15 @@ build_project() {
 # ── Step 5: Move artifacts to toolkit/ ──────────────────────────────────────
 install_artifacts() {
     local toolkit_dir="./toolkit"
-    local release_dir="./target/release"
+    local release_dir="./src-zig/zig-out/bin"
 
     mkdir -p "$toolkit_dir"
 
-    # List of expected binaries
+    # List of expected binaries (Zig build outputs)
     local binaries=(
-        "vxcompiler"
-        "vxlinker"
-        "vx_runtime"
+        "vxc"
+        "vlnk"
         "vpm"
-        "vx-lsp"
-        "vxdbg"
     )
 
     local moved=0
@@ -211,21 +234,6 @@ install_artifacts() {
         else
             warn "Binary not found: ${bin} (skipped)"
             ((failed++))
-        fi
-    done
-
-    # Also move the library if it exists
-    local lib_ext
-    case "$PLATFORM" in
-        macos)  lib_ext="dylib" ;;
-        *)      lib_ext="so"    ;;
-    esac
-
-    for lib in "${release_dir}"/libvx_vm."${lib_ext}" "${release_dir}"/libvx_vm.a; do
-        if [[ -f "$lib" ]]; then
-            mv "$lib" "$toolkit_dir/"
-            success "Installed: $(basename "$lib")"
-            ((moved++))
         fi
     done
 
@@ -275,7 +283,7 @@ main() {
     detect_platform
     locate_or_clone_repo
     verify_project_root
-    ensure_cargo
+    ensure_zig
     build_project
     install_artifacts
     print_summary

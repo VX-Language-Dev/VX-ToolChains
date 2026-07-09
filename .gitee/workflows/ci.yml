@@ -104,7 +104,7 @@ jobs:
       - name: ✅ 验证 6 个二进制产物
         run: |
           errors=0
-          for bin in vxcompiler vxlinker vx_runtime vpm vx-lsp vxdbg; do
+          for bin in vxc vlnk vpm vx-lsp vxde vdlnk; do
             path="target/release/${bin}"
             if [ -f "$path" ]; then
               size=$(du -h "$path" | cut -f1)

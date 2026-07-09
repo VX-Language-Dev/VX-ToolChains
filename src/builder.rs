@@ -475,6 +475,12 @@ impl VxBuilder {
 
         let mut cmd = Command::new(tool);
         cmd.arg(source).arg("-o").arg(&output_obj);
+        // 在 PATH 中添加工件目录，以便找到 vxcompiler / vxlinker
+        if let Ok(cwd) = std::env::current_dir() {
+            let mut paths = std::env::var("PATH").unwrap_or_default();
+            paths.push_str(&format!(":{}", cwd.display()));
+            cmd.env("PATH", &paths);
+        }
         // 优化等级透传 (vxsetting.toml [vxset].o 或 VxBuilder 覆盖)
         cmd.arg("--opt-level").arg(opt_level.to_string());
         // 死代码诊断联动: warn_dc 触发警告, err_dc 升级为错误
@@ -511,8 +517,13 @@ impl VxBuilder {
                 }
             })?;
 
+        // 输出编译器的 stderr 诊断信息（警告和错误）
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if !stderr.is_empty() {
+            eprint!("{}", stderr);
+        }
+
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             return Err(BuildError::CompileFailed {
                 tool: tool.to_string(),
                 stderr,
@@ -525,6 +536,12 @@ impl VxBuilder {
     fn run_vxlinker(&self, vxobj: &str, output: &str) -> Result<(), BuildError> {
         let tool = "vxlinker";
         let mut cmd = Command::new(tool);
+        // 在 PATH 中添加工件目录，以便找到 vxlinker
+        if let Ok(cwd) = std::env::current_dir() {
+            let mut paths = std::env::var("PATH").unwrap_or_default();
+            paths.push_str(&format!(":{}", cwd.display()));
+            cmd.env("PATH", &paths);
+        }
         cmd.arg(vxobj)
             .arg("-o")
             .arg(output)
@@ -548,8 +565,13 @@ impl VxBuilder {
                 }
             })?;
 
+        // 输出链接器的 stderr 诊断信息
+        let stderr = String::from_utf8_lossy(&output_res.stderr).to_string();
+        if !stderr.is_empty() {
+            eprint!("{}", stderr);
+        }
+
         if !output_res.status.success() {
-            let stderr = String::from_utf8_lossy(&output_res.stderr).to_string();
             return Err(BuildError::LinkFailed { stderr });
         }
         Ok(())

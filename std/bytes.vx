@@ -35,7 +35,7 @@ class ByteBuffer:
 
     # 将字符串按 UTF-8 字节写入（每个字符一个码点字节，仅适合 ASCII/字节串）
     func write_str(s: str):                                     
-        var i = 0
+        i: int = 0
         while i < len(s):
             self.data.push(ord(s[i]) % 256)
             i = i + 1
@@ -54,7 +54,7 @@ class ByteBuffer:
 
     # 写入另一个 ByteBuffer 的内容
     func write_buffer(other: ByteBuffer):
-        var bytes = other.to_vec()
+        bytes: Vec<int> = other.to_vec()
         self.write_bytes(bytes)
 
     # 生成 4 字节大端长度前缀 + 内容

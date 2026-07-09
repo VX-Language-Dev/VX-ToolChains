@@ -1,10 +1,6 @@
 # Rust build artifacts
 target/
 
-# Zig build artifacts
-vlnk_tmp/zig-out/
-vlnk_tmp/.zig-cache/
-
 # IDE/Tools
 .vscode/
 .idea/
@@ -34,7 +30,7 @@ test_*
 vxedit
 zig-out/
 bootstrap/vxbootstrap
-
+*.vx
 # Debug
 .dbg/
 logs/
@@ -47,3 +43,15 @@ package/
 
 # Misc
 rpm.py
+*.bash
+*.sh
+*.bat
+*.cmd
+tests/
+*.vxobj
+bootstrap/
+editors/vscode/
+# Zig build artifacts
+.zig-cache/
+*.o
+zig-out/

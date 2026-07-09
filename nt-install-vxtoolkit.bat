@@ -74,92 +74,95 @@ echo [OK]   Repository cloned and entered: %CD%
 :: ── Step 3: Verify project root ────────────────────────────────────────────
 echo [INFO] Verifying project root...
 
-if not exist "Cargo.toml" (
-    echo [ERROR] Cargo.toml not found after locating/cloning.
+if not exist "src-zig\build.zig" (
+    echo [ERROR] src-zig\build.zig not found after locating/cloning.
     echo [ERROR] Something went wrong. Please clone the repo manually.
     goto :error_exit
 )
 
-if not exist "src\" (
-    echo [ERROR] 'src\' directory not found. This does not look like the project root.
-    goto :error_exit
-)
-
-:: Verify this is actually the VX project
-findstr /C:"vx_language_toolkit" /C:"vxcompiler" /C:"vxlinker" Cargo.toml >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Cargo.toml does not appear to belong to the VX Toolkit project.
+if not exist "src-zig\src\" (
+    echo [ERROR] 'src-zig\src\' directory not found. This does not look like the project root.
     goto :error_exit
 )
 
 echo [OK]   Project root verified.
 
-:: ── Step 3: Check & install Cargo ──────────────────────────────────────────
-echo [INFO] Checking for Cargo installation...
+:: ── Step 3: Check & install Zig ───────────────────────────────────────────
+echo [INFO] Checking for Zig installation...
 
-where cargo >nul 2>&1
+where zig >nul 2>&1
 if %errorlevel% equ 0 (
-    for /f "tokens=*" %%v in ('cargo --version') do set CARGO_VER=%%v
-    echo [OK]   Cargo is already installed: !CARGO_VER!
+    for /f "tokens=*" %%v in ('zig version') do set ZIG_VER=%%v
+    echo [OK]   Zig is already installed: !ZIG_VER!
     goto :build_step
 )
 
-echo [WARN] Cargo is not installed.
+echo [WARN] Zig is not installed.
 
-:: Check for curl (needed for rustup)
+:: Check for curl
 where curl >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] curl is required to install Cargo but was not found.
-    echo [ERROR] Please install curl first, then re-run this script.
+    echo [ERROR] curl is required to install Zig but was not found.
+    echo [ERROR] Please install Zig manually from: https://ziglang.org/download/
     goto :error_exit
 )
 
-echo [INFO] Installing Cargo via rustup...
-echo [INFO] This will run the official Rust installer in non-interactive mode.
+echo [INFO] Downloading Zig 0.13+ for Windows...
 
-curl --proto =https --tlsv1.2 -sSf https://win.rustup.rs -o rustup-init.exe
+if "%ARCH_NAME%"=="AMD64" (
+    set "ZIG_URL=https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip"
+) else if "%ARCH_NAME%"=="ARM64" (
+    echo [ERROR] Automatic Zig installation is not supported for Windows ARM64.
+    echo [ERROR] Please install Zig manually from: https://ziglang.org/download/
+    goto :error_exit
+) else (
+    echo [ERROR] Unsupported architecture: %ARCH_NAME%
+    goto :error_exit
+)
+
+curl -fSL "%ZIG_URL%" -o zig-install.zip
 if errorlevel 1 (
-    echo [ERROR] Failed to download rustup installer.
+    echo [ERROR] Failed to download Zig.
     goto :error_exit
 )
 
-echo [INFO] Running rustup installer...
-rustup-init.exe -y --default-toolchain stable
+echo [INFO] Extracting Zig...
+tar -xf zig-install.zip
 if errorlevel 1 (
-    echo [ERROR] Rust installation failed.
-    del rustup-init.exe >nul 2>&1
+    echo [ERROR] Failed to extract Zig archive.
+    del zig-install.zip >nul 2>&1
     goto :error_exit
 )
 
-del rustup-init.exe >nul 2>&1
+:: Find the extracted directory
+for /d %%d in (zig-*) do set "ZIG_DIR=%%d"
 
-:: Refresh environment variables to pick up cargo path
-call refreshenv >nul 2>&1
+:: Add to PATH for this session
+set "PATH=%CD%\%ZIG_DIR%;%PATH%"
 
-:: Try to source cargo env manually
-set "CARGO_HOME=%USERPROFILE%\.cargo"
-set "PATH=%CARGO_HOME%\bin;%PATH%"
-
-where cargo >nul 2>&1
+where zig >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Cargo installation appeared to fail.
-    echo [ERROR] Try opening a new Command Prompt and running this script again.
+    echo [ERROR] Zig installation appeared to fail.
     goto :error_exit
 )
 
-for /f "tokens=*" %%v in ('cargo --version') do set CARGO_VER=%%v
-echo [OK]   Cargo installed successfully: !CARGO_VER!
+for /f "tokens=*" %%v in ('zig version') do set ZIG_VER=%%v
+echo [OK]   Zig installed successfully: !ZIG_VER!
+echo [INFO] Note: You may need to add %ZIG_DIR% to your system PATH permanently.
 
 :: ── Step 4: Build the project ──────────────────────────────────────────────
 :build_step
 echo [INFO] Building VX Toolkit in release mode...
 echo [INFO] This may take several minutes on first build.
 
-cargo build --release
+cd src-zig
+zig build -Doptimize=ReleaseSafe
 if errorlevel 1 (
     echo [ERROR] Build failed. Please check the compiler errors above.
+    cd ..
     goto :error_exit
 )
+cd ..
 
 echo [OK]   Build completed successfully.
 
@@ -171,28 +174,16 @@ if not exist "toolkit\" mkdir toolkit
 set /a MOVED=0
 set /a FAILED=0
 
-:: List of expected binaries
-for %%b in (vxcompiler.exe vxlinker.exe vx_runtime.exe vpm.exe vx-lsp.exe vxdbg.exe) do (
-    if exist "target\release\%%b" (
-        move /y "target\release\%%b" "toolkit\" >nul
+:: List of expected binaries (Zig build outputs)
+for %%b in (vxc.exe vlnk.exe vpm.exe) do (
+    if exist "src-zig\zig-out\bin\%%b" (
+        move /y "src-zig\zig-out\bin\%%b" "toolkit\" >nul
         echo [OK]   Installed: %%b
         set /a MOVED+=1
     ) else (
         echo [WARN] Binary not found: %%b ^(skipped^)
         set /a FAILED+=1
     )
-)
-
-:: Also move the library if it exists
-if exist "target\release\vx_vm.dll" (
-    move /y "target\release\vx_vm.dll" "toolkit\" >nul
-    echo [OK]   Installed: vx_vm.dll
-    set /a MOVED+=1
-)
-if exist "target\release\vx_vm.lib" (
-    move /y "target\release\vx_vm.lib" "toolkit\" >nul
-    echo [OK]   Installed: vx_vm.lib
-    set /a MOVED+=1
 )
 
 echo.
@@ -219,12 +210,9 @@ echo.
 echo     set "PATH=%%PATH%%;%CD%\toolkit"
 echo.
 echo [INFO] Available commands:
-echo     vxcompiler  - VX language compiler
-echo     vxlinker    - VX linker
-echo     vx_runtime  - VX runtime (VM)
+echo     vxc         - VX language compiler (Zig)
+echo     vlnk        - VX native linker (Zig)
 echo     vpm         - VX package manager
-echo     vx-lsp      - VX language server
-echo     vxdbg       - VX debugger
 echo.
 echo [INFO] Platform: Windows (%ARCH_NAME%^)
 echo.
