@@ -1,8 +1,0 @@
-# 布尔逻辑测试
-func main():
-    var a = true
-    var b = false
-    if a and not b:
-        out(1)
-    else:
-        out(0)
