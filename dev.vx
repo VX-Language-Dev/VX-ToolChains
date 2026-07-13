@@ -1,3 +1,0 @@
-import browser_detect
-func main():
-    browser_detect.detect()

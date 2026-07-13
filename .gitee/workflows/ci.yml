@@ -71,6 +71,27 @@ jobs:
       - name: 🧪 cargo test — 启用 AOT
         run: cargo test --features aot
 
+  # ── Zig 构建 & 测试 ──────────────────────────────
+  zig:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 安装 Zig 工具链
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: 📦 zig build — Debug
+        run: zig build
+
+      - name: 📦 zig build — ReleaseSafe
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: 🧪 zig build test
+        run: zig build test
+
   # ── Release 构建验证（不发布） ──────────────────
   build:
     runs-on: ubuntu-latest

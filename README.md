@@ -65,22 +65,22 @@ git clone https://gitee.com/vx-language-dev/vx-toolkit.git
 cd vx-toolkit
 
 # 2. 构建工具链 (Debug)
-cd src-zig && zig build
+zig build
 
 # 构建工具链 (Release)
-cd src-zig && zig build -Doptimize=ReleaseSafe
+zig build -Doptimize=ReleaseSafe
 
 # 构建产物:
-#   src-zig/zig-out/bin/vxc    — VX 编译器
-#   src-zig/zig-out/bin/vlnk   — 原生链接器
-#   src-zig/zig-out/bin/vpm    — 包管理器
+#   zig-out/bin/vxc    — VX 编译器
+#   zig-out/bin/vlnk   — 原生链接器
+#   zig-out/bin/vpm    — 包管理器
 ```
 
 ### 运行测试
 
 ```bash
 # Zig 测试
-cd src-zig && zig build test
+zig build test
 
 # Rust 库测试 (builder/cache/vxsetting)
 cargo test

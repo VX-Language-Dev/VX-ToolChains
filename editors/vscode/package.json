@@ -55,7 +55,7 @@
         "vx.languageServer.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the vx-lsp executable. If empty, the extension tries to build and use target/release/vx-lsp from the workspace root."
+          "description": "Path to the vx-lsp executable. If empty, the extension checks VLS environment variable, then tries to find target/release/vx-lsp or target/debug/vx-lsp from the workspace root."
         },
         "vx.languageServer.trace": {
           "type": "boolean",

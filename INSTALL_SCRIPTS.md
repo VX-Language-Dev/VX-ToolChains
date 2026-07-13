@@ -17,8 +17,8 @@ Both scripts implement the following functionality:
 - Windows script detects: x86, x86_64, ARM64
 
 ### 2. Project Root Verification
-- Checks for `src-zig/build.zig` in current directory
-- Verifies `src-zig/src/` directory exists
+- Checks for `build.zig` in current directory
+- Verifies `src/` directory exists
 
 ### 3. Zig Environment Check & Installation
 - Detects if Zig is already installed
@@ -109,6 +109,6 @@ chmod +x unix-unixlike-install-vxtoolkit.bash
 If Zig is not found after installation, add the extracted `zig-*` directory to your system PATH.
 
 ### Both Scripts
-- Ensure you're in the project root directory (where `src-zig/build.zig` is located)
+- Ensure you're in the project root directory (where `build.zig` is located)
 - Check that you have internet connectivity for Zig installation
 - Review error messages for specific build failures

@@ -112,6 +112,17 @@ function resolveServerPath(
         );
     }
 
+    const vlsEnvPath = process.env.VLS;
+    if (vlsEnvPath) {
+        if (fs.existsSync(vlsEnvPath)) {
+            outputChannel.appendLine(`[VX] Using VLS environment variable: ${vlsEnvPath}`);
+            return vlsEnvPath;
+        }
+        outputChannel.appendLine(
+            `[VX] VLS environment variable set but path does not exist: ${vlsEnvPath}`
+        );
+    }
+
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
         return undefined;
