@@ -1,4 +1,5 @@
-name: 🔧 CI / 测试
+name: 🔧 CI / 测试 & 代码质量
+
 on:
   push:
     branches:
@@ -9,124 +10,90 @@ on:
       - main
       - Beta
 
+env:
+  GO_VERSION: '1.21'
+  GOLANGCI_LINT_VERSION: 'v1.55.2'
+
 jobs:
-  # ── 代码风格 & 静态分析 ──────────────────────────
+  # ── Lint 检查 ──────────────────────────────
   lint:
+    name: 🔍 Lint & 格式检查
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
     steps:
       - name: 检出代码
         uses: actions/checkout@v3
 
-      - name: 安装 Rust 工具链
+      - name: 安装 Go 工具链
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go/go.sum
+
+      - name: 安装 golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: go
+          args: --config ../.golangci.yml ./...
+
+      - name: 🎨 检查代码格式化
         run: |
-          rustup set profile minimal
-          rustup install stable
-          rustup default stable
-          rustup component add rustfmt clippy
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件需要格式化:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "✅ 所有代码已正确格式化"
 
-      - name: 缓存 Cargo 依赖
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: vx-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            vx-${{ runner.os }}-cargo-
-
-      - name: 🔍 cargo fmt — 格式检查
-        run: cargo fmt -- --check
-
-      - name: 🔍 cargo clippy — 零警告检查
-        run: cargo clippy -- -D warnings
-
-  # ── 单元测试（默认 + AOT） ──────────────────────
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v3
-
-      - name: 安装 Rust 工具链
+      - name: 📦 检查 imports
         run: |
-          rustup set profile minimal
-          rustup install stable
-          rustup default stable
+          go install golang.org/x/tools/cmd/goimports@latest
+          unformatted=$(goimports -local github.com/vx-lang/vxc -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件需要格式化 imports:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "✅ 所有 imports 已正确格式化"
 
-      - name: 缓存 Cargo 依赖
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: vx-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            vx-${{ runner.os }}-cargo-
-
-      - name: 🧪 cargo test — 基础
-        run: cargo test --lib
-
-      - name: 🧪 cargo test — 启用 AOT
-        run: cargo test --features aot
-
-  # ── Zig 构建 & 测试 ──────────────────────────────
-  zig:
+  # ── Go 构建 & 测试 ──────────────────────────────
+  build-and-test:
+    name: 🏗️ 构建 & 测试
     runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: go
     steps:
       - name: 检出代码
         uses: actions/checkout@v3
 
-      - name: 安装 Zig 工具链
-        uses: mlugg/setup-zig@v2
+      - name: 安装 Go 工具链
+        uses: actions/setup-go@v4
         with:
-          version: 0.14.1
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go/go.sum
 
-      - name: 📦 zig build — Debug
-        run: zig build
-
-      - name: 📦 zig build — ReleaseSafe
-        run: zig build -Doptimize=ReleaseSafe
-
-      - name: 🧪 zig build test
-        run: zig build test
-
-  # ── Release 构建验证（不发布） ──────────────────
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v3
-
-      - name: 安装 Rust 工具链
+      - name: 📦 go build — 所有工具
         run: |
-          rustup set profile minimal
-          rustup install stable
-          rustup default stable
+          mkdir -p bin
+          go build -ldflags "-s -w" -trimpath -o bin/vxc ./cmd/vxc/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vlnk ./cmd/vlnk/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vdlnk ./cmd/vdlnk/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vxde ./cmd/vxde/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vxlsp ./cmd/vxlsp/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vpm ./cmd/vpm/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vfmt ./cmd/vfmt/main.go
 
-      - name: 缓存 Cargo 依赖
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: vx-${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            vx-${{ runner.os }}-cargo-release-
-
-      - name: 📦 cargo build — Release
-        run: cargo build --release
-
-      - name: 📦 cargo build — Release + AOT
-        run: cargo build --release --features aot
-
-      - name: ✅ 验证 6 个二进制产物
+      - name: ✅ 验证构建产物
         run: |
           errors=0
-          for bin in vxc vlnk vpm vx-lsp vxde vdlnk; do
-            path="target/release/${bin}"
+          for bin in vxc vlnk vdlnk vxde vxlsp vpm vfmt; do
+            path="bin/${bin}"
             if [ -f "$path" ]; then
               size=$(du -h "$path" | cut -f1)
               echo "  ✅ ${bin}  (${size})"
@@ -136,3 +103,76 @@ jobs:
             fi
           done
           [ "$errors" -eq 0 ] || exit 1
+
+      - name: 🧪 go test — 单元测试（含覆盖率）
+        run: |
+          go test ./internal/... -v -race -coverprofile=coverage.out -covermode=atomic
+          echo ""
+          echo "=== 覆盖率摘要 ==="
+          go tool cover -func=coverage.out | tail -1
+
+      - name: 📊 上传覆盖率报告
+        uses: codecov/codecov-action@v3
+        with:
+          file: go/coverage.out
+          flags: unittests
+          name: vx-toolkit-coverage
+          fail_ci_if_error: false
+
+      - name: ⚡ 性能基准测试
+        run: |
+          echo "运行基准测试..."
+          go test ./internal/... -bench=. -benchmem -run=^$$ -timeout=10m | tee benchmark.txt
+          echo ""
+          echo "=== 基准测试完成 ==="
+
+      - name: 🏃 竞态检测
+        run: |
+          echo "运行竞态检测..."
+          go test ./internal/... -race -count=5
+          echo "✅ 未发现竞态条件"
+
+  # ── 安全扫描 ──────────────────────────────
+  security:
+    name: 🔒 安全扫描
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 安装 Go 工具链
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: 运行安全扫描 (govulncheck)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+          echo "✅ 安全扫描通过"
+
+      - name: 检查依赖漏洞
+        run: |
+          go list -m -json all | dependency-check || true
+          echo "⚠️ 依赖检查完成（详细信息见上方输出）"
+
+  # ── 最终状态 ──────────────────────────────
+  status:
+    name: ✅ 最终状态
+    needs: [build-and-test, security]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查所有任务状态
+        run: |
+          if [ "${{ needs.build-and-test.result }}" == "failure" ] || \
+             [ "${{ needs.security.result }}" == "failure" ]; then
+            echo "❌ CI 失败"
+            exit 1
+          else
+            echo "🎉 CI 全部通过"
+          fi

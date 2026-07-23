@@ -1,0 +1,123 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    # 默认启用的 linters
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # 额外启用的 linters
+    - bodyclose
+    - deadcode
+    - depguard
+    - dupl
+    - errname
+    - errorlint
+    - exhaustive
+    - exportloopref
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - gofmt
+    - goimports
+    - golint
+    - goprintffuncname
+    - gosec
+    - interfacer
+    - misspell
+    - nakedret
+    - noctx
+    - nolintlint
+    - prealloc
+    - rowserrcheck
+    - sqlclosecheck
+    - stylecheck
+    - unconvert
+    - unparam
+    - whitespace
+
+  disable:
+    - funlen          # 函数长度检查（太严格）
+    - lll             # 行长度检查（与项目风格冲突）
+    - wsl             # 空白敏感（过于严格）
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  govet:
+    check-shadowing: true
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - hugeParam       # 大参数检查（可能误报）
+      - rangeValCopy    # 范围值复制（性能优化）
+
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: github.com/vx-lang/vxc
+
+  gosec:
+    excludes:
+      - G104          # 忽略未检查的错误
+      - G304          # 文件路径来自变量
+
+  misspell:
+    locale: US
+
+  nakedret:
+    max-func-lines: 30
+
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: false
+
+  unparam:
+    check-exported: false
+
+  whitespace:
+    multi-if: false
+issues:
+  exclude-rules:
+    # 排除测试文件的某些规则
+    - path: _test\.go
+      linters:
+        - dupl
+        - gosec
+        - funlen
+
+    # 排除生成代码的规则
+    - path: ".*_gen\\.go"
+      linters:
+        - all
+
+  max-issues-per-linter: 50
+  max-same-issues: 10
+
+severity:
+  default-severity: warning
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true

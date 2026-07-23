@@ -9,35 +9,22 @@
 #################################################################################
 version: "1.0"
 
-#Specify inspection profile for code analysis
+# Qodana 目前不原生支持 Zig 语言。
+# 此配置仅作为项目元数据保留。
+# 如需代码质量检查，请使用 Zig 工具链：
+#   zig fmt src/          — 格式检查
+#   zig build test        — 单元测试
+#   ./ci/check.sh         — 本地 CI 全套检查
+
+# Specify inspection profile for code analysis
 profile:
   name: qodana.starter
 
-#Enable inspections
-#include:
-#  - name: <SomeEnabledInspectionId>
-
-#Disable inspections
-#exclude:
-#  - name: <SomeDisabledInspectionId>
-#    paths:
-#      - <path/where/not/run/inspection>
-
-#Execute shell command before Qodana execution (Applied in CI/CD pipeline)
-#bootstrap: sh ./prepare-qodana.sh
-
-#Install IDE plugins before Qodana execution (Applied in CI/CD pipeline)
-#plugins:
-#  - id: <plugin.id> #(plugin id can be found at https://plugins.jetbrains.com)
-
-# Quality gate. Will fail the CI/CD pipeline if any condition is not met
-# severityThresholds - configures maximum thresholds for different problem severities
-# testCoverageThresholds - configures minimum code coverage on a whole project and newly added code
-# Code Coverage is available in Ultimate and Ultimate Plus plans
-#failureConditions:
-#  severityThresholds:
-#    any: 15
-#    critical: 5
+# Quality gate — 仅对非 Zig 文件生效（如 shell 脚本、YAML 等）
+# failureConditions:
+#   severityThresholds:
+#     any: 15
+#     critical: 5
 #  testCoverageThresholds:
 #    fresh: 70
 #    total: 50

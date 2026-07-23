@@ -47,7 +47,10 @@ rpm.py
 *.sh
 *.bat
 *.cmd
-tests/
+# Test build artifacts (not test source code)
+tests/*/lib_*.dylib
+tests/*/lib_*.so
+tests/*/*.o
 *.vxobj
 bootstrap/
 editors/vscode/
@@ -55,3 +58,6 @@ editors/vscode/
 .zig-cache/
 *.o
 zig-out/
+
+# Session-local TODO files
+*_TODO.md

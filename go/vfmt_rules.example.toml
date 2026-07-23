@@ -1,0 +1,74 @@
+# vfmt 迁移规则配置文件
+# 每一条规则定义一种 AST 转换模式
+# 使用 TOML 格式，通过 [[rule]] 定义规则数组
+
+# ==========================================
+# 函数名迁移: oldFunc(args) -> newMod.newFunc(args)
+# ==========================================
+[[rule]]
+description = "io.out() -> sys.print()"
+kind = "rename_func"
+old_name = "out"
+new_name = "print"
+new_module = "sys"
+
+[[rule]]
+description = "io.println() -> sys.println()"
+kind = "rename_func"
+old_name = "println"
+new_name = "println"
+new_module = "sys"
+
+# ==========================================
+# 方法名迁移: obj.oldMethod(args) -> obj.newMethod(args)
+# ==========================================
+[[rule]]
+description = "Vec.push() -> Vec.append()"
+kind = "rename_method"
+old_name = "push"
+new_name = "append"
+
+[[rule]]
+description = "Vec.pop() -> Vec.remove_last()"
+kind = "rename_method"
+old_name = "pop"
+new_name = "remove_last"
+
+# ==========================================
+# 属性迁移: obj.oldProp -> obj.newProp
+# ==========================================
+[[rule]]
+description = "is_some -> isSome (snake_case to camelCase)"
+kind = "migrate_property"
+old_name = "is_some"
+new_name = "isSome"
+
+# ==========================================
+# 导入路径迁移
+# ==========================================
+[[rule]]
+description = "旧模块路径迁移"
+kind = "migrate_import"
+old_name = "std.old_module"
+new_name = "std.new_module"
+
+# ==========================================
+# 类型名迁移
+# ==========================================
+[[rule]]
+description = "String -> str"
+kind = "migrate_type"
+old_name = "String"
+new_name = "str"
+
+[[rule]]
+description = "Integer -> int"
+kind = "migrate_type"
+old_name = "Integer"
+new_name = "int"
+
+[[rule]]
+description = "Boolean -> bool"
+kind = "migrate_type"
+old_name = "Boolean"
+new_name = "bool"

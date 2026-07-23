@@ -8,30 +8,28 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
     steps:
       - name: 检出代码
         uses: actions/checkout@v3
 
-      - name: 安装 Rust 工具链
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: 安装 Go 工具链
+        uses: actions/setup-go@v4
         with:
-          toolchain: stable
-
-      - name: 缓存 Cargo 依赖
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          go-version: '1.21'
+          cache-dependency-path: go/go.sum
 
       # ── 构建 ────────────────────────────────────
-      - name: 📦 cargo build — Release（默认）
-        run: cargo build --release
-
-      - name: 📦 cargo build — Release（AOT）
-        run: cargo build --release --features aot
+      - name: 📦 go build — Release
+        run: |
+          go build -ldflags "-s -w" -trimpath -o bin/vxc ./cmd/vxc/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vlnk ./cmd/vlnk/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vdlnk ./cmd/vdlnk/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vxde ./cmd/vxde/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vxlsp ./cmd/vxlsp/main.go
+          go build -ldflags "-s -w" -trimpath -o bin/vpm ./cmd/vpm/main.go
 
       # ── 打包 ────────────────────────────────────
       - name: 📦 打包二进制 + 标准库 + 文档
@@ -42,15 +40,15 @@ jobs:
           PKG_DIR="vx-toolchains-${VERSION}"
           PKG_FILE="VX-ToolChains-${VERSION}-${ARCH}.tar.gz"
 
-          mkdir -p "dist/${PKG_DIR}"
-          for bin in vxcompiler vxlinker vx_runtime vpm vx-lsp vxdbg; do
-            cp "target/release/$bin" "dist/${PKG_DIR}/"
+          mkdir -p "../dist/${PKG_DIR}"
+          for bin in vxc vlnk vpm vxde vdlnk; do
+            cp "bin/$bin" "../dist/${PKG_DIR}/"
           done
 
-          cp -r std "dist/${PKG_DIR}/stdlib"
-          cp README.md CHANGELOG.md LICENSE "dist/${PKG_DIR}/"
+          cp -r ../std "../dist/${PKG_DIR}/stdlib"
+          cp ../README.md ../CHANGELOG.md ../LICENSE "../dist/${PKG_DIR}/"
 
-          cd dist
+          cd ../dist
           tar czf "${PKG_FILE}" "${PKG_DIR}/"
           echo "✅ 打包完成: ${PKG_FILE}  ($(du -sh "${PKG_FILE}" | cut -f1))"
 
@@ -60,11 +58,10 @@ jobs:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           TAG_NAME:   ${{ github.ref_name }}
         run: |
-          # 获取仓库完整路径（如 vx-language-dev/vx-tool-chains）
+          cd ..
           GITEE_REPO="${GITHUB_REPOSITORY:-$GITEE_REPOSITORY}"
 
-          # 创建 release
-          curl -s -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases" \
+          RESPONSE=$(curl -s -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases" \
             -H "Content-Type: application/json" \
             -d "$(cat <<EOF
           {
@@ -75,7 +72,20 @@ jobs:
             "prerelease": false
           }
           EOF
-          )" | jq -r '.id // "创建失败: \(.message // .)"'
+          )")
 
-          # 上传 artifacts（TODO: Gitee API 不支持直接上传附件到 Release，
-          # 需要额外仓库存储或使用 releases 的 attachments）
+          RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id // empty')
+          if [ -z "$RELEASE_ID" ]; then
+            echo "❌ 创建 Release 失败: $(echo "$RESPONSE" | jq -r '.message // .')"
+            exit 1
+          fi
+          echo "✅ Release 已创建 (ID: ${RELEASE_ID})"
+
+          echo "⏫ 上传构建产物..."
+          PKG_FILE="VX-ToolChains-${VERSION}-${ARCH}.tar.gz"
+          UPLOAD_URL="https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files"
+          curl -s -X POST "${UPLOAD_URL}" \
+            -H "Content-Type: multipart/form-data" \
+            -F "access_token=${GITEE_TOKEN}" \
+            -F "file=@dist/${PKG_FILE}" \
+            | jq -r '. || "上传完成"'

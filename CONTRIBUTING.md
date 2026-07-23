@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢你对 VX-ToolChains 的关注！本文档说明如何参与项目贡献。
+感谢你对 VX-ToolKit 的关注！本文档说明如何参与项目贡献。
 
 ## 行为准则
 
@@ -18,30 +18,41 @@
 2. 使用清晰的标题描述问题
 3. 提供最小可复现示例（VX 源码片段、命令行步骤）
 4. 说明预期行为和实际行为
-5. 附上环境信息：操作系统、Rust 版本、VX-ToolChains 版本/提交 hash
+5. 附上环境信息：操作系统、Zig 版本、VX-ToolKit 版本/提交 hash
 
 ### 提交代码
 
 1. **Fork 仓库** 并从 `master` 分支创建特性分支
 2. **保持提交历史清晰**：每个 commit 聚焦一个逻辑变更
 3. **编写测试**：新增功能请补充单元测试或集成测试
-4. **确保零警告**：`cargo check` 和 `cargo clippy` 不应产生警告
+4. **确保格式正确**：`zig fmt src/` 不应有格式问题
 5. **运行测试套件**：
 
 ```bash
-cargo test
-cargo test --features aot
-./test_native_compilation.sh
+zig build test              # 运行全部单元测试
+zig build -Doptimize=ReleaseSafe   # Release 构建验证
+./ci/check.sh               # 本地 CI 全套检查
 ```
 
 6. **提交 Pull Request** 到 `master` 分支，并关联相关 issue
 
 ## 代码风格
 
-- 使用 `cargo fmt` 自动格式化代码
-- 遵循 Rust 2021 Edition 惯例
-- 模块职责单一，公开 API 集中在 `src/lib.rs` 重导出
+- 使用 `zig fmt` 自动格式化代码（4 空格缩进）
+- 模块职责单一，公开 API 集中在 `src/lib.zig` 重导出
+- 使用 Zig 惯用的命名风格（camelCase 用于函数/变量，PascalCase 用于类型/枚举）
 - 中文注释和文档与英文技术术语混用时保持一致性
+- 避免 `catch unreachable` 处理可恢复错误，优先使用 `try` 传播错误
+
+## 项目结构
+
+| 目录/文件     | 说明                            |
+| ------------- | ------------------------------- |
+| `src/`        | Zig 源码（编译器、链接器等）    |
+| `std/`        | VX 标准库（.vx 源文件）         |
+| `build.zig`   | Zig 构建配置                    |
+| `ci/`         | CI 检查脚本                     |
+| `zig-out/`    | 构建产物输出目录                |
 
 ## 分支策略
 

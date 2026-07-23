@@ -25,20 +25,22 @@ class HashMap:
         return HashMap.new()
 
     # 从内建 Map 字面量构造
+    # 注意: 内建 Map 不支持 len() 操作，初始化时 len 设为 0
+    # 调用者应在构造后手动设置 len 或使用 insert 来同步计数
     func from_map(map_val: var) -> var:
         var m = new HashMap()
         m.inner = map_val
-        # 计算长度：内建 Map 的键数量
-        # TODO: 需要 len(map) 支持
         m.len = 0
         return m
 
     # ========== 基本操作 ==========
 
-    # 插入键值对
+    # 插入键值对（如果键已存在则更新值）
     func insert(key: var, val: var):
+        var existing = self.inner[key]
+        if existing == nil:
+            self.len = self.len + 1
         self.inner[key] = val
-        self.len = self.len + 1
 
     # 获取值，返回 Result
     func get(key: var) -> var:
