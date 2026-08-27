@@ -878,6 +878,10 @@ func emitBinaryOp(c *Context, op string, leftTyp, rightTyp typeir.Typ) {
 			c.emit0(typeir.F64Add)
 		} else if isString {
 			c.emit0(typeir.StrConcat)
+		} else if isArrayType(leftTyp) || isArrayType(rightTyp) {
+			// Array concatenation: use a dedicated ArrayConcat opcode
+			// that handles array types correctly
+			c.emit0(typeir.ArrayConcat)
 		} else {
 			c.emit0(typeir.I32Add)
 		}
@@ -965,6 +969,10 @@ func resultTypeOfBinary(op string, leftTyp, rightTyp typeir.Typ) typeir.Typ {
 		return typeir.Bool
 	}
 	return typeir.Unknown
+}
+
+func isArrayType(t typeir.Typ) bool {
+	return typeir.TypToString(t) == "array"
 }
 
 func isFloatType(t typeir.Typ) bool {

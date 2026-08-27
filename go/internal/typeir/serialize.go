@@ -329,6 +329,8 @@ func opcodeToTag(op Opcode) (byte, string, error) {
 		return 90, "", nil
 	case StrConcat:
 		return 94, "", nil
+	case ArrayConcat:
+		return 95, "", nil
 	case Noop:
 		return 91, "", nil
 	case Import:

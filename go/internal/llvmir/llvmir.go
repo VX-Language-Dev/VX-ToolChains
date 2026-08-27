@@ -103,11 +103,15 @@ func Generate(module *typeir.TypeModule, targetTriple string) (string, error) {
 						if name == "chr" || name == "len" || name == "ord" || name == "itoa" {
 							continue
 						}
-						// Skip `out` and `println` — the translator provides
-						// a platform wrapper that calls puts(3).
-						if name == "out" || name == "println" {
+						// Skip `out`, `println`, `str`, `value_error` — the translator
+						// provides these as platform builtins.
+						if name == "out" || name == "println" || name == "str" || name == "value_error" {
 							continue
 						}
+							// Standard C functions are declared by generateExternDecl
+							if name == "malloc" || name == "calloc" || name == "realloc" || name == "free" || name == "c_free" || name == "c_realloc" {
+								continue
+							}
 						// Declare as a varargs function so any argument types
 						// emitted at the call site are accepted.
 						b.WriteString(fmt.Sprintf("declare void @%s(...)\n", name))
@@ -211,6 +215,12 @@ func generateExternDecl(fn *typeir.FunctionIR, extName string) string {
 		return "declare void @free(i8*)"
 	case "realloc":
 		return "declare i8* @realloc(i8*, i64)"
+	case "c_free":
+		// Defined by cWrapperRuntime — skip extern declaration
+		return ""
+	case "c_realloc":
+		// Defined by cWrapperRuntime — skip extern declaration
+		return ""
 	case "calloc":
 		return "declare i8* @calloc(i64, i64)"
 	case "memcpy":
@@ -1391,6 +1401,13 @@ func emitStackInst(b *strings.Builder, inst *typeir.TypedInstruction, target str
 		b.WriteString(fmt.Sprintf("  %%sc%d = call i8* @__vx_strcat(i8* %%sb_p%d, i8* %%sa_p%d)\n", n, n, n))
 		b.WriteString(fmt.Sprintf("  %%sc_i%d = ptrtoint i8* %%sc%d to i64\n", n, n))
 		b.WriteString(fmt.Sprintf("  call void @__vx_stack_push(i64 %%sc_i%d)\n", n))
+
+	case typeir.ArrayConcat:
+		n := newStackCounter()
+		b.WriteString(fmt.Sprintf("  %%ac_a%d = call i64 @__vx_stack_pop()\n", n))
+		b.WriteString(fmt.Sprintf("  %%ac_b%d = call i64 @__vx_stack_pop()\n", n))
+		b.WriteString(fmt.Sprintf("  %%ac_r%d = call i64 @__vx_array_concat(i64 %%ac_b%d, i64 %%ac_a%d)\n", n, n, n))
+		b.WriteString(fmt.Sprintf("  call void @__vx_stack_push(i64 %%ac_r%d)\n", n))
 
 	case typeir.Return:
 		if len(args) > 0 && args[0] != "" {

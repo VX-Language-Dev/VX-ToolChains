@@ -1,0 +1,23 @@
+# ============================================================
+# std::mem.page —— 页分配器（PageAllocator）
+# ============================================================
+
+var page_size: int = 4096
+var page_count: int = 0
+
+func page_alloc(size: int) -> int:
+    var alloc_size = size
+    if alloc_size % page_size != 0:
+        alloc_size = alloc_size + (page_size - (alloc_size % page_size))
+    var ptr = malloc(alloc_size)
+    page_count = page_count + 1
+    return ptr
+
+func page_dealloc(ptr: int):
+    # 页分配器不跟踪单页释放
+
+func page_free_all():
+    page_count = 0
+
+func page_page_count() -> int:
+    return page_count

@@ -1,0 +1,35 @@
+# ============================================================
+# std::mem.general —— 通用分配器（GeneralPurposeAllocator）
+#
+# Zig 风格：显式分配/释放，带泄漏检测。
+# 使用模块级全局变量（避免 StructNew 虚拟栈问题）。
+# ============================================================
+
+var gpa_alloc_count: int = 0
+var gpa_free_count: int = 0
+
+func gpa_reset():
+    gpa_alloc_count = 0
+    gpa_free_count = 0
+
+func gpa_alloc(size: int) -> int:
+    gpa_alloc_count = gpa_alloc_count + 1
+    return malloc(size)
+
+func gpa_dealloc(ptr: int):
+    if ptr == 0:
+        return
+    gpa_free_count = gpa_free_count + 1
+    c_free(ptr)
+
+func gpa_check_leaks():
+    var leaked = gpa_alloc_count - gpa_free_count
+    if leaked > 0:
+        out("LEAK DETECTED: " + leaked + " unfreed allocations")
+    else:
+        out("No leaks detected. Allocs=" + gpa_alloc_count + " Frees=" + gpa_free_count)
+
+func gpa_dump_stats():
+    out("=== GeneralPurposeAllocator Stats ===")
+    out("Total allocs: " + gpa_alloc_count)
+    out("Total frees:  " + gpa_free_count)

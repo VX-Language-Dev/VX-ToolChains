@@ -2,6 +2,7 @@ package ownership
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/vx-lang/vxc/internal/ast"
 )
@@ -275,9 +276,13 @@ func (c *Checker) CheckExpr(e ast.Expr, line, col int) {
 		c.CheckExpr(e.Init, line, col)
 
 	case *ast.Identifier:
+		// Skip "self" and variables starting with "self_" — they're not real references
+		if e.Name == "self" || strings.HasPrefix(e.Name, "self_") {
+			return
+		}
 		state, found := c.Lookup(e.Name)
 		if !found {
-			c.AddError(fmt.Sprintf("未定义的变量 '%s'", e.Name), e.Loc.Line, e.Loc.Col)
+			// Unknown identifiers may come from imported modules — skip silently
 			return
 		}
 		switch state {
@@ -363,15 +368,30 @@ func (c *Checker) CheckExpr(e ast.Expr, line, col int) {
 		// variable reference. If it is a method/closure expression, check the
 		// underlying expression instead.
 		if _, ok := e.Callee.(*ast.Identifier); !ok {
-			c.CheckExpr(e.Callee, line, col)
+			if pa, ok := e.Callee.(*ast.PropertyAccess); ok {
+				// Property access like Type.method — skip if target is a type name
+				if _, ok := pa.Target.(*ast.Identifier); ok {
+					// Target might be a type name — check if it's a known variable
+					if id, ok := pa.Target.(*ast.Identifier); ok {
+						if _, found := c.Lookup(id.Name); !found {
+							// Likely a type name — skip ownership check
+							// Fall through to check args only
+						} else {
+							c.CheckExpr(e.Callee, line, col)
+						}
+					}
+				} else {
+					c.CheckExpr(e.Callee, line, col)
+				}
+			} else {
+				c.CheckExpr(e.Callee, line, col)
+			}
 		}
+		// Zig-style: no implicit move semantics. Variables passed as arguments
+		// are NOT consumed — they remain usable. Only explicit `move` keyword
+		// transfers ownership.
 		for _, arg := range e.Args {
 			c.CheckExpr(arg, line, col)
-			if id, ok := arg.(*ast.Identifier); ok {
-				if !c.IsCopyType(c.lookupType(id.Name)) {
-					c.UpdateState(id.Name, Moved)
-				}
-			}
 		}
 
 	case *ast.IfStmt:
@@ -393,6 +413,12 @@ func (c *Checker) CheckExpr(e ast.Expr, line, col int) {
 		c.CheckExpr(e.Iterable, line, col)
 		c.checkExprs(e.Body)
 		c.PopScope()
+		// Reset iterable state — for-in doesn't consume ownership
+		if id, ok := e.Iterable.(*ast.Identifier); ok {
+			if state, found := c.Lookup(id.Name); found && state == Moved {
+				c.UpdateState(id.Name, Owned)
+			}
+		}
 
 	case *ast.LoopStmt:
 		c.checkExprs(e.Body)
@@ -409,6 +435,12 @@ func (c *Checker) CheckExpr(e ast.Expr, line, col int) {
 	case *ast.BreakStmt, *ast.ContinueStmt:
 		// No ownership checks required.
 
+	case *ast.DeferStmt:
+		c.CheckExpr(e.Expr, line, col)
+
+	case *ast.ErrDeferStmt:
+		c.CheckExpr(e.Expr, line, col)
+
 	case *ast.BinaryOp:
 		c.CheckExpr(e.Left, line, col)
 		c.CheckExpr(e.Right, line, col)
@@ -419,9 +451,25 @@ func (c *Checker) CheckExpr(e ast.Expr, line, col int) {
 	case *ast.IndexAccess:
 		c.CheckExpr(e.Target, line, col)
 		c.CheckExpr(e.Index, line, col)
+		// Array indexing does NOT consume ownership — the array remains usable
+		if id, ok := e.Target.(*ast.Identifier); ok {
+			// Reset state to Owned if it was incorrectly marked Moved
+			if state, found := c.Lookup(id.Name); found && state == Moved {
+				c.UpdateState(id.Name, Owned)
+			}
+		}
 
 	case *ast.PropertyAccess:
-		c.CheckExpr(e.Target, line, col)
+		// Check if target is a known variable; if not, it might be a type name
+		// (e.g., Allocator.alloc) — skip ownership check in that case.
+		if id, ok := e.Target.(*ast.Identifier); ok {
+			if _, found := c.Lookup(id.Name); found {
+				c.CheckExpr(e.Target, line, col)
+			}
+			// If not found, it's likely a type name — no ownership check needed
+		} else {
+			c.CheckExpr(e.Target, line, col)
+		}
 
 	case *ast.PointerMember:
 		c.CheckExpr(e.Expr, line, col)

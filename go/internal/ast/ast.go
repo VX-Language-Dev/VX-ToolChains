@@ -315,6 +315,24 @@ type ContinueStmt struct {
 func (e *ContinueStmt) exprNode() {}
 func (e *ContinueStmt) Pos() Pos  { return e.Loc }
 
+// DeferStmt implements Expr (defer expr).
+type DeferStmt struct {
+	Expr Expr
+	Loc  Pos
+}
+
+func (e *DeferStmt) exprNode() {}
+func (e *DeferStmt) Pos() Pos  { return e.Loc }
+
+// ErrDeferStmt implements Expr (errdefer expr) — runs only on error return.
+type ErrDeferStmt struct {
+	Expr Expr
+	Loc  Pos
+}
+
+func (e *ErrDeferStmt) exprNode() {}
+func (e *ErrDeferStmt) Pos() Pos  { return e.Loc }
+
 // FuncDecl implements Expr.
 type FuncDecl struct {
 	Name          string

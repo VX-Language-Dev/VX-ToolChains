@@ -129,7 +129,8 @@ func (p *Parser) parseStmt() ast.Expr {
 	switch p.currentToken().Kind {
 	case token.Func, token.Extern, token.Struct, token.Class,
 		token.Enum, token.Union, token.Macro,
-		token.If, token.Match, token.While, token.For, token.Loop:
+		token.If, token.Match, token.While, token.For, token.Loop,
+		token.Defer, token.ErrDefer:
 		return p.parseCompoundStmt()
 	default:
 		stmt := p.parseSimpleStmt()
@@ -191,6 +192,10 @@ func (p *Parser) parseCompoundStmt() ast.Expr {
 		return p.parseUnionDecl()
 	case token.Macro:
 		return p.parseMacroDef()
+	case token.Defer:
+		return p.parseDeferStmt()
+	case token.ErrDefer:
+		return p.parseErrDeferStmt()
 	case token.If:
 		return p.parseIfStmt()
 	case token.Match:
@@ -264,6 +269,26 @@ func (p *Parser) parseReturnStmt() ast.Expr {
 	return &ast.ReturnStmt{
 		Value: value,
 		Loc:   ast.Pos{Line: tok.Line, Col: tok.Col},
+	}
+}
+
+// parseDeferStmt parses: DEFER expr
+func (p *Parser) parseDeferStmt() ast.Expr {
+	tok := p.nextToken() // consume DEFER
+	expr := p.parseExpr()
+	return &ast.DeferStmt{
+		Expr: expr,
+		Loc:  ast.Pos{Line: tok.Line, Col: tok.Col},
+	}
+}
+
+// parseErrDeferStmt parses: ERRDEFER expr — runs only on error return.
+func (p *Parser) parseErrDeferStmt() ast.Expr {
+	tok := p.nextToken() // consume ERRDEFER
+	expr := p.parseExpr()
+	return &ast.ErrDeferStmt{
+		Expr: expr,
+		Loc:  ast.Pos{Line: tok.Line, Col: tok.Col},
 	}
 }
 
@@ -493,6 +518,7 @@ func (p *Parser) parseFuncDecl() ast.Expr {
 func (p *Parser) parseExternDecl() ast.Expr {
 	tok := p.currentToken()
 	p.nextToken() // consume EXTERN
+	p.expect(token.Func) // consume FUNC keyword
 
 	nameTok := p.acceptIdentOrKeyword()
 	p.expect(token.LParen)

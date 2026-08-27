@@ -243,6 +243,9 @@ const (
 	// 所有权
 	Move
 	Mut
+	// Zig 风格延迟执行
+	Defer
+	ErrDefer
 	// 字面量
 	Int
 	Float
@@ -367,6 +370,8 @@ var KeywordEntries = []KeywordEntry{
 	{Name: "new", Kind: New},
 	{Name: "move", Kind: Move},
 	{Name: "mut", Kind: Mut},
+	{Name: "defer", Kind: Defer},
+	{Name: "errdefer", Kind: ErrDefer},
 	{Name: "macro", Kind: Macro},
 	{Name: "extern", Kind: Extern},
 	// 5 原生标量类型 (硬件基础类型, 保留)

@@ -1,0 +1,9 @@
+# ============================================================
+# std::mem.allocator —— 分配器接口
+# Zig 风格：显式分配/释放，无 hidden GC
+# ============================================================
+
+extern func malloc(size: int)
+extern func c_free(ptr: int)
+extern func calloc(count: int, size: int)
+extern func c_realloc(ptr: int, size: int)

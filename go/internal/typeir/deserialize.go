@@ -529,6 +529,8 @@ func deserializeInstruction(data []byte, pos *int) (TypedInstruction, error) {
 		return TypedInstruction{Op: Import, Args: []string{payload}}, nil
 	case 94:
 		return TypedInstruction{Op: StrConcat, Args: []string{payload}}, nil
+	case 95:
+		return TypedInstruction{Op: ArrayConcat, Args: []string{payload}}, nil
 	default:
 		return TypedInstruction{}, fmt.Errorf("unknown instruction tag: %d", tag)
 	}

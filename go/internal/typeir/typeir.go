@@ -340,6 +340,7 @@ const (
 	PropertyGet
 	Import
 	StrConcat
+	ArrayConcat
 	Noop
 )
 
@@ -492,6 +493,8 @@ func (o Opcode) String() string {
 		return "pg"
 	case Import:
 		return "im"
+	case ArrayConcat:
+		return "ac"
 	case Noop:
 		return "np"
 	default:

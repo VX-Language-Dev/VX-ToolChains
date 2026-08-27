@@ -1,0 +1,11 @@
+# ============================================================
+# std::mem —— Zig 风格内存管理模块
+#
+# 核心理念：显式、可控、无隐式开销
+# 所有堆内存操作都必须通过 Allocator 显式传参，无 hidden GC。
+# ============================================================
+
+import std.mem.allocator
+import std.mem.arena
+import std.mem.page
+import std.mem.general

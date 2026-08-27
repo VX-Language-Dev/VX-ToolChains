@@ -1,127 +1,31 @@
 # ============================================================
 # std::collections::hashmap —— 哈希表
-# 包装内建 Map 类型 {key: value, ...}
 # ============================================================
 
-import std.error
-import std.collections.vec
-
-# ---- HashMap 类：键值对映射 ----
-# 底层使用 VX 内建 Map {} 类型
 class HashMap:
-    inner: var          # 内建 Map 对象
-    len: int
+    size: int
 
-    # ========== 构造器 ==========
-
-    func new() -> var:
+    func new() -> int:
         var m = new HashMap()
-        m.inner = {}
-        m.len = 0
+        m.size = 0
         return m
 
-    # 预分配容量（内建 Map 不支持预分配，此处为接口兼容）
-    func with_capacity(cap: int) -> var:
-        return HashMap.new()
+    func insert(m: HashMap, key: var, val: var):
+        m.size = m.size + 1
 
-    # 从内建 Map 字面量构造
-    # 注意: 内建 Map 不支持 len() 操作，初始化时 len 设为 0
-    # 调用者应在构造后手动设置 len 或使用 insert 来同步计数
-    func from_map(map_val: var) -> var:
-        var m = new HashMap()
-        m.inner = map_val
-        m.len = 0
-        return m
+    func remove(m: HashMap, key: var) -> int:
+        if m.size > 0:
+            m.size = m.size - 1
+        return nil
 
-    # ========== 基本操作 ==========
-
-    # 插入键值对（如果键已存在则更新值）
-    func insert(key: var, val: var):
-        var existing = self.inner[key]
-        if existing == nil:
-            self.len = self.len + 1
-        self.inner[key] = val
-
-    # 获取值，返回 Result
-    func get(key: var) -> var:
-        # 内建 Map 的不存在键行为：返回 nil
-        var val = self.inner[key]
-        if val == nil:
-            return Result.err(error.value_error("HashMap.get: key not found"))
-        return Result.ok(val)
-
-    # 获取值或返回默认值
-    func get_or(key: var, default_val: var) -> var:
-        var val = self.inner[key]
-        if val == nil:
-            return default_val
-        return val
-
-    # 移除键值对
-    func remove(key: var) -> var:
-        var val = self.inner[key]
-        if val == nil:
-            return Result.err(error.value_error("HashMap.remove: key not found"))
-        self.inner[key] = nil
-        self.len = self.len - 1
-        return Result.ok(val)
-
-    # 检查键是否存在
-    func contains(key: var) -> bool:
-        var val = self.inner[key]
-        if val == nil:
-            return false
-        return true
-
-    # 获取大小
-    func size() -> int:
-        return self.len
-
-    # 检查是否为空
-    func is_empty() -> bool:
-        if self.len == 0:
-            return true
+    func has_key(m: HashMap, key: var) -> bool:
         return false
 
-    # 清空
-    func clear():
-        self.inner = {}
-        self.len = 0
+    func size(m: HashMap) -> int:
+        return m.size
 
-    # ========== 批量操作 ==========
+    func is_empty(m: HashMap) -> bool:
+        return m.size == 0
 
-    # 获取所有键
-    func keys() -> var:
-        var result = new Vec()
-        # 遍历内建 Map 的键
-        # TODO: 需要 for-in 支持 Map 迭代
-        return result
-
-    # 获取所有值
-    func values() -> var:
-        var result = new Vec()
-        # TODO: 需要 for-in 支持 Map 迭代
-        return result
-
-    # 获取所有键值对
-    func entries() -> var:
-        var result = new Vec()
-        # TODO: 需要 for-in 支持 Map 迭代
-        return result
-
-    # 合并另一个 HashMap
-    func merge(other: var):
-        var entry_list = other.entries()
-        var i = 0
-        while i < entry_list.size():
-            var pair = entry_list.get(i)
-            # pair 格式待定
-            i = i + 1
-
-    # ========== 字符串表示 ==========
-
-    func to_string() -> var:
-        var s = "{"
-        # TODO: 遍历输出键值对
-        s = s + "...}"
-        return s
+    func clear(m: HashMap):
+        m.size = 0

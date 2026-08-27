@@ -10,7 +10,7 @@ class Node:
     prev: var           # Node 或 nil
     next: var           # Node 或 nil
 
-    func new(val: var) -> var:
+    func new(val: var) -> int:
         var n = new Node()
         n.value = val
         n.prev = nil
@@ -25,7 +25,7 @@ class LinkedList:
 
     # ========== 构造器 ==========
 
-    func new() -> var:
+    func new() -> int:
         var ll = new LinkedList()
         ll.head = nil
         ll.tail = nil
@@ -45,7 +45,7 @@ class LinkedList:
             self.head = node
         self.len = self.len + 1
 
-    func pop_front() -> var:
+    func pop_front() -> int:
         if self.head == nil:
             return Result.err(error.value_error("LinkedList.pop_front: empty list"))
         var val = self.head.value
@@ -58,7 +58,7 @@ class LinkedList:
         self.len = self.len - 1
         return Result.ok(val)
 
-    func peek_front() -> var:
+    func peek_front() -> int:
         if self.head == nil:
             return Result.err(error.value_error("LinkedList.peek_front: empty list"))
         return Result.ok(self.head.value)
@@ -76,7 +76,7 @@ class LinkedList:
             self.tail = node
         self.len = self.len + 1
 
-    func pop_back() -> var:
+    func pop_back() -> int:
         if self.tail == nil:
             return Result.err(error.value_error("LinkedList.pop_back: empty list"))
         var val = self.tail.value
@@ -89,7 +89,7 @@ class LinkedList:
         self.len = self.len - 1
         return Result.ok(val)
 
-    func peek_back() -> var:
+    func peek_back() -> int:
         if self.tail == nil:
             return Result.err(error.value_error("LinkedList.peek_back: empty list"))
         return Result.ok(self.tail.value)
@@ -117,7 +117,7 @@ class LinkedList:
 
     # 检查是否包含
     func contains(val: var) -> bool:
-        if self.index_of(val) >= 0:
+        if LinkedList.index_of(self, val) >= 0:
             return true
         return false
 
@@ -132,7 +132,7 @@ class LinkedList:
     # ========== 转换 ==========
 
     # 转为 Vec
-    func to_vec() -> var:
+    func to_vec() -> int:
         import std.collections.vec
         var result = new Vec()
         var current = self.head
@@ -142,7 +142,7 @@ class LinkedList:
         return result
 
     # 转为内建数组
-    func to_array() -> var:
+    func to_array() -> int:
         var result = []
         var current = self.head
         while current != nil:
@@ -152,7 +152,7 @@ class LinkedList:
 
     # ========== 字符串表示 ==========
 
-    func to_string() -> var:
+    func to_string() -> int:
         var s = "["
         var current = self.head
         var first = true

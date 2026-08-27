@@ -1,0 +1,41 @@
+# ============================================================
+# std::mem.arena —— 竞技场分配器（ArenaAllocator）
+# Zig 风格：一次性分配、批量释放
+# ============================================================
+
+var arena_used: int = 0
+var arena_capacity: int = 0
+var arena_block_size: int = 65536
+var arena_blocks: var = []
+
+func arena_reset():
+    arena_used = 0
+    arena_capacity = 0
+    arena_blocks = []
+
+func arena_alloc(size: int) -> int:
+    if arena_used + size > arena_capacity:
+        var new_cap = arena_block_size
+        if size > new_cap:
+            new_cap = size
+        var block_ptr = malloc(new_cap)
+        arena_blocks = arena_blocks + [block_ptr]
+        arena_capacity = new_cap
+        arena_used = 0
+    var last_block = arena_blocks[len(arena_blocks) - 1]
+    var ptr = last_block + arena_used
+    arena_used = arena_used + size
+    return ptr
+
+func arena_dealloc(ptr: int):
+    # 竞技场不支持单块释放
+
+func arena_free_all():
+    var i = 0
+    while i < len(arena_blocks):
+        c_free(arena_blocks[i])
+        i = i + 1
+    arena_reset()
+
+func arena_allocated() -> int:
+    return arena_used

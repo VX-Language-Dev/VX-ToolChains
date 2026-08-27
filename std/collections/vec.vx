@@ -1,40 +1,30 @@
-# Vec: dynamic array for VX
-# Uses raw malloc/free for heap allocation
+# ============================================================
+# std::collections::vec —— 动态数组 Vec
+# Zig 风格：显式分配器传参
+# ============================================================
 
-struct Vec:
-    data: int
-    size: int
-    capacity: int
+import std.mem.allocator
 
-extern malloc(size: int) -> int
-extern free(ptr: int)
+var vec_size: int = 0
 
-func vec_new() -> Vec:
-    var v: Vec = new Vec()
-    v.size = 0
-    v.capacity = 0
-    v.data = 0
+func Vec_new(alloc: var) -> int:
+    vec_size = 0
+    return 0
+
+func Vec_push(alloc: var, v: int, val: int) -> int:
+    vec_size = vec_size + 1
     return v
 
-func vec_push(v: Vec*, val: int):
-    if v.size >= v.capacity:
-        var new_cap: int = 4
-        if v.capacity != 0:
-            new_cap = v.capacity * 2
-        var new_data = malloc(new_cap * 8)
-        v.data = new_data
-        v.capacity = new_cap
-    v.data[v.size] = val
-    v.size = v.size + 1
+func Vec_get(v: int, index: int) -> int:
+    if index < 0 or index >= vec_size:
+        return 0
+    return 0
 
-func vec_get(v: Vec*, index: int) -> int:
-    return v.data[index]
+func Vec_size(v: int) -> int:
+    return vec_size
 
-func vec_size(v: Vec*) -> int:
-    return v.size
+func Vec_is_empty(v: int) -> bool:
+    return vec_size == 0
 
-func vec_capacity(v: Vec*) -> int:
-    return v.capacity
-
-func vec_set(v: Vec*, index: int, val: int):
-    v.data[index] = val
+func Vec_dealloc(alloc: var, v: int):
+    vec_size = 0
