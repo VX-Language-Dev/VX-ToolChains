@@ -37,11 +37,11 @@ type Location struct {
 }
 
 type Diagnostic struct {
-	Range    Range   `json:"range"`
+	Range    Range    `json:"range"`
 	Severity Severity `json:"severity"`
-	Code     *string `json:"code"`
-	Source   string  `json:"source"`
-	Message  string  `json:"message"`
+	Code     *string  `json:"code"`
+	Source   string   `json:"source"`
+	Message  string   `json:"message"`
 }
 
 type Severity uint8
@@ -54,80 +54,80 @@ const (
 )
 
 type CompletionItem struct {
-	Label         string              `json:"label"`
-	Kind          CompletionItemKind  `json:"kind"`
-	Detail        *string             `json:"detail"`
-	Documentation *string             `json:"documentation"`
+	Label         string             `json:"label"`
+	Kind          CompletionItemKind `json:"kind"`
+	Detail        *string            `json:"detail"`
+	Documentation *string            `json:"documentation"`
 }
 
 type CompletionItemKind uint8
 
 const (
-	CompletionItemText           CompletionItemKind = 1
-	CompletionItemMethod         CompletionItemKind = 2
-	CompletionItemFunction       CompletionItemKind = 3
-	CompletionItemConstructor    CompletionItemKind = 4
-	CompletionItemField          CompletionItemKind = 5
-	CompletionItemVariable       CompletionItemKind = 6
-	CompletionItemClass          CompletionItemKind = 7
-	CompletionItemInterface      CompletionItemKind = 8
-	CompletionItemModule         CompletionItemKind = 9
-	CompletionItemProperty       CompletionItemKind = 10
-	CompletionItemUnit           CompletionItemKind = 11
-	CompletionItemValue          CompletionItemKind = 12
-	CompletionItemEnum           CompletionItemKind = 13
-	CompletionItemKeyword        CompletionItemKind = 14
-	CompletionItemSnippet        CompletionItemKind = 15
-	CompletionItemColor          CompletionItemKind = 16
-	CompletionItemFile           CompletionItemKind = 17
-	CompletionItemReference      CompletionItemKind = 18
-	CompletionItemFolder         CompletionItemKind = 19
-	CompletionItemEnumMember     CompletionItemKind = 20
-	CompletionItemConstant       CompletionItemKind = 21
-	CompletionItemStruct         CompletionItemKind = 22
-	CompletionItemEvent          CompletionItemKind = 23
-	CompletionItemOperator       CompletionItemKind = 24
-	CompletionItemTypeParameter  CompletionItemKind = 25
+	CompletionItemText          CompletionItemKind = 1
+	CompletionItemMethod        CompletionItemKind = 2
+	CompletionItemFunction      CompletionItemKind = 3
+	CompletionItemConstructor   CompletionItemKind = 4
+	CompletionItemField         CompletionItemKind = 5
+	CompletionItemVariable      CompletionItemKind = 6
+	CompletionItemClass         CompletionItemKind = 7
+	CompletionItemInterface     CompletionItemKind = 8
+	CompletionItemModule        CompletionItemKind = 9
+	CompletionItemProperty      CompletionItemKind = 10
+	CompletionItemUnit          CompletionItemKind = 11
+	CompletionItemValue         CompletionItemKind = 12
+	CompletionItemEnum          CompletionItemKind = 13
+	CompletionItemKeyword       CompletionItemKind = 14
+	CompletionItemSnippet       CompletionItemKind = 15
+	CompletionItemColor         CompletionItemKind = 16
+	CompletionItemFile          CompletionItemKind = 17
+	CompletionItemReference     CompletionItemKind = 18
+	CompletionItemFolder        CompletionItemKind = 19
+	CompletionItemEnumMember    CompletionItemKind = 20
+	CompletionItemConstant      CompletionItemKind = 21
+	CompletionItemStruct        CompletionItemKind = 22
+	CompletionItemEvent         CompletionItemKind = 23
+	CompletionItemOperator      CompletionItemKind = 24
+	CompletionItemTypeParameter CompletionItemKind = 25
 )
 
 type SymbolKind uint16
 
 const (
-	SymbolFile           SymbolKind = 1
-	SymbolModule         SymbolKind = 2
-	SymbolNamespace      SymbolKind = 3
-	SymbolPackage        SymbolKind = 4
-	SymbolClass          SymbolKind = 5
-	SymbolMethod         SymbolKind = 6
-	SymbolProperty       SymbolKind = 7
-	SymbolField          SymbolKind = 8
-	SymbolConstructor    SymbolKind = 9
-	SymbolEnum           SymbolKind = 10
-	SymbolInterface      SymbolKind = 11
-	SymbolFunction       SymbolKind = 12
-	SymbolVariable       SymbolKind = 13
-	SymbolConstant       SymbolKind = 14
-	SymbolString         SymbolKind = 15
-	SymbolNumber         SymbolKind = 16
-	SymbolBoolean        SymbolKind = 17
-	SymbolArray          SymbolKind = 18
-	SymbolObject         SymbolKind = 19
-	SymbolKey            SymbolKind = 20
-	SymbolNull           SymbolKind = 21
-	SymbolEnumMember     SymbolKind = 22
-	SymbolStruct         SymbolKind = 23
-	SymbolEvent          SymbolKind = 24
-	SymbolOperator       SymbolKind = 25
-	SymbolTypeParameter  SymbolKind = 26
+	SymbolFile          SymbolKind = 1
+	SymbolModule        SymbolKind = 2
+	SymbolNamespace     SymbolKind = 3
+	SymbolPackage       SymbolKind = 4
+	SymbolClass         SymbolKind = 5
+	SymbolMethod        SymbolKind = 6
+	SymbolProperty      SymbolKind = 7
+	SymbolField         SymbolKind = 8
+	SymbolConstructor   SymbolKind = 9
+	SymbolEnum          SymbolKind = 10
+	SymbolInterface     SymbolKind = 11
+	SymbolFunction      SymbolKind = 12
+	SymbolVariable      SymbolKind = 13
+	SymbolConstant      SymbolKind = 14
+	SymbolString        SymbolKind = 15
+	SymbolNumber        SymbolKind = 16
+	SymbolBoolean       SymbolKind = 17
+	SymbolArray         SymbolKind = 18
+	SymbolObject        SymbolKind = 19
+	SymbolKey           SymbolKind = 20
+	SymbolNull          SymbolKind = 21
+	SymbolEnumMember    SymbolKind = 22
+	SymbolStruct        SymbolKind = 23
+	SymbolEvent         SymbolKind = 24
+	SymbolOperator      SymbolKind = 25
+	SymbolTypeParameter SymbolKind = 26
 )
 
 type DocumentSymbol struct {
-	Name           string            `json:"name"`
-	Detail         *string           `json:"detail"`
-	Kind           SymbolKind        `json:"kind"`
-	Range          Range             `json:"range"`
-	SelectionRange Range             `json:"selectionRange"`
-	Children       []DocumentSymbol  `json:"children"`
+	Name           string           `json:"name"`
+	Detail         *string          `json:"detail"`
+	Kind           SymbolKind       `json:"kind"`
+	Range          Range            `json:"range"`
+	SelectionRange Range            `json:"selectionRange"`
+	Children       []DocumentSymbol `json:"children"`
 }
 
 type Hover struct {
@@ -181,16 +181,16 @@ const (
 )
 
 type InlayHint struct {
-	Position    Position        `json:"position"`
-	Label       InlayHintLabel  `json:"label"`
-	Kind        *InlayHintKind  `json:"kind"`
-	Tooltip     *string         `json:"tooltip"`
-	PaddingLeft bool            `json:"paddingLeft"`
+	Position     Position       `json:"position"`
+	Label        InlayHintLabel `json:"label"`
+	Kind         *InlayHintKind `json:"kind"`
+	Tooltip      *string        `json:"tooltip"`
+	PaddingLeft  bool           `json:"paddingLeft"`
 	PaddingRight bool           `json:"paddingRight"`
 }
 
 type InlayHintLabel struct {
-	String *string            `json:"-"`
+	String *string              `json:"-"`
 	Parts  []InlayHintLabelPart `json:"-"`
 }
 
@@ -202,23 +202,23 @@ func (i InlayHintLabel) MarshalJSON() ([]byte, error) {
 }
 
 type InlayHintLabelPart struct {
-	Value   string   `json:"value"`
-	Tooltip *string  `json:"tooltip"`
+	Value    string    `json:"value"`
+	Tooltip  *string   `json:"tooltip"`
 	Location *Location `json:"location"`
-	Command *Command  `json:"command"`
+	Command  *Command  `json:"command"`
 }
 
 type InlayHintKind uint8
 
 const (
-	InlayHintKindType     InlayHintKind = 1
+	InlayHintKindType      InlayHintKind = 1
 	InlayHintKindParameter InlayHintKind = 2
 )
 
 type Command struct {
-	Title     string     `json:"title"`
-	Command   string     `json:"command"`
-	Arguments []string   `json:"arguments"`
+	Title     string   `json:"title"`
+	Command   string   `json:"command"`
+	Arguments []string `json:"arguments"`
 }
 
 type GotoDefinitionResponse struct {
@@ -255,9 +255,9 @@ type InlayHintParams struct {
 }
 
 type InitializeParams struct {
-	ProcessId   *int64              `json:"processId"`
-	RootUri     *string             `json:"rootUri"`
-	Capabilities ClientCapabilities  `json:"capabilities"`
+	ProcessId    *int64             `json:"processId"`
+	RootUri      *string            `json:"rootUri"`
+	Capabilities ClientCapabilities `json:"capabilities"`
 }
 
 type ClientCapabilities struct {
@@ -265,12 +265,12 @@ type ClientCapabilities struct {
 }
 
 type TextDocumentClientCapabilities struct {
-	Completion       *struct {
+	Completion *struct {
 		CompletionItem *struct {
 			SnippetSupport bool `json:"snippetSupport"`
 		} `json:"completionItem"`
 	} `json:"completion"`
-	Hover            *struct {
+	Hover *struct {
 		ContentFormat []string `json:"contentFormat"`
 	} `json:"hover"`
 	PublishDiagnostics *struct{} `json:"publishDiagnostics"`
@@ -282,12 +282,12 @@ type InitializeResult struct {
 }
 
 type ServerCapabilities struct {
-	TextDocumentSync     uint8   `json:"textDocumentSync"`
-	CompletionProvider   bool    `json:"completionProvider"`
-	HoverProvider        bool    `json:"hoverProvider"`
-	DefinitionProvider   bool    `json:"definitionProvider"`
+	TextDocumentSync       uint8 `json:"textDocumentSync"`
+	CompletionProvider     bool  `json:"completionProvider"`
+	HoverProvider          bool  `json:"hoverProvider"`
+	DefinitionProvider     bool  `json:"definitionProvider"`
 	DocumentSymbolProvider bool  `json:"documentSymbolProvider"`
-	InlayHintProvider    bool    `json:"inlayHintProvider"`
+	InlayHintProvider      bool  `json:"inlayHintProvider"`
 }
 
 type PublishDiagnosticsParams struct {

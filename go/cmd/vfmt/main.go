@@ -16,17 +16,17 @@ const version = "vfmt-go version 1.0.0"
 
 func main() {
 	var (
-		outputFile  = flag.String("o", "", "输出文件 (默认: stdout)")
-		configFile  = flag.String("config", "", "TOML 规则配置文件路径")
-		builtin     = flag.Bool("builtin", false, "使用内置迁移规则集")
-		listRules   = flag.Bool("list-rules", false, "列出所有可用规则")
-		showVer     = flag.Bool("v", false, "打印版本")
-		check       = flag.Bool("check", false, "仅检查差异，不修改文件")
-		dryRun      = flag.Bool("dry-run", false, "预览更改但不写入文件")
-		inplace     = flag.Bool("i", false, "原地修改源文件")
-		recursive   = flag.Bool("r", false, "递归处理目录")
-		quiet       = flag.Bool("q", false, "静默模式 (不输出解析警告)")
-		addImport   = flag.String("add-import", "", "添加缺失的 import 路径")
+		outputFile = flag.String("o", "", "输出文件 (默认: stdout)")
+		configFile = flag.String("config", "", "TOML 规则配置文件路径")
+		builtin    = flag.Bool("builtin", false, "使用内置迁移规则集")
+		listRules  = flag.Bool("list-rules", false, "列出所有可用规则")
+		showVer    = flag.Bool("v", false, "打印版本")
+		check      = flag.Bool("check", false, "仅检查差异，不修改文件")
+		dryRun     = flag.Bool("dry-run", false, "预览更改但不写入文件")
+		inplace    = flag.Bool("i", false, "原地修改源文件")
+		recursive  = flag.Bool("r", false, "递归处理目录")
+		quiet      = flag.Bool("q", false, "静默模式 (不输出解析警告)")
+		addImport  = flag.String("add-import", "", "添加缺失的 import 路径")
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "用法: %s [选项] <源文件...>\n", os.Args[0])

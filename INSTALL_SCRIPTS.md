@@ -17,26 +17,28 @@ Both scripts implement the following functionality:
 - Windows script detects: x86, x86_64, ARM64
 
 ### 2. Project Root Verification
-- Checks for `build.zig` in current directory
-- Verifies `src/` directory exists
+- Checks for `go.mod` in current directory
+- Verifies `go/` directory exists
 
-### 3. Zig Environment Check & Installation
-- Detects if Zig is already installed
+### 3. Go Environment Check & Installation
+- Detects if Go is already installed
 - If installed: proceeds directly to build
-- If not installed: automatically downloads and installs Zig 0.13+
-  - Unix: Downloads from ziglang.org and installs to /usr/local/bin
-  - Windows: Downloads zip archive and extracts locally
+- If not installed: automatically downloads and installs Go 1.21+
+  - Unix: Downloads from go.dev and installs to /usr/local/go
+  - Windows: Downloads MSI installer or zip archive and extracts locally
 
 ### 4. Build Process
-- Executes `zig build -Doptimize=ReleaseSafe` to compile all binaries
+- Executes `cd go && make build` to compile all binaries
 - Provides progress feedback and error handling
 
 ### 5. Artifact Installation
 - Creates `toolkit/` directory in project root
-- Moves all compiled Zig binaries to `toolkit/`:
+- Moves all compiled Go binaries to `toolkit/`:
   - `vxc` / `vxc.exe` — VX 编译器
   - `vlnk` / `vlnk.exe` — 原生链接器
   - `vpm` / `vpm.exe` — 包管理器
+  - `vxde` / `vxde.exe` — 反编译器
+  - `vfmt` / `vfmt.exe` — 格式化工具
 
 ### 6. User Feedback
 - Color-coded output (Unix) for better readability
@@ -70,7 +72,7 @@ nt-install-vxtoolkit.bat
 Both scripts include comprehensive error handling:
 
 - **Project root not found**: Exits with clear message about running from correct directory
-- **Cargo not found**: Automatically installs via rustup
+- **Go not found**: Automatically installs Go 1.21+
 - **Build failure**: Stops and displays compiler errors
 - **Missing artifacts**: Warns about missing binaries but continues with available ones
 - **Cleanup on error**: Unix script includes trap handler to clean up on failure
@@ -93,9 +95,9 @@ To make this permanent, add the export/set command to your shell profile or syst
 
 ## Requirements
 
-- **Unix**: bash, curl (for Zig installation)
-- **Windows**: curl (for Zig installation)
-- Both scripts will install Zig if not present
+- **Unix**: bash, curl (for Go installation)
+- **Windows**: curl (for Go installation)
+- Both scripts will install Go if not present
 
 ## Troubleshooting
 
@@ -106,9 +108,9 @@ chmod +x unix-unixlike-install-vxtoolkit.bash
 ```
 
 ### Windows Script
-If Zig is not found after installation, add the extracted `zig-*` directory to your system PATH.
+If Go is not found after installation, add the Go binary directory to your system PATH.
 
 ### Both Scripts
-- Ensure you're in the project root directory (where `build.zig` is located)
-- Check that you have internet connectivity for Zig installation
+- Ensure you're in the project root directory (where `Makefile` is located)
+- Check that you have internet connectivity for Go installation
 - Review error messages for specific build failures

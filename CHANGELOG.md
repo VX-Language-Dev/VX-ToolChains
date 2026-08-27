@@ -1,4 +1,39 @@
-# ~~CHANGELOG~~
+# CHANGELOG
+
+## v1.7.0 — 迁移至 Go 语言工具链 (2026-07-28)
+
+### 工具链迁移
+
+- **从 Rust/Zig 迁移到 Go**：编译器、链接器、链接器、格式化工具等所有工具均使用 Go 重新实现
+- **移除 Zig 构建系统**：`build.zig` 已废弃，使用 `Makefile` 和 `go build` 替代
+- **移除 Cargo/rustup 依赖**：项目现在仅依赖 Go 工具链（1.21+）
+- **CLI 工具重命名**：`vxcompiler` → `vxc`，`vxlinker` → `vlnk`，`builder` → 集成到 `vxc`，`vpm` → `vpm`，`vxde` → `vxde`，`vxlsp` → `vxlsp`
+
+### 构建系统
+
+- **Makefile 驱动**：使用 `make build`、`make test`、`make lint`、`make check` 等命令
+- **构建产物**：位于 `bin/` 目录
+- **增量编译缓存**：通过 `vxsetting.toml` 驱动的构建系统支持缓存
+
+### LSP 语言服务器
+
+- **独立可执行文件**：`vxlsp` 位于 `go/cmd/vxlsp/`
+- **功能**：代码补全、悬停、符号导航、诊断、跳转定义、内嵌提示
+
+### 文档更新
+
+- `README.md` 更新为描述 Go 工具链
+- `INSTALL_SCRIPTS.md` 更新为 Go 安装脚本
+- `CONTRIBUTING.md` 更新为 Go 开发流程
+- `std/README.md` 更新为当前 VX 语言语法（移除 `var` 类型推断）
+
+### 验证结果
+
+- `go build` 编译通过
+- `go test ./...` 全部通过
+- `make check` 完整检查通过
+
+---
 
 ## ~~v1.6.0 — 原生编译路径唯一化 + LSP 增强 (2026-06-29)~~
 

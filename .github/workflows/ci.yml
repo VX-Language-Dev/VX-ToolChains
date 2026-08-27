@@ -89,7 +89,6 @@ jobs:
           mkdir -p bin
           go build -ldflags "-s -w" -trimpath -o bin/vxc ./cmd/vxc/main.go
           go build -ldflags "-s -w" -trimpath -o bin/vlnk ./cmd/vlnk/main.go
-          go build -ldflags "-s -w" -trimpath -o bin/vdlnk ./cmd/vdlnk/main.go
           go build -ldflags "-s -w" -trimpath -o bin/vxde ./cmd/vxde/main.go
           go build -ldflags "-s -w" -trimpath -o bin/vxlsp ./cmd/vxlsp/main.go
           go build -ldflags "-s -w" -trimpath -o bin/vpm ./cmd/vpm/main.go
@@ -113,7 +112,7 @@ jobs:
 
       - name: ✅ 验证构建产物 (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         run: |
           $errors = 0
           foreach ($bin in @("vxc", "vlnk", "vdlnk", "vxde", "vxlsp", "vpm", "vfmt")) {

@@ -146,7 +146,7 @@ func (b *VxLspBackend) HandleInlayHints(params types.InlayHintParams) ([]types.I
 		return []types.InlayHint{}, nil
 	}
 
-	return inlay_hints.CollectInlayHints(doc.AstNodes, doc.Source)
+	return inlay_hints.CollectInlayHints(doc.AstNodes)
 }
 
 func (b *VxLspBackend) GetDiagnostics(uri string) ([]types.Diagnostic, error) {

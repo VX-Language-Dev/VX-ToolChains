@@ -24,8 +24,8 @@ type FunctionIR struct {
 	VarCount     uint32
 	LocalTypes   map[uint32]Typ
 	Body         []TypedInstruction
-	Instructions []TypedInstruction       // alias for Body (used by compiler/typeirgen)
-	Locals       map[string]Typ           // local variables by name (used by typeirgen)
+	Instructions []TypedInstruction // alias for Body (used by compiler/typeirgen)
+	Locals       map[string]Typ     // local variables by name (used by typeirgen)
 }
 
 // ParamIR represents a function parameter.
@@ -216,6 +216,25 @@ func DeserializeTypeModule(data []byte) (*TypeModule, error) {
 		}
 	}
 
+	// Globals section (appended at the end by newer writers; absent in
+	// older .vxobj files).
+	if pos < len(data) {
+		numGlobals, err := readU32Be(data, &pos)
+		if err == nil {
+			for gi := uint32(0); gi < numGlobals; gi++ {
+				gname, err := readStr(data, &pos)
+				if err != nil {
+					break
+				}
+				gtype, err := deserializeType(data, &pos)
+				if err != nil {
+					break
+				}
+				module.Globals = append(module.Globals, GlobalIR{Name: gname, Type: gtype})
+			}
+		}
+	}
+
 	return module, nil
 }
 
@@ -315,6 +334,8 @@ func deserializeType(data []byte, pos *int) (Typ, error) {
 			}
 		}
 		return GenericTyp{Name: name, Args: args}, nil
+	case 11:
+		return Unknown, nil
 	case 255:
 		return Unknown, nil
 	default:
@@ -337,8 +358,12 @@ func deserializeInstruction(data []byte, pos *int) (TypedInstruction, error) {
 		*pos += 4 // skip empty payload length
 		return TypedInstruction{Op: ConstNil}, nil
 	case 70:
-		*pos += 4 // skip empty payload length
-		return TypedInstruction{Op: Newz}, nil
+		// Newz now carries struct name in payload.
+		pl, err := readStr(data, pos)
+		if err != nil {
+			return TypedInstruction{Op: Newz, Args: nil}, nil
+		}
+		return TypedInstruction{Op: Newz, Args: []string{pl}}, nil
 	case 80:
 		*pos += 4 // skip empty payload length
 		return TypedInstruction{Op: Dup}, nil
@@ -396,6 +421,8 @@ func deserializeInstruction(data []byte, pos *int) (TypedInstruction, error) {
 		return TypedInstruction{Op: F64Mul, Args: strings.Split(payload, ",")}, nil
 	case 18:
 		return TypedInstruction{Op: F64Div, Args: strings.Split(payload, ",")}, nil
+	case 19:
+		return TypedInstruction{Op: I64Add, Args: strings.Split(payload, ",")}, nil
 	case 20:
 		return TypedInstruction{Op: I32Eq, Args: strings.Split(payload, ",")}, nil
 	case 21:
@@ -444,15 +471,20 @@ func deserializeInstruction(data []byte, pos *int) (TypedInstruction, error) {
 		return TypedInstruction{Op: StrEq, Args: strings.Split(payload, ",")}, nil
 	case 44:
 		return TypedInstruction{Op: NeqInt, Args: strings.Split(payload, ",")}, nil
+	case 45:
+		return TypedInstruction{Op: I64Sub, Args: strings.Split(payload, ",")}, nil
+	case 46:
+		return TypedInstruction{Op: I64Mul, Args: strings.Split(payload, ",")}, nil
+	case 47:
+		return TypedInstruction{Op: I64Div, Args: strings.Split(payload, ",")}, nil
 	case 50:
 		return deserializeCallInstr(payload), nil
 	case 51:
 		return deserializeCallIndirectInstr(payload), nil
 	case 52:
-		if payload == "" {
-			return TypedInstruction{Op: Return}, nil
-		}
 		return TypedInstruction{Op: Return, Args: []string{payload}}, nil
+	case 53:
+		return TypedInstruction{Op: ReturnVoid}, nil
 	case 60:
 		return deserializeMakeStructInstr(payload), nil
 	case 61:
@@ -495,27 +527,36 @@ func deserializeInstruction(data []byte, pos *int) (TypedInstruction, error) {
 		return TypedInstruction{Op: Noop, Args: []string{payload}}, nil
 	case 92:
 		return TypedInstruction{Op: Import, Args: []string{payload}}, nil
+	case 94:
+		return TypedInstruction{Op: StrConcat, Args: []string{payload}}, nil
 	default:
 		return TypedInstruction{}, fmt.Errorf("unknown instruction tag: %d", tag)
 	}
 }
 
 func deserializeCallInstr(payload string) TypedInstruction {
-	semicolonIdx := strings.Index(payload, ";")
-	extName := ""
-	body := payload
-	if semicolonIdx >= 0 {
-		body = payload[:semicolonIdx]
-		extName = payload[semicolonIdx+1:]
+	// The wire format is: f;<callee>,<paramType1>,<paramType2>,...
+	// The ';' immediately follows the 'f' prefix so the callee is the
+	// token between the first ';' and the first ',' (or end of string).
+	if !strings.HasPrefix(payload, "f;") {
+		// Malformed: missing callee marker.
+		return TypedInstruction{Op: Call, Args: nil}
 	}
-	body = strings.TrimPrefix(body, "f")
-	parts := strings.Split(body, ",")
-	args := []string{parts[0]}
-	if len(parts) > 1 {
-		args = append(args, parts[1:]...)
+	after := strings.TrimPrefix(payload, "f;")
+	commaIdx := strings.Index(after, ",")
+	var callee, rest string
+	if commaIdx >= 0 {
+		callee = after[:commaIdx]
+		rest = after[commaIdx+1:]
+	} else {
+		callee = after
+		rest = ""
 	}
-	if extName != "" {
-		args = append(args, ";"+extName)
+	// Deserialized args follow the canonical form: [";callee", paramType1, ...]
+	var args []string
+	args = append(args, ";"+callee)
+	if rest != "" {
+		args = append(args, strings.Split(rest, ",")...)
 	}
 	return TypedInstruction{Op: Call, Args: args}
 }
@@ -555,6 +596,6 @@ func TypeName(t Typ) string {
 
 // ParseUint32 is a helper for parsing uint32 from string.
 func ParseUint32(s string) uint32 {
-	v, _ := strconv.ParseUint(s, 10, 32)
+	v, _ := strconv.ParseUint(s, 10, 32) //nolint:errcheck
 	return uint32(v)
 }

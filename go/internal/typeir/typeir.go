@@ -240,6 +240,7 @@ type TypeIRModule struct {
 	Functions   []FunctionIR
 	Globals     []GlobalIR
 	StructTypes []StructTypeDef
+	Linkage     map[uint32]LinkageEntry
 }
 
 // GlobalIR represents a global variable in the intermediate representation.
@@ -338,6 +339,7 @@ const (
 	Halt
 	PropertyGet
 	Import
+	StrConcat
 	Noop
 )
 

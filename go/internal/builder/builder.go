@@ -49,7 +49,7 @@ const (
 	ErrConfig BuildError = iota
 	ErrToolNotFound
 	ErrCompileFailed
-	ErrLinkFailed
+	ErrTranslateFailed
 	ErrNoEntryPoint
 	ErrInvalidSource
 	ErrIoError
@@ -64,8 +64,8 @@ func (e BuildError) Error() string {
 		return "tool not found"
 	case ErrCompileFailed:
 		return "compile failed"
-	case ErrLinkFailed:
-		return "link failed"
+	case ErrTranslateFailed:
+		return "translation failed (VXOBJ → native)"
 	case ErrNoEntryPoint:
 		return "no entry point"
 	case ErrInvalidSource:
@@ -215,7 +215,7 @@ func (b *VxBuilder) buildMultiFile() error {
 			if _, err := b.runVxcompiler(entry, "", bin.Optimization); err != nil {
 				return err
 			}
-			if err := b.runVxlinker(obj, output); err != nil {
+			if err := b.runVxTranslator(obj, output); err != nil {
 				return err
 			}
 		}
@@ -289,9 +289,9 @@ func (b *VxBuilder) runVxcompiler(source, extraLibsEnv string, optLevel uint8) (
 	return outputObj, nil
 }
 
-func (b *VxBuilder) runVxlinker(objPath, outputPath string) error {
-	tool := "vxlinker"
-	args := []string{objPath, "-o", outputPath}
+func (b *VxBuilder) runVxTranslator(objPath, outputPath string) error {
+	tool := "vlnk"
+	args := []string{"-o", outputPath, objPath}
 
 	cmd := exec.Command(tool, args...)
 	cmd.Stderr = os.Stderr
@@ -300,7 +300,7 @@ func (b *VxBuilder) runVxlinker(objPath, outputPath string) error {
 		if os.IsNotExist(err) {
 			return ErrToolNotFound
 		}
-		return ErrLinkFailed
+		return ErrTranslateFailed
 	}
 
 	return nil

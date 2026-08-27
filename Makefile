@@ -8,15 +8,15 @@ BUILD_DIR := bin
 CMD_DIR := go/cmd
 INTERNAL_DIR := go/internal
 
-BINS := vxc vlnk vpm vxde vdlnk vxlsp vfmt
+BINS := vxc vlnk vpm vxde vxlsp vfmt vxbootstrap
 
 all: build test
 
 build: $(addprefix $(BUILD_DIR)/,$(BINS))
 
-$(BUILD_DIR)/%: $(CMD_DIR)/*/main.go
+$(BUILD_DIR)/%: $(CMD_DIR)/%/main.go
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build -ldflags "-s -w" -trimpath -o $@ $(CMD_DIR)$*/main.go
+	cd go && $(GO) build -ldflags "-s -w" -trimpath -o ../$@ ./cmd/$*/main.go
 
 test:
 	cd go && $(GO) test ./internal/... -v -race -coverprofile=coverage.out

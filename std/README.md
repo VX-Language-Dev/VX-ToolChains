@@ -47,7 +47,7 @@ std/
 
 ```vx
 func main():
-    var x = 42
+    x: int = 42
     #debug_print("x", x)             # DEBUG: x = 42
 
     #assert(x > 0, "x 必须为正数")   # 条件失败时输出错误信息
@@ -89,21 +89,21 @@ import std.math
 
 # 使用动态数组
 func main():
-    var v = new Vec()
+    v: Vec = new Vec()
     v.push(1)
     v.push(2)
     v.push(3)
     out("len=" + v.size())
 
-    var r = v.get(0)
+    r: Result = v.get(0)
     if r.is_ok:
         out("first=" + r.value)
 
 # 使用错误处理
-func read_config(path: var) -> var:
-    if file_exists(path) == false:
+func read_config(path: string) -> Result:
+    if not file_exists(path):
         return Result.err(error.io_error("config not found: " + path))
-    var content = file_read(path)
+    content: string = file_read(path)
     return Result.ok(content)
 ```
 
@@ -134,7 +134,6 @@ sys → collections, error
 
 v1.0 标准库基于当前 VX 编译器能力编写：
 - 使用 `class` 替代 `struct + impl`（VX 无 `impl` 块）
-- 使用 `var` 类型替代泛型（VX 泛型尚未完整实现）
 - 使用 `if/elif/else` 替代 `match` 表达式
 - 使用函数返回值替代 `const` 常量
 - 所有定义默认公开（VX 无 `pub` 关键字）

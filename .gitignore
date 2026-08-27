@@ -31,6 +31,8 @@ vxedit
 zig-out/
 bootstrap/vxbootstrap
 *.vx
+!compiler/
+!compiler/*.vx
 # Debug
 .dbg/
 logs/
@@ -51,6 +53,8 @@ rpm.py
 tests/*/lib_*.dylib
 tests/*/lib_*.so
 tests/*/*.o
+tests/batch/.build/
+tests/batch/vxrt.o
 *.vxobj
 bootstrap/
 editors/vscode/
@@ -61,3 +65,4 @@ zig-out/
 
 # Session-local TODO files
 *_TODO.md
+.pixa/

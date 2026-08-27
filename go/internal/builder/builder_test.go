@@ -112,9 +112,9 @@ func TestVxSettingsIsMultiFileProject(t *testing.T) {
 
 func TestChangeExtension(t *testing.T) {
 	tests := []struct {
-		path    string
-		newExt  string
-		expect  string
+		path   string
+		newExt string
+		expect string
 	}{
 		{"main.vx", "vxobj", "main.vxobj"},
 		{"foo/bar.vx", "ll", "foo/bar.ll"},

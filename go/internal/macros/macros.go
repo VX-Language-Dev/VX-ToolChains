@@ -213,11 +213,11 @@ func cloneExpr(expr ast.Expr) ast.Expr {
 		return &ast.UnaryOp{Op: v.Op, Expr: cloneExpr(v.Expr), Loc: v.Loc}
 	case *ast.VarDecl:
 		return &ast.VarDecl{
-			Name:   v.Name,
-			Type:   cloneTypeExprPtr(v.Type),
-			Init:   cloneExpr(v.Init),
-			IsMut:  v.IsMut,
-			Loc:    v.Loc,
+			Name:  v.Name,
+			Type:  cloneTypeExprPtr(v.Type),
+			Init:  cloneExpr(v.Init),
+			IsMut: v.IsMut,
+			Loc:   v.Loc,
 		}
 	case *ast.Assign:
 		return &ast.Assign{Target: cloneExpr(v.Target), Op: v.Op, Value: cloneExpr(v.Value), Loc: v.Loc}
@@ -513,9 +513,10 @@ func substituteParams(expr ast.Expr, bindings map[string]ast.Expr) (ast.Expr, er
 	case *ast.FuncDecl:
 		params := make([]ast.ParamDef, len(v.Params))
 		for i, p := range v.Params {
+			pCopy := p
 			params[i] = ast.ParamDef{
-				Name:      p.Name,
-				ParamType: *cloneTypeExpr(&p.ParamType),
+				Name:      pCopy.Name,
+				ParamType: *cloneTypeExpr(&pCopy.ParamType),
 			}
 		}
 		body := make([]ast.Expr, len(v.Body))
@@ -605,7 +606,8 @@ func cloneTypeExpr(t *ast.TypeExpr) *ast.TypeExpr {
 	}
 	args := make([]ast.TypeExpr, len(t.GenericArgs))
 	for i, arg := range t.GenericArgs {
-		args[i] = *cloneTypeExpr(&arg)
+		argCopy := arg
+		args[i] = *cloneTypeExpr(&argCopy)
 	}
 	return &ast.TypeExpr{
 		Name:        t.Name,
@@ -621,9 +623,10 @@ func cloneTypeExprPtr(t *ast.TypeExpr) *ast.TypeExpr {
 func cloneParamDefs(params []ast.ParamDef) []ast.ParamDef {
 	result := make([]ast.ParamDef, len(params))
 	for i, p := range params {
+		pCopy := p
 		result[i] = ast.ParamDef{
-			Name:      p.Name,
-			ParamType: *cloneTypeExpr(&p.ParamType),
+			Name:      pCopy.Name,
+			ParamType: *cloneTypeExpr(&pCopy.ParamType),
 		}
 	}
 	return result
@@ -632,9 +635,10 @@ func cloneParamDefs(params []ast.ParamDef) []ast.ParamDef {
 func cloneFieldDefs(fields []ast.FieldDef) []ast.FieldDef {
 	result := make([]ast.FieldDef, len(fields))
 	for i, f := range fields {
+		fCopy := f
 		result[i] = ast.FieldDef{
-			Name:      f.Name,
-			FieldType: *cloneTypeExpr(&f.FieldType),
+			Name:      fCopy.Name,
+			FieldType: *cloneTypeExpr(&fCopy.FieldType),
 		}
 	}
 	return result
@@ -643,10 +647,11 @@ func cloneFieldDefs(fields []ast.FieldDef) []ast.FieldDef {
 func cloneClassFieldDefs(fields []ast.ClassFieldDef) []ast.ClassFieldDef {
 	result := make([]ast.ClassFieldDef, len(fields))
 	for i, f := range fields {
+		fCopy := f
 		result[i] = ast.ClassFieldDef{
-			Name:       f.Name,
-			FieldType:  *cloneTypeExpr(&f.FieldType),
-			Visibility: f.Visibility,
+			Name:       fCopy.Name,
+			FieldType:  *cloneTypeExpr(&fCopy.FieldType),
+			Visibility: fCopy.Visibility,
 		}
 	}
 	return result
@@ -655,9 +660,10 @@ func cloneClassFieldDefs(fields []ast.ClassFieldDef) []ast.ClassFieldDef {
 func cloneUnionFields(fields []ast.UnionField) []ast.UnionField {
 	result := make([]ast.UnionField, len(fields))
 	for i, f := range fields {
+		fCopy := f
 		result[i] = ast.UnionField{
-			Name:      f.Name,
-			FieldType: *cloneTypeExpr(&f.FieldType),
+			Name:      fCopy.Name,
+			FieldType: *cloneTypeExpr(&fCopy.FieldType),
 		}
 	}
 	return result

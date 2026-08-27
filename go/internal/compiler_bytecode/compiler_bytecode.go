@@ -16,7 +16,7 @@ import (
 type BytecodeArgKind int
 
 const (
-	ArgNone         BytecodeArgKind = iota // 无参数
+	ArgNone        BytecodeArgKind = iota // 无参数
 	ArgInt                                // i32 整数值
 	ArgString                             // UTF-8 字符串
 	ArgImportTuple                        // 导入元组 (a, b?, c?)
@@ -122,11 +122,11 @@ type BytecodeFunction struct {
 type ConstantValueKind int
 
 const (
-	ConstNil   ConstantValueKind = iota // nil 常量
-	ConstBool                           // bool 值
-	ConstInt                            // i64 整数值
-	ConstFloat                          // f64 浮点值
-	ConstString                         // UTF-8 字符串
+	ConstNil    ConstantValueKind = iota // nil 常量
+	ConstBool                            // bool 值
+	ConstInt                             // i64 整数值
+	ConstFloat                           // f64 浮点值
+	ConstString                          // UTF-8 字符串
 )
 
 // ConstantValue 表示一个编译时常量值。

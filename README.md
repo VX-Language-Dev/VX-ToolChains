@@ -1,11 +1,11 @@
 # VX-ToolKit
 
-![Language](https://img.shields.io/badge/language-Zig-orange)
+![Language](https://img.shields.io/badge/language-Go-blue)
 ![Version](https://img.shields.io/badge/version-v1.6.0-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
+![Platform](<https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey>)
 
-**VX 编程语言的完整工具链** — 编译器、原生链接器、包管理器，全栈 Zig 实现。
+**VX 编程语言的完整工具链** — 编译器、原生链接器、包管理器，全栈 Go 实现。
 
 > 语言版本: v1.6.0
 > 协议: [AGPL-3.0](LICENSE)
@@ -31,17 +31,17 @@
 
 ## 项目介绍
 
-VX-ToolKit 是 VX 语言的完整工具链实现，核心模块已从 Rust 全面迁移至 **Zig**，实现了纯自研、零外部依赖的原生编译工具链：
+VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Go** 语言实现，提供完整的编译器、链接器、包管理器和开发工具：
 
-| 模块                     | 实现语言 | 职责                             | 状态       |
-| ------------------------ | -------- | -------------------------------- | ---------- |
-| 编译器 (vxc)             | Zig      | 源码分析、TypeIR 生成、VXOBJ 输出 | ✅ 稳定    |
-| 原生链接器 (vlnk)        | Zig      | TypeIR 代码生成 + 可执行文件生成   | ✅ 稳定    |
-| VPM 包管理器 (vpm)       | Zig      | 多语言包管理                     | ✅ 可用    |
-| 反编译器 (vxde)          | Zig      | VXOBJ → VX 源码还原              | ✅ 可用    |
-| 反链接器 (vdlnk)         | Zig      | 从可执行文件提取嵌入的 VXOBJ      | ✅ 可用    |
-| 项目构建器 / 增量缓存    | Zig      | vxsetting.toml 驱动的构建系统     | 🚧 开发中  |
-| LSP 语言服务器           | Zig      | 代码补全、悬停、跳转定义等        | 🚧 开发中  |
+| 模块                  | 实现语言 | 职责                              | 状态      |
+| --------------------- | -------- | --------------------------------- | --------- |
+| 编译器 (vxc)          | Go       | 源码分析、TypeIR 生成、VXOBJ 输出 | ✅ 稳定   |
+| 原生链接器 (vlnk)     | Go       | TypeIR 代码生成 + 可执行文件生成  | ✅ 稳定   |
+| VPM 包管理器 (vpm)    | Go       | 多语言包管理                      | ✅ 可用   |
+| 反编译器 (vxde)       | Go       | VXOBJ → VX 源码还原              | ✅ 可用   |
+| 格式化工具 (vfmt)     | Go       | VX 源码格式化                     | ✅ 可用   |
+| 项目构建器 / 增量缓存 | Go       | vxsetting.toml 驱动的构建系统     | 🚧 开发中 |
+| LSP 语言服务器        | Go       | 代码补全、悬停、跳转定义等        | 🚧 开发中 |
 
 ### 编译流水线
 
@@ -74,10 +74,10 @@ VX-ToolKit 是 VX 语言的完整工具链实现，核心模块已从 Rust 全�
 
 ### 环境要求
 
-| 组件        | 最低版本      |
-| ----------- | ------------- |
-| Zig 工具链  | 0.13+         |
-| 操作系统    | Linux / macOS / Windows |
+| 组件      | 最低版本                |
+| --------- | ----------------------- |
+| Go 工具链 | 1.21+                   |
+| 操作系统  | Linux / macOS / Windows |
 
 ### 获取源码
 
@@ -89,32 +89,38 @@ cd vx-toolkit
 ### 构建工具链
 
 ```bash
+# 进入 Go 目录
+cd go
+
 # Debug 构建（默认）
-zig build
+go build -o vxc ./cmd/vxc
+go build -o vlnk ./cmd/vlnk
+go build -o vpm ./cmd/vpm
+go build -o vxde ./cmd/vxde
+go build -o vfmt ./cmd/vfmt
 
-# ReleaseSafe 构建（推荐日常使用）
-zig build -Doptimize=ReleaseSafe
-
-# ReleaseFast 构建（最大性能优化）
-zig build -Doptimize=ReleaseFast
+# 或使用 Makefile（推荐）
+make build
 ```
 
-构建产物位于 `zig-out/bin/`：
+构建产物位于 `go/` 目录：
 
-| 二进制文件 | 说明           |
-| ---------- | -------------- |
-| `vxc`      | VX 编译器      |
-| `vlnk`     | 原生链接器     |
-| `vpm`      | 包管理器       |
-| `vxde`     | 反编译器       |
-| `vdlnk`    | 反链接器       |
-| `vxlsp`    | LSP 语言服务器 |
+| 二进制文件      | 说明             |
+| --------------- | ---------------- |
+| `vxc`         | VX 编译器        |
+| `vlnk`        | 原生链接器       |
+| `vpm`         | 包管理器         |
+| `vxde`        | 反编译器         |
+| `vfmt`        | 格式化工具       |
+| `vxlsp`       | LSP 语言服务器   |
+| `vxbootstrap` | VXOBJ 引导生成器 |
 
 ### 安装到系统
 
 ```bash
-# 安装到默认前缀 (~/.local)
-zig build install -Doptimize=ReleaseSafe --prefix ~/.local
+# 使用 Makefile 安装到 ~/.local/bin
+cd go
+make install
 
 # 确保 ~/.local/bin 在 PATH 中
 export PATH="$HOME/.local/bin:$PATH"
@@ -123,8 +129,12 @@ export PATH="$HOME/.local/bin:$PATH"
 ### 运行测试
 
 ```bash
-# 运行全部 Zig 单元测试
-zig build test
+# 运行全部 Go 单元测试
+cd go
+make test
+
+# 或直接使用 go test
+go test ./...
 ```
 
 ### Hello World
@@ -167,6 +177,7 @@ vxc hello.vx -v
 ```
 
 编译器流水线：
+
 1. **词法分析** (Lexer) → Token 流
 2. **语法分析** (Parser) → AST
 3. **所有权/借用检查** (OwnershipChecker) → 内存安全性验证
@@ -186,6 +197,7 @@ vlnk hello.vxobj -o hello --embed-vxobj
 ```
 
 链接器自动完成：
+
 - 解析 TypeIR → 生成目标架构机器码
 - 写入 ELF / Mach-O / PE 可执行文件头
 - 处理入口符号、段布局与重定位
@@ -234,23 +246,20 @@ vpm list
 ```bash
 # 反编译 VXOBJ → VX 源码
 vxde input.vxobj -o output.vx
-
-# 从可执行文件提取嵌入的 VXOBJ
-vdlnk input.bin -o extracted.vxobj
 ```
 
 ### 6. LSP 语言服务器
 
 LSP 已构建为独立可执行文件 `vxlsp`，位于 `src/lsp/`：
 
-| 功能         | 说明                                     | 状态   |
-| ------------ | ---------------------------------------- | ------ |
-| 代码补全     | 关键字、函数名、变量名、成员访问、import | ✅ 可用 |
-| 悬停信息     | 类型签名、字段/方法文档、内置函数说明    | ✅ 可用 |
-| 符号导航     | 工作区符号、文档符号                     | ✅ 可用 |
-| 诊断         | 编译错误实时提示，自动发布到编辑器       | ✅ 可用 |
-| 跳转定义     | 变量/函数/参数/导入别名定义跳转          | ✅ 可用 |
-| 内嵌提示     | 类型推断、参数名提示                     | ✅ 可用 |
+| 功能     | 说明                                     | 状态    |
+| -------- | ---------------------------------------- | ------- |
+| 代码补全 | 关键字、函数名、变量名、成员访问、import | ✅ 可用 |
+| 悬停信息 | 类型签名、字段/方法文档、内置函数说明    | ✅ 可用 |
+| 符号导航 | 工作区符号、文档符号                     | ✅ 可用 |
+| 诊断     | 编译错误实时提示，自动发布到编辑器       | ✅ 可用 |
+| 跳转定义 | 变量/函数/参数/导入别名定义跳转          | ✅ 可用 |
+| 内嵌提示 | 类型推断、参数名提示                     | ✅ 可用 |
 
 > **使用方式**: 编辑器配置 LSP 服务器路径为 `vxlsp`，支持标准 Language Server Protocol。
 
@@ -280,11 +289,11 @@ func main():
 
 #### 可变性
 
-| 关键字   | 说明               | 示例                      |
-| -------- | ------------------ | ------------------------- |
-| `mut`    | 声明可变变量       | `mut x: int = 1`          |
-| `&`      | 不可变引用（借用） | `r: pointer = &x`         |
-| `&mut`   | 可变引用（借用）   | `r: pointer = &mut x`     |
+| 关键字   | 说明               | 示例                    |
+| -------- | ------------------ | ----------------------- |
+| `mut`  | 声明可变变量       | `mut x: int = 1`      |
+| `&`    | 不可变引用（借用） | `r: pointer = &x`     |
+| `&mut` | 可变引用（借用）   | `r: pointer = &mut x` |
 
 #### 所有权规则
 
@@ -340,49 +349,53 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 
 ```
 .
-├── src/                      # 全部 Zig 源码
-│   ├── lib.zig               # 库入口，核心模块聚合
-│   ├── vxc.zig               # 编译器 CLI 入口
-│   ├── vlnk.zig              # 链接器 CLI 入口
-│   ├── vpm.zig               # 包管理器 CLI 入口
-│   ├── vxde.zig              # 反编译器 CLI 入口
-│   ├── vdlnk.zig             # 反链接器 CLI 入口
-│   ├── lsp_main.zig          # LSP 服务器入口
+├── go/                       # Go 源码目录
+│   ├── cmd/                  # 命令行工具入口
+│   │   ├── vxc/              # VX 编译器
+│   │   ├── vlnk/             # 原生链接器
+│   │   ├── vpm/              # 包管理器
+│   │   ├── vxde/             # 反编译器
+│   │   ├── vfmt/             # 格式化工具
+│   │   └── vxlsp/            # LSP 语言服务器
 │   │
-│   ├── compiler/             # 编译器核心
-│   │   ├── 词法/语法/语义分析、TypeIR 生成、所有权检查
-│   ├── parser/               # 语法分析器
-│   ├── lsp/                  # LSP 语言服务器
-│   │   ├── backend.zig       # LSP 后端
-│   │   ├── completion.zig    # 代码补全
-│   │   ├── diagnostics.zig   # 诊断
-│   │   ├── goto.zig          # 跳转定义
-│   │   ├── hover.zig         # 悬停信息
-│   │   ├── inlay_hints.zig   # 内嵌提示
-│   │   ├── state.zig         # 文档状态管理
-│   │   ├── symbols.zig       # 符号导航
-│   │   └── types.zig         # LSP 类型定义
+│   ├── internal/             # 内部包
+│   │   ├── lexer/            # 词法分析器
+│   │   ├── parser/           # 语法分析器
+│   │   ├── semantic/         # 语义分析器
+│   │   ├── compiler/         # 编译器核心
+│   │   ├── compiler_bytecode/# 编译器字节码
+│   │   ├── typeirgen/        # TypeIR 生成器
+│   │   ├── typeir/           # TypeIR 定义
+│   │   ├── type_ir/          # TypeIR 序列化
+│   │   ├── bytecode/         # VXOBJ v4 格式
+│   │   ├── linker/           # 原生链接器
+│   │   ├── llvmir/           # LLVM IR 生成
+│   │   ├── translator/       # 代码翻译
+│   │   ├── builder/          # 项目构建器
+│   │   ├── cache/            # 增量编译缓存
+│   │   ├── vxsetting/        # vxsetting.toml 配置解析
+│   │   ├── ownership/        # 所有权检查
+│   │   ├── optimize/         # 优化器
+│   │   ├── macros/           # 宏系统
+│   │   ├── opcode/           # 操作码定义
+│   │   ├── token/            # Token 定义
+│   │   ├── ast/              # AST 定义
+│   │   ├── logger/           # 日志系统
+│   │   ├── parallel_build/   # 并行构建
+│   │   ├── stubs/            # 存根定义
+│   │   ├── lsp/              # LSP 语言服务器
+│   │   └── vfmt/             # 格式化工具
 │   │
-│   ├── token.zig             # 词法分析 / Token 定义
-│   ├── type_ir.zig           # TypeIR 定义与序列化
-│   ├── bytecode.zig          # VXOBJ v4 格式
-│   ├── compiler_bytecode.zig # 编译器字节码
-│   ├── linker.zig            # 原生链接器核心
-│   ├── builder.zig           # 项目构建器
-│   ├── cache.zig             # 增量编译缓存
-│   ├── vxsetting.zig         # vxsetting.toml 配置解析
-│   ├── macros.zig            # 编译时宏系统
-│   ├── delinker.zig          # 反链接器核心
-│   ├── target_profile.zig    # 目标平台配置 (含架构检测)
-│   ├── logger.zig            # 日志系统 (含结构化错误)
-│   ├── parallel_build.zig    # 并行构建
-│   ├── opcode.zig            # 操作码定义
-│   └── stubs.zig             # 存根定义
+│   ├── build.sh              # 构建脚本
+│   ├── build_all.sh          # 全量构建脚本
+│   ├── go.mod                # Go 模块定义
+│   └── go.sum                # Go 依赖锁定
 │
 ├── std/                      # VX 标准库源码
 ├── ci/                       # CI 配置
 ├── .gitee/                   # Gitee 配置
-├── build.zig                 # Zig 构建脚本
+├── .github/                  # GitHub 配置
+├── Makefile                  # Make 构建脚本
 ├── CHANGELOG.md              # 变更日志
 ├── CONTRIBUTING.md           # 贡献指南
 ├── INSTALL_SCRIPTS.md        # 安装脚本说明
@@ -394,13 +407,13 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 
 ## 依赖概览
 
-### Zig 部分
+### Go 部分
 
-**纯自研，零外部依赖。** 代码生成器原生支持以下架构：
+**纯自研，零外部依赖。** 工具链完全由 Go 实现，无第三方依赖。
 
-| 架构      | 状态     |
-| --------- | -------- |
-| x86_64    | ✅ 稳定  |
+| 架构      | 状态      |
+| --------- | --------- |
+| x86_64    | ✅ 稳定   |
 | aarch64   | 🧪 实验性 |
 | ARM32     | 🧪 实验性 |
 | RISC-V 32 | 🧪 实验性 |
@@ -408,13 +421,13 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 
 ### 架构说明
 
-| 架构      | 三元组示例                  | 说明                     |
-| --------- | --------------------------- | ------------------------ |
-| x86_64    | `x86_64-linux-gnu`          | 64位 x86 处理器          |
-| aarch64   | `aarch64-linux-gnu`         | ARM 64位 (Apple M1+)    |
-| ARM32     | `arm-linux-gnueabihf`       | ARM 32位 (嵌入式/IoT)   |
-| RISC-V 32 | `riscv32-linux-gnu`         | RISC-V 32位             |
-| RISC-V 64 | `riscv64-linux-gnu`         | RISC-V 64位             |
+| 架构      | 三元组示例              | 说明                  |
+| --------- | ----------------------- | --------------------- |
+| x86_64    | `x86_64-linux-gnu`    | 64位 x86 处理器       |
+| aarch64   | `aarch64-linux-gnu`   | ARM 64位 (Apple M1+)  |
+| ARM32     | `arm-linux-gnueabihf` | ARM 32位 (嵌入式/IoT) |
+| RISC-V 32 | `riscv32-linux-gnu`   | RISC-V 32位           |
+| RISC-V 64 | `riscv64-linux-gnu`   | RISC-V 64位           |
 
 ---
 
@@ -422,79 +435,91 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 
 ### 编译器 API
 
-```zig
-const vx = @import("vx_vm");
+```go
+import "vx-toolkit/go/internal/compiler"
 
-// 词法分析
-var lexer = vx.token.Lexer.init(source, allocator);
-var tokens = lexer.tokenize();
+// 创建编译器
+compiler := compiler.NewCompiler(allocator)
 
-// 语法分析
-var parser = vx.parser.Parser.init(tokens, source, allocator);
-const ast = parser.parse();
+// 编译源文件
+result, err := compiler.CompileFile("main.vx")
+if err != nil {
+    log.Fatal(err)
+}
 
-// TypeIR 生成
-const typeir = vx.compiler_typeir.generate(allocator, ast);
+// 获取 TypeIR
+typeir := result.TypeIR
 ```
 
 ### 链接器 API
 
-```zig
-const vx = @import("vx_vm");
+```go
+import "vx-toolkit/go/internal/linker"
 
 // 创建链接器
-const target = vx.TargetProfile.fromTriple("x86_64-linux-gnu");
-const linker = vx.BuiltinLinker.init(allocator, target);
+linker := linker.NewLinker("x86_64-linux-gnu")
 
-// 链接
-const result = try linker.link(text, rodata, data, bss_size, entry_offset, output_path);
+// 链接 VXOBJ 文件
+err := linker.Link([]string{"main.vxobj"}, "output")
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### 缓存 API
 
-```zig
-const vx = @import("vx_vm");
+```go
+import "vx-toolkit/go/internal/cache"
 
 // 创建缓存
-var cache = vx.BuildCache.init(allocator, cache_dir);
-defer cache.deinit();
+cache := cache.New(cacheDir)
 
 // 检查缓存有效性
-if (cache.isTargetFresh(key, sources, opt_level)) {
+if cache.IsTargetFresh(key, sources, optLevel) {
     // 跳过编译
 }
 
 // 更新缓存
-try cache.updateEntry(key, sources, obj_path, output, opt_level);
+err := cache.UpdateEntry(key, sources, objPath, output, optLevel)
+if err != nil {
+    log.Fatal(err)
+}
 
 // 持久化
-try cache.saveToDisk();
+err = cache.SaveToDisk()
 ```
 
 ### 构建器 API
 
-```zig
-const vx = @import("vx_vm");
+```go
+import "vx-toolkit/go/internal/builder"
 
 // 从配置文件创建构建器
-const settings = try vx.VxSettings.fromFile(allocator, "vxsetting.toml");
-var builder = vx.VxBuilder.init(allocator, settings);
+settings, err := builder.LoadSettings("vxsetting.toml")
+if err != nil {
+    log.Fatal(err)
+}
+
+b := builder.NewBuilder(settings)
 
 // 配置选项
-_ = builder.withForceRebuild(true);
-_ = builder.withNoCache(false);
+b.WithForceRebuild(true)
+b.WithNoCache(false)
 
 // 执行构建
-try builder.build();
+err = b.Build()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### 日志 API
 
-```zig
-const vx = @import("vx_vm");
+```go
+import "vx-toolkit/go/internal/logger"
 
 // 创建日志器
-var logger = vx.Logger.init(allocator, writer, .info);
+logger := logger.New(writer, logger.InfoLevel)
 
 // 基础日志
 logger.info("编译开始: {s}", .{filename});
@@ -560,13 +585,13 @@ func read(data: &Data) -> int:
 
 func main():
     mut data: Data = Data{ .value = 0 }
-    
+  
     // 可变借用
     process(&mut data)
-    
+  
     // 不可变借用
     val: int = read(&data)
-    
+  
     // 所有权转移
     moved: Data = move data
 ```
@@ -589,29 +614,21 @@ func main():
 
 ```bash
 # 克隆后运行测试确保环境正常
-zig build test
+make test
 
 # Debug 模式构建（编译快，包含调试信息）
-zig build
+make build
 
 # 构建 LSP 语言服务器
-zig build
-# 产物位于 zig-out/bin/vxlsp
+make build
+# 产物位于 bin/vxlsp
 ```
 
 ### 运行特定测试
 
 ```bash
-# 运行缓存模块测试
-zig build test-cache
-
-# 运行链接器测试
-zig build test-linker
-
-# 运行 LSP 模块测试
-zig build test-lsp_completion
-zig build test-lsp_diagnostics
-zig build test-lsp_hover
+# 运行全部测试
+make test
 ```
 
 ---

@@ -216,41 +216,6 @@ func (p *Parser) parseBlock() []ast.Expr {
 	return stmts
 }
 
-// skipBlock consumes a full indented block without parsing contents.
-// This is used for class/struct/enum/union bodies where the current
-// parser does not fully support field declarations.
-func (p *Parser) skipBlock() {
-	if !p.currentTokenIs(token.Newline) {
-		return
-	}
-	p.nextToken() // consume NEWLINE
-	if !p.currentTokenIs(token.Indent) {
-		return
-	}
-	p.nextToken() // consume INDENT
-	depth := 1
-	for depth > 0 {
-		switch p.currentToken().Kind {
-		case token.Indent:
-			depth++
-			p.nextToken()
-		case token.Dedent:
-			depth--
-			if depth > 0 {
-				p.nextToken()
-			}
-		case token.EOF:
-			return
-		default:
-			p.nextToken()
-		}
-	}
-	// Consume the matching DEDENT
-	if p.currentTokenIs(token.Dedent) {
-		p.nextToken()
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Specific statement parsers
 // ---------------------------------------------------------------------------
@@ -557,27 +522,106 @@ func (p *Parser) parseStructDecl() ast.Expr {
 
 	nameTok := p.acceptIdentOrKeyword()
 	p.expect(token.Colon)
-	_ = p.parseBlock() // consume block but ignore contents for now
+	fields := p.parseStructFields()
 
 	return &ast.StructDecl{
-		Name: nameTok.Value,
-		Loc:  ast.Pos{Line: tok.Line, Col: tok.Col},
+		Name:   nameTok.Value,
+		Fields: fields,
+		Loc:    ast.Pos{Line: tok.Line, Col: tok.Col},
 	}
 }
 
-// parseClassDecl parses: CLASS IDENT COLON block (fields/methods parsed as empty)
+// parseClassDecl parses: CLASS IDENT COLON block (fields)
 func (p *Parser) parseClassDecl() ast.Expr {
 	tok := p.currentToken()
 	p.nextToken() // consume CLASS
 
 	nameTok := p.acceptIdentOrKeyword()
 	p.expect(token.Colon)
-	_ = p.parseBlock() // consume block but ignore contents for now
+	fields := p.parseStructFields()
 
 	return &ast.ClassDecl{
-		Name: nameTok.Value,
-		Loc:  ast.Pos{Line: tok.Line, Col: tok.Col},
+		Name:   nameTok.Value,
+		Fields: classFieldDefsFromFields(fields),
+		Loc:    ast.Pos{Line: tok.Line, Col: tok.Col},
 	}
+}
+
+// parseStructFields parses the indented block of struct/class fields.
+// Each field is: IDENT COLON type_expr
+func (p *Parser) parseStructFields() []ast.FieldDef {
+	var fields []ast.FieldDef
+
+	// Expect an indented block
+	if !p.currentTokenIs(token.Newline) {
+		return fields
+	}
+	p.nextToken() // consume NEWLINE
+
+	if !p.currentTokenIs(token.Indent) {
+		return fields
+	}
+	p.nextToken() // consume INDENT
+
+	for !p.currentTokenIs(token.Dedent) && !p.currentTokenIs(token.EOF) {
+		// IDENT
+		if p.currentToken().Kind != token.Ident && !token.IsKeywordKind(p.currentToken().Kind) {
+			// Skip unknown tokens until newline (try to recover)
+			for !p.currentTokenIs(token.Newline) && !p.currentTokenIs(token.Dedent) && !p.currentTokenIs(token.EOF) {
+				p.nextToken()
+			}
+			if p.currentTokenIs(token.Newline) {
+				p.nextToken()
+			}
+			continue
+		}
+		nameTok := p.nextToken()
+
+		// COLON
+		if !p.currentTokenIs(token.Colon) {
+			// Skip until newline
+			for !p.currentTokenIs(token.Newline) && !p.currentTokenIs(token.Dedent) && !p.currentTokenIs(token.EOF) {
+				p.nextToken()
+			}
+			if p.currentTokenIs(token.Newline) {
+				p.nextToken()
+			}
+			continue
+		}
+		p.nextToken() // consume COLON
+
+		// type_expr
+		te := p.parseTypeExpr()
+
+		fields = append(fields, ast.FieldDef{
+			Name:      nameTok.Value,
+			FieldType: te,
+		})
+
+		// Expect NEWLINE
+		if p.currentTokenIs(token.Newline) {
+			p.nextToken()
+		}
+	}
+
+	if p.currentTokenIs(token.Dedent) {
+		p.nextToken() // consume DEDENT
+	}
+
+	return fields
+}
+
+// classFieldDefsFromFields converts FieldDef to ClassFieldDef.
+func classFieldDefsFromFields(fields []ast.FieldDef) []ast.ClassFieldDef {
+	cf := make([]ast.ClassFieldDef, len(fields))
+	for i, f := range fields {
+		cf[i] = ast.ClassFieldDef{
+			Name:       f.Name,
+			FieldType:  f.FieldType,
+			Visibility: "public",
+		}
+	}
+	return cf
 }
 
 // parseEnumDecl parses: ENUM IDENT COLON block (variants parsed as empty)

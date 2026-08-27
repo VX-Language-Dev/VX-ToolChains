@@ -15,23 +15,19 @@ linters:
 
     # 额外启用的 linters
     - bodyclose
-    - deadcode
     - depguard
     - dupl
     - errname
     - errorlint
     - exhaustive
-    - exportloopref
     - goconst
     - gocritic
     - gocyclo
     - godot
     - gofmt
     - goimports
-    - golint
     - goprintffuncname
     - gosec
-    - interfacer
     - misspell
     - nakedret
     - noctx
@@ -48,6 +44,10 @@ linters:
     - funlen          # 函数长度检查（太严格）
     - lll             # 行长度检查（与项目风格冲突）
     - wsl             # 空白敏感（过于严格）
+    - deadcode        # 已废弃
+    - exportloopref   # 已废弃（Go 1.22+ 不再需要）
+    - golint          # 已废弃
+    - interfacer      # 已废弃
 
 linters-settings:
   errcheck:
@@ -55,7 +55,15 @@ linters-settings:
     check-blank: true
 
   govet:
-    check-shadowing: true
+    enable:
+      - shadow
+
+  depguard:
+    rules:
+      main:
+        allow:
+          - $gostd
+          - github.com/vx-lang/vxc
 
   gocritic:
     enabled-tags:
@@ -78,6 +86,7 @@ linters-settings:
     excludes:
       - G104          # 忽略未检查的错误
       - G304          # 文件路径来自变量
+      - G306          # WriteFile 权限（项目约定 0644）
 
   misspell:
     locale: US

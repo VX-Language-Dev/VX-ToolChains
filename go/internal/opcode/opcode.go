@@ -193,7 +193,7 @@ func (op OpCode) String() string {
 		AddInt: "AddInt", AddFloat: "AddFloat", SubInt: "SubInt", SubFloat: "SubFloat",
 		MulInt: "MulInt", MulFloat: "MulFloat", DivInt: "DivInt", DivFloat: "DivFloat",
 		ModInt: "ModInt",
-		EqInt: "EqInt", EqFloat: "EqFloat", LtInt: "LtInt", LtFloat: "LtFloat",
+		EqInt:  "EqInt", EqFloat: "EqFloat", LtInt: "LtInt", LtFloat: "LtFloat",
 		GtInt: "GtInt", GtFloat: "GtFloat", LeInt: "LeInt", LeFloat: "LeFloat",
 		GeInt: "GeInt", GeFloat: "GeFloat",
 		NegInt: "NegInt", NegFloat: "NegFloat",

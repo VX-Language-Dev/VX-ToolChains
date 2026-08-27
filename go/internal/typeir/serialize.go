@@ -12,10 +12,12 @@ import (
 func SerializeTypeModule(module *TypeModule) ([]byte, error) {
 	var buf bytes.Buffer
 
-	writeU32 := func(v uint32) { binary.Write(&buf, binary.BigEndian, v) }
+	writeU32 := func(v uint32) {
+		_ = binary.Write(&buf, binary.BigEndian, v)
+	}
 	writeStr := func(s string) {
 		writeU32(uint32(len(s)))
-		buf.WriteString(s)
+		_, _ = buf.WriteString(s)
 	}
 
 	writeU32(uint32(len(module.Functions)))
@@ -92,18 +94,33 @@ func SerializeTypeModule(module *TypeModule) ([]byte, error) {
 		}
 	}
 
+	// Globals section (appended at the end so older readers that stop at
+	// the linkage table remain compatible).
+	writeU32(uint32(len(module.Globals)))
+	for _, g := range module.Globals {
+		writeStr(g.Name)
+		if err := serializeType(&buf, g.Type); err != nil {
+			return nil, fmt.Errorf("global %s type: %w", g.Name, err)
+		}
+	}
+
 	return buf.Bytes(), nil
 }
 
 func serializeType(w io.Writer, t Typ) error {
-	var writeU32 = func(v uint32) { binary.Write(w, binary.BigEndian, v) }
-	var writeStr = func(s string) { writeU32(uint32(len(s))); io.WriteString(w, s) }
+	var writeU32 = func(v uint32) {
+		_ = binary.Write(w, binary.BigEndian, v)
+	}
+	var writeStr = func(s string) {
+		writeU32(uint32(len(s)))
+		_, _ = io.WriteString(w, s)
+	}
 
 	switch x := t.(type) {
 	case baseTyp:
 		return binary.Write(w, binary.BigEndian, byte(x))
 	case StructTyp:
-		w.Write([]byte{5}) // struct tag
+		_, _ = w.Write([]byte{5}) // struct tag
 		writeStr(x.Name)
 		writeU32(uint32(len(x.Fields)))
 		for _, f := range x.Fields {
@@ -114,13 +131,13 @@ func serializeType(w io.Writer, t Typ) error {
 		}
 		return nil
 	case ArrayTyp:
-		w.Write([]byte{6}) // array tag
+		_, _ = w.Write([]byte{6}) // array tag
 		if x.Elem == nil {
 			return serializeType(w, Unknown)
 		}
 		return serializeType(w, x.Elem)
 	case MapTyp:
-		w.Write([]byte{7}) // map tag
+		_, _ = w.Write([]byte{7}) // map tag
 		if x.Key == nil {
 			if err := serializeType(w, Unknown); err != nil {
 				return err
@@ -133,13 +150,13 @@ func serializeType(w io.Writer, t Typ) error {
 		}
 		return serializeType(w, x.Value)
 	case PointerTyp:
-		w.Write([]byte{9}) // pointer tag
+		_, _ = w.Write([]byte{9}) // pointer tag
 		if x.To == nil {
 			return serializeType(w, Unknown)
 		}
 		return serializeType(w, x.To)
 	case GenericTyp:
-		w.Write([]byte{10}) // generic tag
+		_, _ = w.Write([]byte{10}) // generic tag
 		writeStr(x.Name)
 		writeU32(uint32(len(x.Args)))
 		for _, a := range x.Args {
@@ -149,7 +166,7 @@ func serializeType(w io.Writer, t Typ) error {
 		}
 		return nil
 	case FuncTyp:
-		w.Write([]byte{8}) // func tag
+		_, _ = w.Write([]byte{8}) // func tag
 		writeU32(uint32(len(x.Params)))
 		for _, p := range x.Params {
 			if err := serializeType(w, p); err != nil {
@@ -161,7 +178,7 @@ func serializeType(w io.Writer, t Typ) error {
 		}
 		return serializeType(w, x.Return)
 	default:
-		w.Write([]byte{255}) // unknown
+		_, _ = w.Write([]byte{255}) // unknown
 		return nil
 	}
 }
@@ -192,6 +209,14 @@ func opcodeToTag(op Opcode) (byte, string, error) {
 		return 13, "", nil
 	case I32Mod:
 		return 14, "", nil
+	case I64Add:
+		return 19, "", nil
+	case I64Sub:
+		return 45, "", nil
+	case I64Mul:
+		return 46, "", nil
+	case I64Div:
+		return 47, "", nil
 	case F64Add:
 		return 15, "", nil
 	case F64Sub:
@@ -245,7 +270,7 @@ func opcodeToTag(op Opcode) (byte, string, error) {
 	case Return:
 		return 52, "", nil
 	case ReturnVoid:
-		return 52, "", nil
+		return 53, "", nil
 	case StructNew:
 		return 60, "", nil
 	case FieldLoad:
@@ -302,6 +327,8 @@ func opcodeToTag(op Opcode) (byte, string, error) {
 		return 89, "", nil
 	case FileExists:
 		return 90, "", nil
+	case StrConcat:
+		return 94, "", nil
 	case Noop:
 		return 91, "", nil
 	case Import:
@@ -319,7 +346,7 @@ func serializeInstruction(w io.Writer, inst TypedInstruction) error {
 		return err
 	}
 
-	w.Write([]byte{tag})
+	w.Write([]byte{tag}) //nolint:errcheck
 
 	var payload string
 	switch inst.Op {
@@ -344,7 +371,7 @@ func serializeInstruction(w io.Writer, inst TypedInstruction) error {
 		if len(inst.Args) > 0 {
 			payload = inst.Args[0]
 		}
-	case I32Add, I32Sub, I32Mul, I32Div, I32Mod, F64Add, F64Sub, F64Mul, F64Div,
+	case I32Add, I32Sub, I32Mul, I32Div, I32Mod, I64Add, I64Sub, I64Mul, I64Div, F64Add, F64Sub, F64Mul, F64Div,
 		I32Eq, I32Neq, I32Lt, I32Gt, I32Le, I32Ge, F64Eq, F64Ne, F64Lt, F64Gt, F64Le, F64Ge,
 		I32And, I32Or, BoolAnd, BoolOr, StrEq, NeqInt, JumpIfFalse, JumpIfTrue:
 		payload = strings.Join(inst.Args, ",")
@@ -355,23 +382,35 @@ func serializeInstruction(w io.Writer, inst TypedInstruction) error {
 	case ReturnVoid:
 		payload = ""
 	case Call:
-		if len(inst.Args) > 0 {
-			payload = "f" + inst.Args[0]
-			if len(inst.Args) > 1 {
-				rest := inst.Args[1:]
-				extIdx := -1
-				for i, a := range rest {
-					if strings.HasPrefix(a, ";") {
-						extIdx = i
-						break
-					}
-				}
-				if extIdx >= 0 {
-					payload += "," + strings.Join(rest[:extIdx], ",") + rest[extIdx]
-				} else {
-					payload += "," + strings.Join(rest, ",")
-				}
+		// Two accepted arg formats (must round-trip identically):
+		//   vxc form:     [";callee", paramType1, ...]
+		//   vxbootstrap:  ["funcID", ";callee", paramType1, ...]
+		// We normalize to vxc form for storage so the deserializer can
+		// unambiguously split callee from paramTypes.
+		if len(inst.Args) == 0 {
+			break
+		}
+		// Find the callee marker (first element starting with ';').
+		callee := ""
+		calleeIdx := -1
+		for i, a := range inst.Args {
+			if strings.HasPrefix(a, ";") {
+				callee = a[1:]
+				calleeIdx = i
+				break
 			}
+		}
+		// Param types follow the callee marker.
+		var paramTypes []string
+		if calleeIdx >= 0 && calleeIdx+1 < len(inst.Args) {
+			paramTypes = inst.Args[calleeIdx+1:]
+		}
+		// Wire format: f;<callee>,<paramType1>,<paramType2>,...
+		// (funcID intentionally omitted — the vxc form has no funcID,
+		// and LLVM IR resolves calls by callee name.)
+		payload = "f;" + callee
+		if len(paramTypes) > 0 {
+			payload += "," + strings.Join(paramTypes, ",")
 		}
 	case StructNew:
 		payload = "s" + strings.Join(inst.Args, ",")
@@ -381,7 +420,9 @@ func serializeInstruction(w io.Writer, inst TypedInstruction) error {
 		payload = strings.Join(inst.Args, ",")
 	case MapNew:
 		payload = strings.Join(inst.Args, ",")
-	case Newz, Dup, Pop, ConstNil, AddressOf, ScopeDrop, Halt:
+	case Newz:
+		payload = strings.Join(inst.Args, ",")
+	case Dup, Pop, ConstNil, AddressOf, ScopeDrop, Halt:
 		payload = ""
 	default:
 		payload = strings.Join(inst.Args, ",")

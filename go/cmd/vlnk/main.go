@@ -4,27 +4,42 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/vx-lang/vxc/internal/bytecode"
-	"github.com/vx-lang/vxc/internal/llvmir"
-	"github.com/vx-lang/vxc/internal/typeir"
+	"github.com/vx-lang/vxc/internal/translator"
 )
 
+const version = "vx-translator v2.0 — VXOBJ → LLVM IR → native executable"
+
 func main() {
-	outputFile := flag.String("o", "", "Output executable path")
+	outputFile := flag.String("o", "", "Output executable path (required)")
+	targetTriple := flag.String("target", "", "Target triple (default: auto-detect from host)")
+	llvmPath := flag.String("llvm-path", "", "Custom LLVM bin directory (containing llc, lld)")
 	keepIR := flag.Bool("keep-ir", false, "Keep temporary .ll and .o files")
+	noLink := flag.Bool("S", false, "Stop after .ll generation (like clang -S)")
+	showVer := flag.Bool("v", false, "Print version")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "VX Linker v1.0 - Link VXOBJ into native executable via LLVM IR + LLD\n")
-		fmt.Fprintf(os.Stderr, "Usage: %s -o <output> <input.vxobj> [extra.o ...]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "VX Translator — translate VXOBJ (pure code logic) to native executable\n")
+		fmt.Fprintf(os.Stderr, "Pipeline: VXOBJ → LLVM IR → llc (compile) → lld (link)\n")
+		fmt.Fprintf(os.Stderr, "VXOBJ contains only pure code logic — platform adaptation is explicit.\n")
+		fmt.Fprintf(os.Stderr, "\nUsage: %s -o <output> <input.vxobj> [extra.o ...]\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nOptions:\n")
-		fmt.Fprintf(os.Stderr, "  -o <path>       Output executable path (required)\n")
-		fmt.Fprintf(os.Stderr, "  --keep-ir       Keep temporary .ll and .o files\n")
-		fmt.Fprintf(os.Stderr, "Extra files (.o, .dylib, .c, .a) are passed to clang for linking\n")
+		fmt.Fprintf(os.Stderr, "  -o <path>        Output executable path (required)\n")
+		fmt.Fprintf(os.Stderr, "  -target <triple> Target triple (default: auto-detect from host)\n")
+		fmt.Fprintf(os.Stderr, "                   Examples: x86_64-linux-gnu, arm64-apple-macosx\n")
+		fmt.Fprintf(os.Stderr, "  -llvm-path <dir> Custom LLVM bin directory\n")
+		fmt.Fprintf(os.Stderr, "  -keep-ir         Keep temporary .ll and .o files\n")
+		fmt.Fprintf(os.Stderr, "  -S               Stop after LLVM IR generation (inspect .ll)\n")
+		fmt.Fprintf(os.Stderr, "  -v               Print version\n")
+		fmt.Fprintf(os.Stderr, "\nExtra files (.o, .dylib, .a) are passed to lld for linking\n")
 	}
 	flag.Parse()
+
+	if *showVer {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 
 	if *outputFile == "" || flag.NArg() == 0 {
 		flag.Usage()
@@ -33,12 +48,12 @@ func main() {
 
 	// Separate .vxobj files from extra linker inputs
 	var vxobjFiles []string
-	var extraLinkInputs []string
+	var extraInputs []string
 	for _, arg := range flag.Args() {
 		if strings.HasSuffix(arg, ".vxobj") {
 			vxobjFiles = append(vxobjFiles, arg)
 		} else {
-			extraLinkInputs = append(extraLinkInputs, arg)
+			extraInputs = append(extraInputs, arg)
 		}
 	}
 
@@ -47,222 +62,39 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Read and parse all VXOBJ files
-	var modules []*typeir.TypeModule
-	var targetTriple string
-
-	for i, input := range vxobjFiles {
-		raw, err := os.ReadFile(input)
+	// Create translator (auto-detect host or use explicit target)
+	var trans *translator.Translator
+	if *targetTriple != "" {
+		target, err := translator.TargetFromTriple(*targetTriple)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[Error] Failed to read '%s': %v\n", input, err)
+			fmt.Fprintf(os.Stderr, "[Error] %v\n", err)
 			os.Exit(1)
 		}
-
-		container, err := bytecode.ParseVxobjV4(raw)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[Error] Failed to parse VXOBJ: %v\n", err)
-			os.Exit(1)
-		}
-
-		if i == 0 {
-			targetTriple = container.Header.TargetTriple
-			fmt.Fprintf(os.Stderr, "Target: %s\n", targetTriple)
-		}
-
-		typeIRData := container.GetSection(bytecode.SECTION_TYPE_IR)
-		if typeIRData == nil {
-			fmt.Fprintf(os.Stderr, "[Error] No TypeIR section found in '%s'\n", input)
-			os.Exit(1)
-		}
-
-		module, err := typeir.DeserializeTypeModule(typeIRData)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[Error] Failed to deserialize TypeIR from '%s': %v\n", input, err)
-			os.Exit(1)
-		}
-
-		fmt.Fprintf(os.Stderr, "  [%d] %s: %d functions\n", i, input, len(module.Functions))
-		modules = append(modules, module)
-	}
-
-	// Merge all modules into one
-	module := mergeModules(modules)
-	fmt.Fprintf(os.Stderr, "Total merged: %d functions\n", len(module.Functions))
-
-	// Generate LLVM IR
-	llvmIR, err := llvmir.Generate(module, targetTriple)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[Error] LLVM IR generation failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "vxlnk_*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[Error] Failed to create temp dir: %v\n", err)
-		os.Exit(1)
-	}
-	if !*keepIR {
-		defer os.RemoveAll(tmpDir)
+		trans = translator.NewTranslator(target)
 	} else {
-		fmt.Fprintf(os.Stderr, "Temp files: %s\n", tmpDir)
+		trans = translator.NewHostTranslator()
+		fmt.Fprintf(os.Stderr, "[TRANSLATOR] Auto-detected host: %s (%s)\n",
+			trans.Target.Triple, trans.Target.Arch.Name())
 	}
 
-	base := filepath.Join(tmpDir, "output")
+	trans.KeepTemp = *keepIR
+	trans.LLVMPath = *llvmPath
+	trans.NoLink = *noLink
 
-	// Write .ll file
-	llPath := base + ".ll"
-	if err := os.WriteFile(llPath, []byte(llvmIR), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "[Error] Failed to write .ll: %v\n", err)
+	// Ensure output path is absolute
+	outputPath := *outputFile
+	if !filepath.IsAbs(outputPath) {
+		cwd, _ := os.Getwd()
+		outputPath = filepath.Join(cwd, outputPath)
+	}
+
+	fmt.Fprintf(os.Stderr, "[TRANSLATOR] Translating %d VXOBJ file(s) → %s\n",
+		len(vxobjFiles), outputPath)
+
+	if err := trans.Translate(vxobjFiles, outputPath, extraInputs); err != nil {
+		fmt.Fprintf(os.Stderr, "[TRANSLATOR] Failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Call clang to compile .ll → executable
-	// clang handles both LLVM IR compilation and linking in one step
-	fmt.Fprintf(os.Stderr, "Compiling with clang...\n")
-	if err := runClang(llPath, *outputFile, targetTriple, extraLinkInputs); err != nil {
-		fmt.Fprintf(os.Stderr, "[Error] clang failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Make executable
-	os.Chmod(*outputFile, 0755)
-
-	stat, _ := os.Stat(*outputFile)
-	fmt.Fprintf(os.Stderr, "Output: %s (%d bytes)\n", *outputFile, stat.Size())
-}
-
-func runClang(llPath, outputPath, targetTriple string, extraInputs []string) error {
-	binary := findBinary("clang", "clang-19", "clang-18", "clang-17")
-	if binary == "" {
-		return fmt.Errorf("clang not found in PATH (install Clang/LLVM)")
-	}
-
-	arch := archFromTriple(targetTriple)
-	var args []string
-
-	if strings.Contains(targetTriple, "apple") || strings.Contains(targetTriple, "darwin") || strings.Contains(targetTriple, "macos") {
-		// macOS: use -Wl to handle SDK path issues
-		args = []string{
-			llPath,
-			"-o", outputPath,
-			"-O2",
-		}
-		// Try to find macOS SDK
-		if sdk, err := findMacOSSDK(); err == nil {
-			args = append(args, "-isysroot", sdk)
-		}
-	} else if strings.Contains(targetTriple, "windows") || strings.Contains(targetTriple, "mingw") || strings.Contains(targetTriple, "msvc") {
-		args = []string{
-			llPath,
-			"-o", outputPath,
-			"-O2",
-		}
-	} else {
-		// Linux/ELF: add minimal startup
-		args = []string{
-			llPath,
-			"-o", outputPath,
-			"-O2",
-			"-nostartfiles", // don't link crt by default
-			"-Wl,-e,main",   // use main as entry point
-		}
-		if arch == "aarch64" || arch == "arm64" {
-			args = append(args, "-target", "aarch64-linux-gnu")
-		} else {
-			args = append(args, "-target", "x86_64-linux-gnu")
-		}
-	}
-
-	// Append extra linker inputs (.o, .dylib, .c, .a, etc.)
-	args = append(args, extraInputs...)
-
-	cmd := exec.Command(binary, args...)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
-	return cmd.Run()
-}
-
-func findBinary(names ...string) string {
-	for _, name := range names {
-		path, err := exec.LookPath(name)
-		if err == nil {
-			return path
-		}
-	}
-	return ""
-}
-
-func archFromTriple(triple string) string {
-	parts := strings.Split(triple, "-")
-	if len(parts) == 0 {
-		return ""
-	}
-	return parts[0]
-}
-
-func findMacOSSDK() (string, error) {
-	// Try common Xcode SDK paths
-	paths := []string{
-		"/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
-		"/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
-	}
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("no macOS SDK found")
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-// mergeModules combines multiple TypeIR modules into a single module.
-func mergeModules(modules []*typeir.TypeModule) *typeir.TypeModule {
-	if len(modules) == 0 {
-		return &typeir.TypeModule{}
-	}
-	if len(modules) == 1 {
-		return modules[0]
-	}
-
-	merged := &typeir.TypeModule{
-		Name:        modules[0].Name,
-		Functions:   make([]typeir.FunctionIR, 0),
-		Globals:     make([]typeir.GlobalIR, 0),
-		StructTypes: make([]typeir.StructTypeDef, 0),
-		Linkage:     make(map[uint32]typeir.LinkageEntry),
-	}
-
-	usedNames := make(map[string]bool)
-	for _, m := range modules {
-		// Merge functions (skip duplicates by name)
-		for _, fn := range m.Functions {
-			if !usedNames[fn.Name] {
-				usedNames[fn.Name] = true
-				merged.Functions = append(merged.Functions, fn)
-			}
-		}
-		// Merge globals
-		merged.Globals = append(merged.Globals, m.Globals...)
-		// Merge struct types (skip duplicates by name)
-		structNames := make(map[string]bool)
-		for _, st := range merged.StructTypes {
-			structNames[st.Name] = true
-		}
-		for _, st := range m.StructTypes {
-			if !structNames[st.Name] {
-				structNames[st.Name] = true
-				merged.StructTypes = append(merged.StructTypes, st)
-			}
-		}
-		// Merge linkage
-		for k, v := range m.Linkage {
-			merged.Linkage[k] = v
-		}
-	}
-	return merged
+	fmt.Fprintf(os.Stderr, "[TRANSLATOR] Done.\n")
 }

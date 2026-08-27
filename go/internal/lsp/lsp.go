@@ -90,7 +90,7 @@ func (b *VxLspBackend) AnalyzeAndPublish(uri, text string) []Diagnostic {
 		AstNodes: result.AstNodes,
 	}
 
-	var lspDiags []Diagnostic
+	lspDiags := make([]Diagnostic, 0, len(result.Diagnostics))
 	for _, diag := range result.Diagnostics {
 		lspDiags = append(lspDiags, Diagnostic{
 			Range: Range{
@@ -124,7 +124,7 @@ func (b *VxLspBackend) HandleCompletion(uri string, pos Position) []CompletionIt
 		return nil
 	}
 
-	var items []CompletionItem
+	items := make([]CompletionItem, 0, len(symbolsList))
 	for _, sym := range symbolsList {
 		var kind int
 		switch sym.Kind {
@@ -240,7 +240,7 @@ func (b *VxLspBackend) HandleDocumentSymbols(uri string) []DocumentSymbol {
 		return nil
 	}
 
-	var result []DocumentSymbol
+	result := make([]DocumentSymbol, 0, len(syms))
 	for _, sym := range syms {
 		result = append(result, DocumentSymbol{
 			Name: sym.Name,
@@ -268,12 +268,12 @@ func (b *VxLspBackend) HandleInlayHints(uri string, start, end Position) []Inlay
 		return nil
 	}
 
-	hints, err := inlay_hints.CollectInlayHints(doc.AstNodes, doc.Source)
+	hints, err := inlay_hints.CollectInlayHints(doc.AstNodes)
 	if err != nil {
 		return nil
 	}
 
-	var result []InlayHint
+	result := make([]InlayHint, 0, len(hints))
 	for _, hint := range hints {
 		label := ""
 		if hint.Label.String != nil {

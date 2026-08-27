@@ -9,9 +9,20 @@ import (
 )
 
 const (
+	// MAGIC is the VXOBJ file magic bytes.
+	// VXOBJ is a pure code-logic line binary representation: it stores only
+	// TypeIR instructions stripped of all high-level features (generics,
+	// traits, ownership annotations) and platform API calls. All platform
+	// adaptation is deferred to the translator, which resolves abstract
+	// operations against the target OS at translation time.
+	//
+	// This design ensures zero hidden behavior: VXOBJ contains exactly the
+	// program's algorithmic logic, nothing more. The translator's output
+	// (LLVM IR + platform bindings) is fully inspectable with -S.
 	MAGIC             = "VXOBJ"
 	VERSION_V4 uint32 = 4
 
+	// Section names
 	SECTION_TYPE_IR       = "TypeIR"
 	SECTION_CODE          = "Code"
 	SECTION_DEBUG         = "Debug"
@@ -407,12 +418,19 @@ func BuildVXOBJ(module *typeir.TypeIRModule, targetTriple string, codeData []byt
 		return nil, fmt.Errorf("module is nil")
 	}
 
-	// Convert TypeIRModule → TypeModule with empty linkage table
+	// Convert TypeIRModule → TypeModule, preserving linkage entries.
+	linkage := make(map[uint32]typeir.LinkageEntry)
+	if module.Linkage != nil {
+		for k, v := range module.Linkage {
+			linkage[k] = v
+		}
+	}
 	tm := &typeir.TypeModule{
 		Name:        module.Name,
 		Functions:   module.Functions,
+		Globals:     module.Globals,
 		StructTypes: module.StructTypes,
-		Linkage:     make(map[uint32]typeir.LinkageEntry),
+		Linkage:     linkage,
 	}
 
 	// Serialize TypeIR to binary format

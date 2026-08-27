@@ -250,7 +250,7 @@ func (c *Checker) AddWarning(msg string, line, col int) {
 // IsCopyType returns true for types that are copied rather than moved.
 func (c *Checker) IsCopyType(t string) bool {
 	switch t {
-	case "int", "float", "double", "bool":
+	case "int", "float", "double", "bool", "string":
 		return true
 	}
 	return false

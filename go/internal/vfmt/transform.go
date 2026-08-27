@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/vx-lang/vxc/internal/ast"
-	"github.com/vx-lang/vxc/internal/token"
 )
 
 // Rule defines a single migration rule.
@@ -50,8 +49,8 @@ type Config struct {
 
 // Transformer applies migration rules to an AST.
 type Transformer struct {
-	config      Config
-	ruleEngine  *RuleEngine
+	config     Config
+	ruleEngine *RuleEngine
 }
 
 // NewTransformer creates a new Transformer.
@@ -278,12 +277,13 @@ func (re *RuleEngine) transformFuncDecl(f *ast.FuncDecl) *ast.FuncDecl {
 	}
 	// Transform params
 	for i, param := range f.Params {
+		paramCopy := param
 		for _, rule := range re.rules {
 			if rule.Kind == "migrate_type" {
-				re.applyTypeRule(&param.ParamType, rule)
+				re.applyTypeRule(&paramCopy.ParamType, rule)
 			}
 		}
-		f.Params[i] = param
+		f.Params[i] = paramCopy
 	}
 	return f
 }
@@ -298,12 +298,13 @@ func (re *RuleEngine) transformExternDecl(e *ast.ExternDecl) *ast.ExternDecl {
 		}
 	}
 	for i, param := range e.Params {
+		paramCopy := param
 		for _, rule := range re.rules {
 			if rule.Kind == "migrate_type" {
-				re.applyTypeRule(&param.ParamType, rule)
+				re.applyTypeRule(&paramCopy.ParamType, rule)
 			}
 		}
-		e.Params[i] = param
+		e.Params[i] = paramCopy
 	}
 	return e
 }
@@ -315,12 +316,13 @@ func (re *RuleEngine) transformStructDecl(s *ast.StructDecl) *ast.StructDecl {
 		}
 	}
 	for i, f := range s.Fields {
+		fCopy := f
 		for _, rule := range re.rules {
 			if rule.Kind == "migrate_type" {
-				re.applyTypeRule(&f.FieldType, rule)
+				re.applyTypeRule(&fCopy.FieldType, rule)
 			}
 		}
-		s.Fields[i] = f
+		s.Fields[i] = fCopy
 	}
 	for i, m := range s.Methods {
 		s.Methods[i] = re.transformStmt(m)
@@ -335,12 +337,13 @@ func (re *RuleEngine) transformClassDecl(c *ast.ClassDecl) *ast.ClassDecl {
 		}
 	}
 	for i, f := range c.Fields {
+		fCopy := f
 		for _, rule := range re.rules {
 			if rule.Kind == "migrate_type" {
-				re.applyTypeRule(&f.FieldType, rule)
+				re.applyTypeRule(&fCopy.FieldType, rule)
 			}
 		}
-		c.Fields[i] = f
+		c.Fields[i] = fCopy
 	}
 	for i, m := range c.Methods {
 		c.Methods[i] = re.transformStmt(m)
@@ -569,7 +572,7 @@ func (re *RuleEngine) mapArgs(args []ast.Expr, rule Rule) []ast.Expr {
 	}
 
 	// Apply arg mapping if specified
-	var mapped []ast.Expr
+	mapped := make([]ast.Expr, 0, len(args))
 	if len(rule.ArgMapping) > 0 {
 		for _, srcIdx := range rule.ArgMapping {
 			if srcIdx >= 0 && srcIdx < len(args) && !removeSet[srcIdx] {
@@ -741,12 +744,12 @@ func ParseConfig(configData string) (Config, error) {
 func ValidateConfig(cfg Config) []string {
 	var errors []string
 	validKinds := map[string]bool{
-		"rename_func":     true,
-		"rename_method":   true,
-		"migrate_call":    true,
+		"rename_func":      true,
+		"rename_method":    true,
+		"migrate_call":     true,
 		"migrate_property": true,
-		"migrate_import":  true,
-		"migrate_type":    true,
+		"migrate_import":   true,
+		"migrate_type":     true,
 	}
 
 	for i, rule := range cfg.Rules {
@@ -782,7 +785,4 @@ func FindAndAddImport(program []ast.Expr, importPath string) []ast.Expr {
 	return append([]ast.Expr{newImport}, program...)
 }
 
-// tokenPos converts an AST Pos to the original token position.
-func tokenPos(line, col int) token.Token {
-	return token.Token{Line: line, Col: col}
-}
+

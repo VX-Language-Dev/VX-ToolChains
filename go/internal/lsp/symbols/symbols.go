@@ -30,8 +30,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		p := n.Pos()
 		nameLen := len(n.Name)
 		rng := types.Range{
-			Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-			End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + nameLen)},
+			Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+			End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + nameLen)},
 		}
 
 		var detail *string
@@ -54,8 +54,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		for _, f := range n.Fields {
 			p := n.Pos()
 			fieldRange := types.Range{
-				Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-				End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + len(f.Name))},
+				Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+				End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + len(f.Name))},
 			}
 			fieldType := f.FieldType.Name
 			children = append(children, types.DocumentSymbol{
@@ -71,8 +71,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		p := n.Pos()
 		nameLen := len(n.Name)
 		rng := types.Range{
-			Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-			End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + nameLen)},
+			Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+			End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + nameLen)},
 		}
 
 		return &types.DocumentSymbol{
@@ -89,8 +89,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		for _, f := range n.Fields {
 			p := n.Pos()
 			fieldRange := types.Range{
-				Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-				End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + len(f.Name))},
+				Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+				End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + len(f.Name))},
 			}
 			fieldType := f.FieldType.Name
 			children = append(children, types.DocumentSymbol{
@@ -106,8 +106,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		p := n.Pos()
 		nameLen := len(n.Name)
 		rng := types.Range{
-			Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-			End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + nameLen)},
+			Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+			End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + nameLen)},
 		}
 
 		return &types.DocumentSymbol{
@@ -124,8 +124,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		for _, v := range n.Variants {
 			p := n.Pos()
 			varRange := types.Range{
-				Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-				End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + len(v.Name))},
+				Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+				End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + len(v.Name))},
 			}
 			children = append(children, types.DocumentSymbol{
 				Name:           v.Name,
@@ -140,8 +140,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		p := n.Pos()
 		nameLen := len(n.Name)
 		rng := types.Range{
-			Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-			End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + nameLen)},
+			Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+			End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + nameLen)},
 		}
 
 		return &types.DocumentSymbol{
@@ -157,8 +157,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		p := n.Pos()
 		nameLen := len(n.Name)
 		rng := types.Range{
-			Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-			End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + nameLen)},
+			Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+			End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + nameLen)},
 		}
 
 		return &types.DocumentSymbol{
@@ -181,8 +181,8 @@ func buildDocumentSymbol(node ast.Expr) *types.DocumentSymbol {
 		p := n.Pos()
 		nameLen := len(n.VarName)
 		rng := types.Range{
-			Start: types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1)},
-			End:   types.Position{Line: uint32(p.Line-1), Character: uint32(p.Col-1 + nameLen)},
+			Start: types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1)},
+			End:   types.Position{Line: uint32(p.Line - 1), Character: uint32(p.Col - 1 + nameLen)},
 		}
 
 		return &types.DocumentSymbol{
