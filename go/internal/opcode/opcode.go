@@ -100,10 +100,16 @@ const (
 	// Iterator ops (for-in support)
 	Iterate OpCode = 0x60
 	Next    OpCode = 0x61
+	// String/Array ops
+	StrConcat   OpCode = 0x62
+	ArrayConcat OpCode = 0x63
+	StrEq       OpCode = 0x64
+	NeqInt      OpCode = 0x65
+	Noop        OpCode = 0x67
 )
 
 // opCodeMax 最大 opcode 值 + 1，用于确定查找表大小。
-const opCodeMax byte = 0x62 // 98
+const opCodeMax byte = 0x68 // 104
 
 // ErrUnknownOpcode 表示无效或未定义的字节码。
 var ErrUnknownOpcode = errors.New("unknown opcode")
@@ -140,7 +146,7 @@ func init() {
 		EqInt, EqFloat, LtInt, LtFloat, GtInt, GtFloat,
 		LeInt, LeFloat, GeInt, GeFloat,
 		NegInt, NegFloat, Not, And, Or,
-		Iterate, Next,
+		Iterate, Next, StrConcat, ArrayConcat, StrEq, NeqInt, Noop,
 	}
 	for _, op := range allOps {
 		lookupTable[op] = op
@@ -199,6 +205,9 @@ func (op OpCode) String() string {
 		NegInt: "NegInt", NegFloat: "NegFloat",
 		Not: "Not", And: "And", Or: "Or",
 		Iterate: "Iterate", Next: "Next",
+		StrConcat: "StrConcat", ArrayConcat: "ArrayConcat",
+		StrEq: "StrEq", NeqInt: "NeqInt",
+		Noop: "Noop",
 	}
 	if name, ok := names[op]; ok {
 		return name

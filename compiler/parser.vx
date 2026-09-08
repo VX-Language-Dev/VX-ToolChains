@@ -1,0 +1,533 @@
+# parser.vx - VX 自举编译器语法分析器 + TypeIR 代码生成器
+
+# 本文件包含完整的解析和代码生成逻辑
+# 输出格式与 vxbootstrap 兼容的 JSON 结构（简化为 TypeIR 二进制）
+import compiler.lexer
+
+# ===== AST 节点类型 =====
+# 用字典表示，type 字段标识节点类型
+# {type: "int", value: "42", line: 1}
+# {type: "ident", name: "x", line: 1}
+# {type: "binary", op: "+", left: ..., right: ...}
+# {type: "call", callee: ..., args: [...]}
+# {type: "func", name: "...", params: [...], ret_type: "...", body: [...]}
+# {type: "var_decl", name: "...", type_ann: "...", init: ...}
+# {type: "return", value: ...}
+# {type: "if", cond: ..., then: [...], elifs: [...], else_body: [...]}
+# {type: "while", cond: ..., body: [...]}
+
+# ===== Parser 类 =====
+class Parser:
+    tokens: var
+    pos: int
+    err: str
+    
+    func new(tok:var) -> var:
+        var p = new Parser()
+        p.tokens = tok
+        p.pos = 0
+        p.err = ""
+        return p
+    
+    func peek() -> var:
+        if self.pos >= len(self.tokens):
+            return [T_EOF, "", 0]
+        return self.tokens[self.pos]
+    
+    func next() -> var:
+        var t = self.peek()
+        if self.pos < len(self.tokens):
+            self.pos = self.pos + 1
+        return t
+    
+    func peek_kind() -> int:
+        return self.peek()[0]
+    
+    func expect(kind:int) -> var:
+        var t = self.peek()
+        if t[0] != kind:
+            self.err = "expected token " + str(kind) + " got " + str(t[0]) + " at line " + str(t[2])
+            return [kind, "", t[2]]
+        return self.next()
+    
+    func skip_newlines():
+        while self.peek_kind() == T_NL:
+            self.pos = self.pos + 1
+
+# ===== 运算符优先级 =====
+func op_precedence(op:str) -> int:
+    if op == "or": return 1
+    if op == "and": return 2
+    if op == "==" or op == "!=": return 3
+    if op == "<" or op == ">" or op == "<=" or op == ">=": return 4
+    if op == "+" or op == "-": return 5
+    if op == "*" or op == "/" or op == "%": return 6
+    if op == "^": return 7
+    return 0
+
+# ===== 解析表达式 =====
+func parse_expr(p:Parser, min_prec:int) -> var:
+    var left = parse_primary(p)
+    
+    while true:
+        var t = p.peek()
+        var kind = t[0]
+        var op = ""
+        if kind == T_PLUS: op = "+"
+        elif kind == T_MINUS: op = "-"
+        elif kind == T_STAR: op = "*"
+        elif kind == T_SLASH: op = "/"
+        elif kind == T_PERCENT: op = "%"
+        elif kind == T_POWER: op = "^"
+        elif kind == T_EQ: op = "=="
+        elif kind == T_NE: op = "!="
+        elif kind == T_LT: op = "<"
+        elif kind == T_GT: op = ">"
+        elif kind == T_LE: op = "<="
+        elif kind == T_GE: op = ">="
+        elif kind == T_AND: op = "and"
+        elif kind == T_OR: op = "or"
+        elif kind == T_KW and t[1] == "and": op = "and"
+        elif kind == T_KW and t[1] == "or": op = "or"
+        
+        if op == "":
+            break
+        
+        var prec = op_precedence(op)
+        if prec < min_prec:
+            break
+        
+        p.next()  # consume operator
+        var right = parse_expr(p, prec + 1)
+        left = {"type": "binary", "op": op, "left": left, "right": right}
+    
+    return left
+
+func parse_primary(p:Parser) -> var:
+    var t = p.peek()
+    var kind = t[0]
+    var val = t[1]
+    
+    # 整数字面量
+    if kind == T_INT:
+        p.next()
+        return {"type": "int", "value": val}
+    
+    # 浮点字面量
+    if kind == T_FLOAT:
+        p.next()
+        return {"type": "float", "value": val}
+    
+    # 字符串字面量
+    if kind == T_STRING:
+        p.next()
+        return {"type": "string", "value": val}
+    
+    # true/false/nil
+    if kind == T_KW and val == "true":
+        p.next()
+        return {"type": "bool", "value": "true"}
+    if kind == T_KW and val == "false":
+        p.next()
+        return {"type": "bool", "value": "false"}
+    if kind == T_KW and val == "nil":
+        p.next()
+        return {"type": "nil"}
+    
+    # 标识符 (可能是变量/属性访问/方法调用/函数调用)
+    if kind == T_IDENT:
+        p.next()
+        var node = {"type": "ident", "name": val}
+        # 处理链式属性访问和方法调用: a.b.c() / a.b().c
+        while p.peek_kind() == T_DOT:
+            p.next()  # 消费 '.'
+            var prop = p.expect(T_IDENT)[1]
+            if p.peek_kind() == T_LPAREN:
+                # 方法调用: obj.method(args)
+                p.next()  # 消费 '('
+                var margs = [node]  # self 参数
+                if p.peek_kind() != T_RPAREN:
+                    margs = margs + [parse_expr(p, 1)]
+                    while p.peek_kind() == T_COMMA:
+                        p.next()
+                        if p.peek_kind() == T_RPAREN:
+                            break
+                        margs = margs + [parse_expr(p, 1)]
+                p.expect(T_RPAREN)
+                node = {"type": "call", "callee": prop, "args": margs, "method_of": node}
+            else:
+                # 属性访问: obj.field
+                node = {"type": "property", "obj": node, "prop": prop}
+        # 检查是否是函数调用: f()
+        if node["type"] == "ident" and p.peek_kind() == T_LPAREN:
+            p.next()  # 消费 '('
+            var args = []
+            if p.peek_kind() != T_RPAREN:
+                args = args + [parse_expr(p, 1)]
+                while p.peek_kind() == T_COMMA:
+                    p.next()
+                    if p.peek_kind() == T_RPAREN:
+                        break
+                    args = args + [parse_expr(p, 1)]
+            p.expect(T_RPAREN)
+            node = {"type": "call", "callee": node["name"], "args": args}
+        return node
+    
+    # new 表达式: new ClassName() 或 new StructName{field: val}
+    if kind == T_KW and val == "new":
+        p.next()
+        var type_name = p.expect(T_IDENT)[1]
+        # new ClassName()
+        if p.peek_kind() == T_LPAREN:
+            p.next()
+            var new_args = []
+            if p.peek_kind() != T_RPAREN:
+                new_args = new_args + [parse_expr(p, 1)]
+                while p.peek_kind() == T_COMMA:
+                    p.next()
+                    if p.peek_kind() == T_RPAREN:
+                        break
+                    new_args = new_args + [parse_expr(p, 1)]
+            p.expect(T_RPAREN)
+            return {"type": "new", "class_name": type_name, "args": new_args}
+        return {"type": "new", "class_name": type_name, "args": []}
+
+    # 括号表达式
+    if kind == T_LPAREN:
+        p.next()
+        var expr = parse_expr(p, 1)
+        p.expect(T_RPAREN)
+        return expr
+
+    # 字面类型名称用作构造 (如 int("123"))
+    if kind == T_KW:
+        p.next()
+        return {"type": "type_cast", "type_name": val, "value": nil}
+    
+    # 一元减号
+    if kind == T_MINUS:
+        p.next()
+        var operand = parse_primary(p)
+        return {"type": "unary", "op": "-", "expr": operand}
+    
+    # 逻辑非 (! 或 not 关键字)
+    if kind == T_NOT or (kind == T_KW and val == "not"):
+        p.next()
+        var operand = parse_primary(p)
+        return {"type": "unary", "op": "!", "expr": operand}
+    
+    p.err = "unexpected token " + str(kind) + " (" + val + ") at line " + str(t[2])
+    return {"type": "nil"}
+
+# ===== 解析语句 =====
+func parse_block(p:Parser) -> var:
+    var stmts = []
+    p.skip_newlines()
+    if p.peek_kind() == T_INDENT:
+        p.next()
+        while p.peek_kind() != T_DEDENT and p.peek_kind() != T_EOF:
+            var s = parse_stmt(p)
+            if s != nil:
+                stmts = stmts + [s]
+            p.skip_newlines()
+        if p.peek_kind() == T_DEDENT:
+            p.next()
+    else:
+        # 单语句块 (如 if cond: stmt)
+        var s = parse_stmt(p)
+        if s != nil:
+            stmts = stmts + [s]
+    return stmts
+
+# ===== 解析函数声明 =====
+func parse_func_decl(p:Parser) -> var:
+    p.next()  # consume 'func'
+    var fname = p.expect(T_IDENT)[1]
+    p.expect(T_LPAREN)
+    var params = []
+    if p.peek_kind() != T_RPAREN:
+        var pname = p.expect(T_IDENT)[1]
+        var ptype = "var"
+        if p.peek_kind() == T_COLON:
+            p.next()
+            ptype = p.expect(T_IDENT)[1]
+            # 支持带泛型的类型如 Vec<int>
+            while p.peek_kind() == T_LT:
+                p.next()
+                ptype = ptype + "<"
+                while p.peek_kind() != T_GT:
+                    ptype = ptype + p.next()[1]
+                    if p.peek_kind() == T_COMMA:
+                        ptype = ptype + ","
+                ptype = ptype + p.expect(T_GT)[1]
+            if ptype == "":
+                ptype = "var"
+        params = params + [[pname, ptype]]
+        while p.peek_kind() == T_COMMA:
+            p.next()
+            pname = p.expect(T_IDENT)[1]
+            ptype = "var"
+            if p.peek_kind() == T_COLON:
+                p.next()
+                ptype = p.expect(T_IDENT)[1]
+                while p.peek_kind() == T_LT:
+                    p.next()
+                    ptype = ptype + "<"
+                    while p.peek_kind() != T_GT:
+                        ptype = ptype + p.next()[1]
+                        if p.peek_kind() == T_COMMA:
+                            ptype = ptype + ","
+                ptype = ptype + p.expect(T_GT)[1]
+                if ptype == "":
+                    ptype = "var"
+            params = params + [[pname, ptype]]
+    p.expect(T_RPAREN)
+    var ret_type = "void"
+    if p.peek_kind() == T_ARROW:
+        p.next()
+        ret_type = p.expect(T_IDENT)[1]
+    var body = parse_block(p)
+    return {"type": "func", "name": fname, "params": params, "ret_type": ret_type, "body": body}
+
+func parse_stmt(p:Parser) -> var:
+    var t = p.peek()
+    var kind = t[0]
+    var val = t[1]
+    
+    p.skip_newlines()
+    
+    # var x [: type] = expr
+    if kind == T_KW and (val == "var" or val == "mut"):
+        p.next()
+        var name = p.expect(T_IDENT)[1]
+        var type_ann = ""
+        if p.peek_kind() == T_COLON:
+            p.next()
+            var tt = p.next()
+            type_ann = tt[1]
+        p.expect(T_ASSIGN)
+        var init = parse_expr(p, 1)
+        return {"type": "var_decl", "name": name, "type_ann": type_ann, "init": init, "is_mut": val == "mut"}
+    
+    # func name(params) [-> type]: body
+    if kind == T_KW and val == "func":
+        return parse_func_decl(p)
+    
+    # extern func name(params) [-> type]
+    if kind == T_KW and val == "extern":
+        p.next()
+        if p.peek_kind() == T_KW and p.peek()[1] == "func":
+            p.next()
+        var ename = p.expect(T_IDENT)[1]
+        p.expect(T_LPAREN)
+        var eparams = []
+        if p.peek_kind() != T_RPAREN:
+            var epname = p.expect(T_IDENT)[1]
+            var eptype = "var"
+            if p.peek_kind() == T_COLON:
+                p.next()
+                eptype = p.expect(T_IDENT)[1]
+            eparams = eparams + [[epname, eptype]]
+            while p.peek_kind() == T_COMMA:
+                p.next()
+                epname = p.expect(T_IDENT)[1]
+                eptype = "var"
+                if p.peek_kind() == T_COLON:
+                    p.next()
+                    eptype = p.expect(T_IDENT)[1]
+                eparams = eparams + [[epname, eptype]]
+        p.expect(T_RPAREN)
+        var eret = "void"
+        if p.peek_kind() == T_ARROW:
+            p.next()
+            eret = p.expect(T_IDENT)[1]
+        return {"type": "extern", "name": ename, "params": eparams, "ret_type": eret}
+    
+    # import path
+    if kind == T_KW and val == "import":
+        p.next()
+        var path = p.expect(T_IDENT)[1]
+        while p.peek_kind() == T_DOT:
+            p.next()
+            path = path + "." + p.expect(T_IDENT)[1]
+        if p.peek_kind() == T_KW and p.peek()[1] == "as":
+            p.next()
+            p.expect(T_IDENT)
+        return {"type": "import", "path": path}
+    
+    # return [expr]
+    if kind == T_KW and val == "return":
+        p.next()
+        var ret_val = nil
+        if p.peek_kind() != T_NL and p.peek_kind() != T_EOF and p.peek_kind() != T_DEDENT:
+            ret_val = parse_expr(p, 1)
+        return {"type": "return", "value": ret_val}
+    
+    # break
+    if kind == T_KW and val == "break":
+        p.next()
+        return {"type": "break"}
+    
+    # continue
+    if kind == T_KW and val == "continue":
+        p.next()
+        return {"type": "continue"}
+    
+    # if/elif/else
+    if kind == T_KW and val == "if":
+        return parse_if(p)
+    
+    # while
+    if kind == T_KW and val == "while":
+        p.next()
+        var cond = parse_expr(p, 1)
+        var body = parse_block(p)
+        return {"type": "while", "cond": cond, "body": body}
+    
+    # for x in expr: body
+    if kind == T_KW and val == "for":
+        p.next()
+        var var_name = p.expect(T_IDENT)[1]
+        p.expect(T_KW)  # 'in'
+        var iterable = parse_expr(p, 1)
+        var body = parse_block(p)
+        return {"type": "for", "var": var_name, "iterable": iterable, "body": body}
+    
+    # class 声明
+    if kind == T_KW and val == "class":
+        p.next()
+        var cname = p.expect(T_IDENT)[1]
+        p.expect(T_COLON)
+        var fields = []
+        var methods = []
+        # 解析缩进体
+        p.skip_newlines()
+        if p.peek_kind() == T_INDENT:
+            p.next()
+            while p.peek_kind() != T_DEDENT and p.peek_kind() != T_EOF:
+                p.skip_newlines()
+                var inner = p.peek()
+                var inner_kind = inner[0]
+                var inner_val = inner[1]
+                if p.peek_kind() == T_EOF or p.peek_kind() == T_DEDENT:
+                    break
+                # 方法定义
+                if inner_kind == T_KW and inner_val == "func":
+                    var m = parse_func_decl(p)
+                    if m != nil:
+                        methods = methods + [m]
+                # 字段声明: name: type
+                elif inner_kind == T_IDENT:
+                    var fname = p.next()[1]
+                    if p.peek_kind() == T_COLON:
+                        p.next()
+                        var ftype_tok = p.next()
+                        var ftype = ftype_tok[1]
+                        fields = fields + [{"name": fname, "type": ftype}]
+                    else:
+                        # standalone ident, skip
+                        pass
+                else:
+                    break
+            if p.peek_kind() == T_DEDENT:
+                p.next()
+        return {"type": "class", "name": cname, "fields": fields, "methods": methods}
+    
+    # struct 声明
+    if kind == T_KW and val == "struct":
+        p.next()
+        var sname = p.expect(T_IDENT)[1]
+        var sfields = []
+        # struct name: { field: type, ... } 或 struct name:
+        if p.peek_kind() == T_COLON:
+            p.next()
+            p.skip_newlines()
+            if p.peek_kind() == T_INDENT:
+                p.next()
+                while p.peek_kind() != T_DEDENT and p.peek_kind() != T_EOF:
+                    p.skip_newlines()
+                    var inner = p.peek()
+                    if inner[0] == T_IDENT:
+                        var sfname = p.next()[1]
+                        if p.peek_kind() == T_COLON:
+                            p.next()
+                            var sftype = p.next()[1]
+                            sfields = sfields + [{"name": sfname, "type": sftype}]
+                        else:
+                            break
+                    else:
+                        break
+                if p.peek_kind() == T_DEDENT:
+                    p.next()
+        return {"type": "struct", "name": sname, "fields": sfields}
+
+    # 表达式语句 (赋值或函数调用)
+    var expr = parse_expr(p, 1)
+    if p.err != "":
+        return nil
+    
+    # 检查是否是赋值 (x = expr)
+    if expr["type"] == "ident" and p.peek_kind() == T_ASSIGN:
+        p.next()
+        var val_expr = parse_expr(p, 1)
+        return {"type": "assign", "target": expr["name"], "value": val_expr}
+    
+    return {"type": "expr_stmt", "expr": expr}
+
+func parse_if(p:Parser) -> var:
+    p.next()  # consume 'if'
+    var cond = parse_expr(p, 1)
+    var then_body = parse_block(p)
+    var elifs = []
+    var else_body = nil
+    while p.peek_kind() == T_KW and p.peek()[1] == "elif":
+        p.next()
+        var econd = parse_expr(p, 1)
+        var ebody = parse_block(p)
+        elifs = elifs + [[econd, ebody]]
+    if p.peek_kind() == T_KW and p.peek()[1] == "else":
+        p.next()
+        p.expect(T_COLON)
+        else_body = parse_block(p)
+    return {"type": "if", "cond": cond, "then": then_body, "elifs": elifs, "else": else_body}
+
+# ===== 解析入口 =====
+func parse_program(tokens:var, source_name:str) -> var:
+    var p = Parser.new(tokens["tokens"])
+    var funcs = []
+    var classes = []
+    var structs = []
+    var top_vars = []
+    var imports = []
+    
+    while p.peek_kind() != T_EOF:
+        p.skip_newlines()
+        if p.peek_kind() == T_EOF:
+            break
+        var s = parse_stmt(p)
+        if s != nil:
+            if s["type"] == "func":
+                funcs = funcs + [s]
+            elif s["type"] == "extern":
+                funcs = funcs + [s]
+            elif s["type"] == "class":
+                classes = classes + [s]
+                # 将 class 方法作为函数加入
+                var i = 0
+                while i < len(s["methods"]):
+                    var m = s["methods"][i]
+                    # 为方法添加 self 作为第一个参数
+                    var class_name = s["name"]
+                    m["class_name"] = class_name
+                    funcs = funcs + [m]
+                    i = i + 1
+            elif s["type"] == "struct":
+                structs = structs + [s]
+            elif s["type"] == "import":
+                imports = imports + [s]
+            elif s["type"] == "var_decl":
+                top_vars = top_vars + [s]
+        if p.err != "":
+            break
+    
+    return {"error": p.err, "funcs": funcs, "classes": classes, "structs": structs, "imports": imports, "top_vars": top_vars, "func_count": len(funcs), "name": source_name}

@@ -333,8 +333,6 @@ func opcodeToTag(op Opcode) (byte, string, error) {
 		return 95, "", nil
 	case Noop:
 		return 91, "", nil
-	case Import:
-		return 92, "", nil
 	case Halt:
 		return 93, "", nil
 	default:

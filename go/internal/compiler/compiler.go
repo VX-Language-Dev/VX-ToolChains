@@ -66,12 +66,33 @@ func (c *Compiler) compileFunction(funcIR typeir.FunctionIR) (compiler_bytecode.
 		paramTypes = append(paramTypes, param.Type)
 	}
 
+	// First pass: collect label positions so jump targets can be resolved.
+	// Noop instructions with a label arg are emitted by typeirgen.emitLabel.
+	labelPositions := make(map[string]int)
 	for _, instr := range funcIR.Instructions {
-		bytecodeInstr, err := c.compileInstruction(instr)
+		if instr.Op == typeir.Noop && len(instr.Args) > 0 {
+			// The label name is the arg; record the current instruction index
+			// so jump instructions can resolve it. We use a placeholder
+			// index that will be corrected in the second pass.
+			labelPositions[instr.Args[0]] = -1
+		}
+	}
+
+	// Second pass: emit instructions, tracking positions and resolving labels.
+	pos := 0
+	for _, instr := range funcIR.Instructions {
+		// Record label positions before emitting the instruction.
+		if instr.Op == typeir.Noop && len(instr.Args) > 0 {
+			labelPositions[instr.Args[0]] = pos
+			// Skip emitting Noop — it's just a label marker.
+			continue
+		}
+		bytecodeInstr, err := c.compileInstruction(instr, labelPositions)
 		if err != nil {
 			return compiler_bytecode.BytecodeFunction{}, err
 		}
 		instructions = append(instructions, bytecodeInstr)
+		pos++
 	}
 
 	hasReturn := len(instructions) > 0
@@ -90,7 +111,7 @@ func (c *Compiler) compileFunction(funcIR typeir.FunctionIR) (compiler_bytecode.
 	}, nil
 }
 
-func (c *Compiler) compileInstruction(instr typeir.TypedInstruction) (compiler_bytecode.Instruction, error) {
+func (c *Compiler) compileInstruction(instr typeir.TypedInstruction, labelPositions map[string]int) (compiler_bytecode.Instruction, error) {
 	switch instr.Op {
 	case typeir.ConstInt:
 		if len(instr.Args) > 0 {
@@ -148,6 +169,14 @@ func (c *Compiler) compileInstruction(instr typeir.TypedInstruction) (compiler_b
 		return compiler_bytecode.NewInstruction(opcode.DivInt), nil
 	case typeir.I32Mod:
 		return compiler_bytecode.NewInstruction(opcode.ModInt), nil
+	case typeir.I64Add:
+		return compiler_bytecode.NewInstruction(opcode.AddInt), nil
+	case typeir.I64Sub:
+		return compiler_bytecode.NewInstruction(opcode.SubInt), nil
+	case typeir.I64Mul:
+		return compiler_bytecode.NewInstruction(opcode.MulInt), nil
+	case typeir.I64Div:
+		return compiler_bytecode.NewInstruction(opcode.DivInt), nil
 
 	case typeir.F64Add:
 		return compiler_bytecode.NewInstruction(opcode.AddFloat), nil
@@ -167,27 +196,60 @@ func (c *Compiler) compileInstruction(instr typeir.TypedInstruction) (compiler_b
 
 	case typeir.I32Eq:
 		return compiler_bytecode.NewInstruction(opcode.EqInt), nil
+	case typeir.I32Neq:
+		return compiler_bytecode.NewInstruction(opcode.NeqInt), nil
 	case typeir.F64Eq:
 		return compiler_bytecode.NewInstruction(opcode.EqFloat), nil
+	case typeir.I32Lt:
+		return compiler_bytecode.NewInstruction(opcode.LtInt), nil
+	case typeir.I32Gt:
+		return compiler_bytecode.NewInstruction(opcode.GtInt), nil
+	case typeir.I32Le:
+		return compiler_bytecode.NewInstruction(opcode.LeInt), nil
+	case typeir.I32Ge:
+		return compiler_bytecode.NewInstruction(opcode.GeInt), nil
+	case typeir.F64Lt:
+		return compiler_bytecode.NewInstruction(opcode.LtFloat), nil
+	case typeir.F64Gt:
+		return compiler_bytecode.NewInstruction(opcode.GtFloat), nil
+	case typeir.F64Le:
+		return compiler_bytecode.NewInstruction(opcode.LeFloat), nil
+	case typeir.F64Ge:
+		return compiler_bytecode.NewInstruction(opcode.GeFloat), nil
+
+	case typeir.I32And:
+		return compiler_bytecode.NewInstruction(opcode.And), nil
+	case typeir.I32Or:
+		return compiler_bytecode.NewInstruction(opcode.Or), nil
+	case typeir.I32Neg:
+		return compiler_bytecode.NewInstruction(opcode.NegInt), nil
+	case typeir.F64Neg:
+		return compiler_bytecode.NewInstruction(opcode.NegFloat), nil
+	case typeir.StrEq:
+		return compiler_bytecode.NewInstruction(opcode.StrEq), nil
+	case typeir.NeqInt:
+		return compiler_bytecode.NewInstruction(opcode.NeqInt), nil
 
 	case typeir.Return:
+		return compiler_bytecode.NewInstruction(opcode.Return), nil
+	case typeir.ReturnVoid:
 		return compiler_bytecode.NewInstruction(opcode.Return), nil
 
 	case typeir.Jump:
 		if len(instr.Args) > 0 {
-			idx := c.resolveLabelIndex(instr.Args[0])
+			idx := c.resolveLabelIndex(instr.Args[0], labelPositions)
 			return compiler_bytecode.NewInstructionWithArg(opcode.Jump, compiler_bytecode.NewIntArg(int32(idx))), nil
 		}
 
 	case typeir.JumpIfFalse:
 		if len(instr.Args) > 0 {
-			idx := c.resolveLabelIndex(instr.Args[0])
+			idx := c.resolveLabelIndex(instr.Args[0], labelPositions)
 			return compiler_bytecode.NewInstructionWithArg(opcode.JumpIfFalse, compiler_bytecode.NewIntArg(int32(idx))), nil
 		}
 
 	case typeir.JumpIfTrue:
 		if len(instr.Args) > 0 {
-			idx := c.resolveLabelIndex(instr.Args[0])
+			idx := c.resolveLabelIndex(instr.Args[0], labelPositions)
 			return compiler_bytecode.NewInstructionWithArg(opcode.JumpIfTrue, compiler_bytecode.NewIntArg(int32(idx))), nil
 		}
 
@@ -204,14 +266,64 @@ func (c *Compiler) compileInstruction(instr typeir.TypedInstruction) (compiler_b
 		return compiler_bytecode.NewInstruction(opcode.OwnershipMove), nil
 	case typeir.ScopeDrop:
 		return compiler_bytecode.NewInstruction(opcode.ScopeDrop), nil
+	case typeir.BorrowCheck:
+		return compiler_bytecode.NewInstruction(opcode.BorrowCheck), nil
+	case typeir.AliveCheck:
+		return compiler_bytecode.NewInstruction(opcode.AliveCheck), nil
 
 	case typeir.Noop:
-		return compiler_bytecode.NewInstruction(opcode.Pop), nil
+		return compiler_bytecode.NewInstruction(opcode.Noop), nil
 
 	case typeir.Pop:
 		return compiler_bytecode.NewInstruction(opcode.Pop), nil
 	case typeir.Dup:
 		return compiler_bytecode.NewInstruction(opcode.Dup), nil
+
+	case typeir.Halt:
+		return compiler_bytecode.NewInstruction(opcode.Halt), nil
+	case typeir.Import:
+		return compiler_bytecode.NewInstruction(opcode.Import), nil
+
+	case typeir.PropertyGet:
+		return compiler_bytecode.NewInstruction(opcode.PropertyGet), nil
+	case typeir.PointerMember:
+		return compiler_bytecode.NewInstruction(opcode.PointerMember), nil
+	case typeir.IndexGet:
+		return compiler_bytecode.NewInstruction(opcode.IndexGet), nil
+	case typeir.IndexSet:
+		return compiler_bytecode.NewInstruction(opcode.IndexSet), nil
+	case typeir.FieldLoad:
+		return compiler_bytecode.NewInstruction(opcode.LoadField), nil
+	case typeir.FieldStore:
+		return compiler_bytecode.NewInstruction(opcode.StoreField), nil
+
+	case typeir.ArrayNew:
+		return compiler_bytecode.NewInstruction(opcode.MakeArray), nil
+	case typeir.MapNew:
+		return compiler_bytecode.NewInstruction(opcode.MakeMap), nil
+	case typeir.StructNew:
+		return compiler_bytecode.NewInstruction(opcode.MakeStruct), nil
+
+	case typeir.AddressOf:
+		return compiler_bytecode.NewInstruction(opcode.AddressOf), nil
+	case typeir.Deref:
+		return compiler_bytecode.NewInstruction(opcode.Deref), nil
+
+	case typeir.SysArgv:
+		return compiler_bytecode.NewInstruction(opcode.SysArgv), nil
+	case typeir.System:
+		return compiler_bytecode.NewInstruction(opcode.System), nil
+	case typeir.FileRead:
+		return compiler_bytecode.NewInstruction(opcode.FileRead), nil
+	case typeir.FileWrite:
+		return compiler_bytecode.NewInstruction(opcode.FileWrite), nil
+	case typeir.FileExists:
+		return compiler_bytecode.NewInstruction(opcode.FileExists), nil
+
+	case typeir.StrConcat:
+		return compiler_bytecode.NewInstruction(opcode.StrConcat), nil
+	case typeir.ArrayConcat:
+		return compiler_bytecode.NewInstruction(opcode.ArrayConcat), nil
 	}
 
 	return compiler_bytecode.NewInstruction(opcode.Halt), fmt.Errorf("unsupported opcode: %s", instr.Op)
@@ -238,6 +350,12 @@ func (c *Compiler) addConstant(val compiler_bytecode.ConstantValue) int {
 }
 
 func (c *Compiler) resolveVarIndex(name string) int {
+	// TypeIRgen emits numeric IDs (0, 1, 2, ...) as LoadVar/StoreVar args,
+	// not variable names. Parse the numeric ID directly.
+	if idx, err := strconv.Atoi(name); err == nil {
+		return idx
+	}
+	// Fall back to name-based lookup for globals (stable indices).
 	for i, g := range c.Module.Globals {
 		if g.Name == name {
 			return i
@@ -246,6 +364,10 @@ func (c *Compiler) resolveVarIndex(name string) int {
 	return 0
 }
 
-func (c *Compiler) resolveLabelIndex(label string) int {
-	return 0
+func (c *Compiler) resolveLabelIndex(label string, positions map[string]int) int {
+	if pos, ok := positions[label]; ok && pos >= 0 {
+		return pos
+	}
+	// Unknown label: default to end of function (safe fallback).
+	return -1
 }

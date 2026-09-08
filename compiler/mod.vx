@@ -1,0 +1,15 @@
+# ============================================================
+# VX 自举编译器模块入口
+# ============================================================
+
+import compiler.lexer
+import compiler.parser
+import compiler.codegen
+import compiler.vxobj
+import compiler.typeir
+
+export lexer
+export parser
+export codegen
+export vxobj
+export typeir

@@ -1,0 +1,197 @@
+# ============================================================
+# vxobj.vx — VXOBJ v4 格式序列化器
+# 将 TypeIR 模块转换为 VXOBJ 二进制格式
+# 兼容 Go 工具链的 vlnk/vxbootstrap
+# ============================================================
+
+import compiler.typeir
+
+# ---- VXOBJ 常量 ----
+const VXOBJ_MAGIC: str = "VXOBJ"
+const VXOBJ_VERSION: int = 4
+const SECTION_TYPEIR: str = "TypeIR"
+
+# ---- 二进制写入工具 ----
+func write_u32_be(v: int) -> str:
+    var result = ""
+    result = result + chr(v / 16777216 % 256)
+    result = result + chr(v / 65536 % 256)
+    result = result + chr(v / 256 % 256)
+    result = result + chr(v % 256)
+    return result
+
+func write_u16_be(v: int) -> str:
+    var result = ""
+    result = result + chr(v / 256 % 256)
+    result = result + chr(v % 256)
+    return result
+
+func write_u8(v: int) -> str:
+    return chr(v % 256)
+
+func write_string(s: str) -> str:
+    return write_u32_be(len(s)) + s
+
+# ---- 类型映射 ----
+var type_name_to_tag = {
+    "int": TYPE_INT,
+    "float": TYPE_FLOAT,
+    "bool": TYPE_BOOL,
+    "string": TYPE_STRING,
+    "void": TYPE_VOID,
+    "var": TYPE_UNKNOWN
+}
+
+func get_type_tag(type_name: str) -> int:
+    if type_name_to_tag.has_key(type_name):
+        return type_name_to_tag[type_name]
+    return TYPE_UNKNOWN
+
+# ---- 序列化类型（兼容 Go serializeType） ----
+# 简单类型：u8(tag)
+func serialize_type_tag(tag: int) -> str:
+    return write_u8(tag)
+
+# ---- 序列化指令 ----
+func serialize_instruction(op: int, args: str) -> str:
+    var result = write_u8(op)
+    result = result + write_u32_be(len(args))
+    result = result + args
+    return result
+
+# ---- 序列化函数（兼容 Go serialize.go 格式） ----
+func serialize_function(func_data: var) -> str:
+    var name = func_data["name"]
+    var id = func_data["id"]
+    var param_count = func_data["param_count"]
+    var params = func_data["params"]
+    var ret_type = func_data["ret_type"]
+    var instructions = func_data["instructions"]
+    var local_count = func_data["local_count"]
+    
+    var result = ""
+    
+    # 函数名
+    result = result + write_string(name)
+    # 函数 ID
+    result = result + write_u32_be(id)
+    # 参数数量
+    result = result + write_u32_be(param_count)
+    
+    # has_return
+    var has_return = ret_type != "void" and ret_type != ""
+    if has_return:
+        result = result + write_u8(1)
+        # 返回类型标签（使用 serialize_type: 简单类型 = u8 tag）
+        result = result + serialize_type_tag(get_type_tag(ret_type))
+    else:
+        result = result + write_u8(0)
+        # void 类型标签 = 0
+        result = result + serialize_type_tag(TYPE_VOID)
+    
+    # 参数
+    var i = 0
+    while i < param_count:
+        var pname = params[i][0]
+        var ptype = params[i][1]
+        result = result + write_string(pname)
+        var ptype_tag = get_type_tag(ptype)
+        result = result + serialize_type_tag(ptype_tag)
+        i = i + 1
+    
+    # var_count (局部变量数量)
+    result = result + write_u32_be(local_count)
+    
+    # local_types: {count: u32, entries: [{var_id: u32, type_tag: u8}]}
+    # 简化：不追踪每个变量的类型，写 count=0
+    result = result + write_u32_be(0)
+    
+    # 指令数量
+    var inst_count = len(instructions)
+    result = result + write_u32_be(inst_count)
+    
+    # 指令序列
+    var k = 0
+    while k < inst_count:
+        var inst = instructions[k]
+        var op = inst["op"]
+        var args = inst["args"]
+        result = result + serialize_instruction(op, args)
+        k = k + 1
+    
+    return result
+
+# ---- 序列化链接表 ----
+func serialize_linkage(linkage: var) -> str:
+    var result = ""
+    var keys = linkage.keys()
+    var count = len(keys)
+    result = result + write_u32_be(count)
+    
+    var i = 0
+    while i < count:
+        var name = keys[i]
+        var entry = linkage[name]
+        result = result + write_u32_be(0)  # func_id = 0 (unused for extern)
+        result = result + write_u8(1)       # is_external = true
+        result = result + write_string(name)
+        i = i + 1
+    
+    return result
+
+# ---- 写入 VXOBJ ----
+func write_vxobj(modules: var, target: str) -> str:
+    var typeir_data = ""
+    
+    var func_list = modules
+    if modules.has_key("data"):
+        func_list = modules["data"]
+    
+    var linkage = {}
+    if modules.has_key("linkage"):
+        linkage = modules["linkage"]
+    
+    # TypeIR 数据: func_count + struct_count + functions + linkage
+    var func_count = len(func_list)
+    typeir_data = typeir_data + write_u32_be(func_count)
+    typeir_data = typeir_data + write_u32_be(0)  # struct_count = 0
+    
+    var i = 0
+    while i < func_count:
+        typeir_data = typeir_data + serialize_function(func_list[i])
+        i = i + 1
+    
+    typeir_data = typeir_data + serialize_linkage(linkage)
+    
+    # VXOBJ v4 头部:
+    # Magic(5) + Version(4) + Flags(4) + Target(string) + SectionCount(4) + Sections[...]
+    var flags: int = 0
+    var target_len = len(target)
+    var header_size = 5 + 4 + 4 + 4 + target_len
+    var section_info_size = 4 + len(SECTION_TYPEIR) + 4 + 4
+    var typeir_offset = header_size + section_info_size
+    var typeir_size = len(typeir_data)
+    
+    var result = ""
+    
+    # Magic
+    result = result + VXOBJ_MAGIC
+    # Version
+    result = result + write_u32_be(VXOBJ_VERSION)
+    # Flags
+    result = result + write_u32_be(flags)
+    # Target triple (string: length prefix + chars)
+    result = result + write_string(target)
+    
+    # Section count
+    result = result + write_u32_be(1)
+    
+    # Section: TypeIR
+    result = result + write_string(SECTION_TYPEIR)
+    result = result + write_u32_be(typeir_offset)
+    result = result + write_u32_be(typeir_size)
+    
+    # Section data
+    result = result + typeir_data
+    
+    return result

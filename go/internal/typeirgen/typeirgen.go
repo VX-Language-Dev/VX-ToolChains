@@ -405,7 +405,15 @@ func CompileExpr(c *Context, e ast.Expr) {
 		c.allocateLocal(iterVar, typeir.Unknown)
 		c.emit(typeir.StoreVar, []string{strconv.Itoa(int(c.localID(iterVar)))}, nil)
 
-		// Step 2: initialize index to 0.
+		// Step 2: compute the iterable's length via len() and store it.
+		// Re-load the iterable so len() operates on the live value.
+		c.emit(typeir.LoadVar, []string{strconv.Itoa(int(c.localID(iterVar)))}, nil)
+		c.emit(typeir.Call, []string{";len", "string"}, []typeir.Typ{typeir.Int})
+		lenVar := fmt.Sprintf("__for_len_%d", len(c.LocalIDs))
+		c.allocateLocal(lenVar, typeir.Int)
+		c.emit(typeir.StoreVar, []string{strconv.Itoa(int(c.localID(lenVar)))}, nil)
+
+		// Step 3: initialize index to 0.
 		idxVar := fmt.Sprintf("__for_idx_%d", len(c.LocalIDs))
 		c.allocateLocal(idxVar, typeir.Int)
 		c.emit(typeir.ConstInt, []string{"0"}, []typeir.Typ{typeir.Int})
@@ -416,29 +424,28 @@ func CompileExpr(c *Context, e ast.Expr) {
 		c.emitLabel(startLabel)
 		c.pushLoopLabels(startLabel, endLabel)
 
-		// Step 3: load iterable length (approximated as index < 100000)
-		// to avoid infinite loops from dead iterables.
+		// Step 4: check index < len(iterable)
 		c.emit(typeir.LoadVar, []string{strconv.Itoa(int(c.localID(idxVar)))}, []typeir.Typ{typeir.Int})
-		c.emit(typeir.ConstInt, []string{"100000"}, []typeir.Typ{typeir.Int})
+		c.emit(typeir.LoadVar, []string{strconv.Itoa(int(c.localID(lenVar)))}, []typeir.Typ{typeir.Int})
 		c.emit0(typeir.I32Lt)
 		c.popStack()
 		c.emit(typeir.JumpIfFalse, []string{endLabel}, nil)
 
-		// Step 4: elem = iterable[index]
+		// Step 5: elem = iterable[index]
 		c.emit(typeir.LoadVar, []string{strconv.Itoa(int(c.localID(iterVar)))}, nil)
 		c.emit(typeir.LoadVar, []string{strconv.Itoa(int(c.localID(idxVar)))}, []typeir.Typ{typeir.Int})
 		c.emit(typeir.IndexGet, nil, nil)
 
-		// Step 5: store in loop variable VarName.
+		// Step 6: store in loop variable VarName.
 		c.allocateLocal(expr.VarName, typeir.Unknown)
 		c.emit(typeir.StoreVar, []string{strconv.Itoa(int(c.localID(expr.VarName)))}, nil)
 
-		// Step 6: execute loop body.
+		// Step 7: execute loop body.
 		for _, s := range expr.Body {
 			CompileExpr(c, s)
 		}
 
-		// Step 7: index++ and loop back.
+		// Step 8: index++ and loop back.
 		c.emit(typeir.LoadVar, []string{strconv.Itoa(int(c.localID(idxVar)))}, []typeir.Typ{typeir.Int})
 		c.emit(typeir.ConstInt, []string{"1"}, []typeir.Typ{typeir.Int})
 		c.emit0(typeir.I32Add)
@@ -548,7 +555,9 @@ func CompileExpr(c *Context, e ast.Expr) {
 			args = append(args, structName)
 		}
 		typ := typeir.Unknown
-		c.emit(typeir.PropertyGet, args, []typeir.Typ{typ})
+		// Use FieldLoad instead of PropertyGet — FieldLoad is handled by
+		// both the translator (LLVM IR generation) and the decompiler (vxde).
+		c.emit(typeir.FieldLoad, args, []typeir.Typ{typ})
 		c.pushStack(typ)
 
 	case *ast.PointerMember:
@@ -598,13 +607,25 @@ func CompileStmt(c *Context, s ast.Expr) {
 // compileAssign compiles an assignment statement: target = value.
 // The value expression leaves its result on the operand stack, which the
 // emitted StoreVar / FieldStore / IndexSet instruction consumes.
+//
+// IMPORTANT: The value must remain on the operand stack so that FieldStore
+// and IndexSet (which pop multiple operands from the stack) can consume it.
+// We record the value's type via popStack() but immediately re-push it
+// using a Const* instruction so the stack layout is preserved.
 func compileAssign(c *Context, target, value ast.Expr) {
+	// Compile the value expression — it pushes its result onto the stack.
 	CompileExpr(c, value)
+	// Record the value's type for the StoreVar/FieldStore/IndexSet type
+	// annotation, then re-push it so it remains on the stack for the
+	// target-specific instruction to consume.
 	valueTyp := c.popStack()
+	c.pushStack(valueTyp)
+
 	targetName := ""
 	if id, ok := target.(*ast.Identifier); ok {
 		targetName = id.Name
 	}
+	// Resolve the declared type of the target variable (for StoreVar).
 	typ := valueTyp
 	if id, ok := target.(*ast.Identifier); ok {
 		if lt, ok := c.Locals[id.Name]; ok {
@@ -614,9 +635,13 @@ func compileAssign(c *Context, target, value ast.Expr) {
 		}
 	}
 	// Handle struct field assignment: p.x = val
+	// Stack layout after CompileExpr(value) + CompileExpr(target):
+	//   [value, structPtr]  (value pushed first, structPtr pushed second)
+	// FieldStore in llvmir pops structPtr first, then value.
 	if pa, ok := target.(*ast.PropertyAccess); ok {
 		CompileExpr(c, pa.Target)
-		c.popStack()
+		// Do NOT pop the struct pointer — FieldStore consumes it from the
+		// operand stack. The value remains on the stack from above.
 		structName := ""
 		if id, ok := pa.Target.(*ast.Identifier); ok {
 			if lt, ok := c.Locals[id.Name]; ok {
@@ -630,22 +655,51 @@ func compileAssign(c *Context, target, value ast.Expr) {
 			args = append(args, structName)
 		}
 		c.emit(typeir.FieldStore, args, []typeir.Typ{valueTyp})
+		// Both operands consumed by FieldStore.
+		c.popStack() // structPtr
+		c.popStack() // value
 		return
 	}
 	// Handle array index assignment: a[i] = val
+	// Stack layout after CompileExpr(value) + CompileExpr(target) + CompileExpr(index):
+	//   [value, index, ptr]  (value pushed first, ptr pushed last)
+	// IndexSet in llvmir pops index first, then ptr, then value.
 	if ia, ok := target.(*ast.IndexAccess); ok {
 		CompileExpr(c, ia.Target)
-		c.popStack()
 		CompileExpr(c, ia.Index)
-		c.popStack()
+		// Do NOT pop — IndexSet consumes all three from the operand stack.
 		c.emit(typeir.IndexSet, nil, []typeir.Typ{valueTyp})
+		c.popStack() // index
+		c.popStack() // ptr
+		c.popStack() // value
+		return
+	}
+	// Handle pointer dereference assignment: *p = val
+	// Stack layout: [value, pointer]
+	if dt, ok := target.(*ast.Deref); ok {
+		CompileExpr(c, dt.Expr)
+		// Emit a StoreVar-like instruction: store value at *pointer.
+		// Use StoreVar with the pointer's local ID — but the pointer is
+		// on the stack, not in a local. Use FieldStore with field 0 as
+		// a store-through-pointer (struct field 0 of a zero-sized struct).
+		// Simpler: emit a raw store by reusing the IndexSet pattern with
+		// index 0 on the pointer itself.
+		c.emit(typeir.IndexSet, nil, []typeir.Typ{valueTyp})
+		c.popStack() // pointer
+		c.popStack() // value
 		return
 	}
 	if targetName == "" {
+		// Unknown target type — still need to consume the value from
+		// the operand stack to avoid stack corruption.
+		c.popStack()
+		c.emit0(typeir.Pop)
 		return
 	}
 	id := c.localID(targetName)
 	c.emit(typeir.StoreVar, []string{strconv.Itoa(int(id))}, []typeir.Typ{typ})
+	// StoreVar consumes the value from the operand stack.
+	c.popStack()
 }
 
 // CompileFunction compiles a single function declaration into FunctionIR.
@@ -708,6 +762,7 @@ func compileFunction(fn *ast.FuncDecl, globalTypes map[string]typeir.Typ, funcRe
 		ReturnType:   retType,
 		Params:       params,
 		Instructions: c.Instructions,
+		Body:         c.Instructions,
 		Locals:       c.Locals,
 		LocalTypes:   localTypes,
 	}

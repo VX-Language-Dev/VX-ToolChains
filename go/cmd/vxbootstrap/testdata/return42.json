@@ -1,0 +1,15 @@
+{
+    "name": "return42",
+    "target": "x86_64-unknown-unknown",
+    "functions": [
+        {
+            "id": 0,
+            "name": "main",
+            "return_type": "int",
+            "body": [
+                {"op": "const_int", "args": ["42"]},
+                {"op": "return", "args": ["int"]}
+            ]
+        }
+    ]
+}

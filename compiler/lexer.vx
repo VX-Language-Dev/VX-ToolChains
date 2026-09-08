@@ -1,0 +1,383 @@
+# lexer.vx - VX 自举编译器词法分析器
+import std.error
+
+# Token 类型常量
+const T_EOF: int = 0
+const T_NL: int = 1
+const T_INDENT: int = 2
+const T_DEDENT: int = 3
+const T_IDENT: int = 10
+const T_INT: int = 11
+const T_FLOAT: int = 12
+const T_STRING: int = 13
+const T_KW: int = 20
+const T_PLUS: int = 30
+const T_MINUS: int = 31
+const T_STAR: int = 32
+const T_SLASH: int = 33
+const T_PERCENT: int = 34
+const T_POWER: int = 35
+const T_EQ: int = 36
+const T_NE: int = 37
+const T_LT: int = 38
+const T_GT: int = 39
+const T_LE: int = 40
+const T_GE: int = 41
+const T_ASSIGN: int = 42
+const T_PLUSEQ: int = 43
+const T_MINUSEQ: int = 44
+const T_STAREQ: int = 45
+const T_SLASHEQ: int = 46
+const T_ARROW: int = 50
+const T_AND: int = 51
+const T_OR: int = 52
+const T_NOT: int = 53
+const T_LPAREN: int = 60
+const T_RPAREN: int = 61
+const T_LBRACKET: int = 62
+const T_RBRACKET: int = 63
+const T_LBRACE: int = 64
+const T_RBRACE: int = 65
+const T_COLON: int = 66
+const T_COMMA: int = 67
+const T_DOT: int = 68
+const T_HASH: int = 69
+
+# 关键字表
+var KW_IF: int = 100
+var KW_ELIF: int = 101
+var KW_ELSE: int = 102
+var KW_FOR: int = 103
+var KW_WHILE: int = 104
+var KW_BREAK: int = 105
+var KW_CONTINUE: int = 106
+var KW_FUNC: int = 107
+var KW_RETURN: int = 108
+var KW_TRUE: int = 109
+var KW_FALSE: int = 110
+var KW_NIL: int = 111
+var KW_VAR: int = 112
+var KW_MUT: int = 113
+var KW_IMPORT: int = 114
+var KW_STRUCT: int = 115
+var KW_CLASS: int = 116
+var KW_NEW: int = 117
+var KW_EXTERN: int = 118
+var KW_INT_T: int = 119
+var KW_FLOAT_T: int = 120
+var KW_BOOL_T: int = 121
+var KW_VOID_T: int = 122
+var KW_AND: int = 123
+var KW_OR: int = 124
+var KW_NOT_KW: int = 125
+var KW_AS: int = 126
+var KW_IN: int = 127
+var KW_LOOP: int = 128
+var KW_MATCH: int = 129
+var KW_ENUM: int = 130
+var KW_UNION: int = 131
+var KW_MACRO: int = 132
+var KW_MOVE: int = 133
+
+# Token 结构: [kind:int, value:str, line:int]
+func make_tok(kind:int, value:str, line:int) -> var:
+    return [kind, value, line]
+
+# 关键字查找
+var kw_names = [
+    "if", "elif", "else", "for", "while", "break", "continue",
+    "func", "return", "true", "false", "nil", "var", "mut",
+    "import", "struct", "class", "new", "extern",
+    "int", "float", "bool", "void",
+    "and", "or", "not", "as", "in", "loop", "match",
+    "enum", "union", "macro", "move"
+]
+var kw_values = [
+    KW_IF, KW_ELIF, KW_ELSE, KW_FOR, KW_WHILE, KW_BREAK, KW_CONTINUE,
+    KW_FUNC, KW_RETURN, KW_TRUE, KW_FALSE, KW_NIL, KW_VAR, KW_MUT,
+    KW_IMPORT, KW_STRUCT, KW_CLASS, KW_NEW, KW_EXTERN,
+    KW_INT_T, KW_FLOAT_T, KW_BOOL_T, KW_VOID_T,
+    KW_AND, KW_OR, KW_NOT_KW, KW_AS, KW_IN, KW_LOOP, KW_MATCH,
+    KW_ENUM, KW_UNION, KW_MACRO, KW_MOVE
+]
+
+func lookup_kw(name:str) -> int:
+    var i = 0
+    while i < len(kw_names):
+        if kw_names[i] == name:
+            return kw_values[i]
+        i = i + 1
+    return -1
+
+func is_letter(ch:str) -> bool:
+    if len(ch) == 0:
+        return false
+    var c = ord(ch)
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95 or c >= 128
+
+func is_digit(ch:str) -> bool:
+    if len(ch) == 0:
+        return false
+    var c = ord(ch)
+    return c >= 48 and c <= 57
+
+# Lexer 类
+class Lexer:
+    src: str
+    pos: int
+    line: int
+    tokens: var
+    indent_stk: var
+    at_start: bool
+    paren_lvl: int
+    err: str
+    indent_size: int
+
+    func new(source:str) -> var:
+        var l = new Lexer()
+        l.src = source
+        l.pos = 0
+        l.line = 1
+        l.tokens = []
+        l.indent_stk = [0]
+        l.indent_size = 1
+        l.at_start = true
+        l.paren_lvl = 0
+        l.err = ""
+        return l
+    
+    func indent_top() -> int:
+        if self.indent_size > 0:
+            return self.indent_stk[self.indent_size - 1]
+        return 0
+    
+    func indent_push(v: int):
+        if self.indent_size >= len(self.indent_stk):
+            self.indent_stk = self.indent_stk + [v]
+        else:
+            self.indent_stk[self.indent_size] = v
+        self.indent_size = self.indent_size + 1
+    
+    func indent_pop():
+        if self.indent_size > 0:
+            self.indent_size = self.indent_size - 1
+
+    func ch() -> str:
+        if self.pos >= len(self.src):
+            return ""
+        return self.src[self.pos]
+
+    func peek() -> str:
+        if self.pos + 1 >= len(self.src):
+            return ""
+        return self.src[self.pos + 1]
+
+    func advance():
+        if self.pos < len(self.src):
+            if self.src[self.pos] == "\n":
+                self.line = self.line + 1
+            self.pos = self.pos + 1
+
+    func add(kind:int, val:str):
+        self.tokens = self.tokens + [make_tok(kind, val, self.line)]
+
+    func skip_spaces():
+        while self.ch() == " " or self.ch() == "\t":
+            self.advance()
+
+    func read_ident() -> str:
+        var s = ""
+        while is_letter(self.ch()) or is_digit(self.ch()):
+            s = s + self.ch()
+            self.advance()
+        return s
+
+    func read_number() -> var:
+        var s = ""
+        var is_float = false
+        while is_digit(self.ch()):
+            s = s + self.ch()
+            self.advance()
+        if self.ch() == "." and is_digit(self.peek()):
+            is_float = true
+            s = s + "."
+            self.advance()
+            while is_digit(self.ch()):
+                s = s + self.ch()
+                self.advance()
+        return [s, is_float]
+
+    func read_string(q:str) -> str:
+        var s = ""
+        self.advance()  # skip open quote
+        while self.ch() != "" and self.ch() != q:
+            if self.ch() == "\\":
+                self.advance()
+                var e = self.ch()
+                self.advance()
+                if e == "n": s = s + "\n"
+                elif e == "t": s = s + "\t"
+                elif e == "\\": s = s + "\\"
+                elif e == "\"": s = s + "\""
+                elif e == "'": s = s + "'"
+                elif e != "": s = s + e
+            else:
+                s = s + self.ch()
+                self.advance()
+        if self.ch() == q:
+            self.advance()
+        return s
+
+    func skip_comment():
+        while self.ch() != "" and self.ch() != "\n":
+            self.advance()
+
+    func compute_indent() -> int:
+        var indent = 0
+        while self.ch() == " ":
+            indent = indent + 1
+            self.advance()
+        while self.ch() == "\t":
+            indent = indent + 4
+            self.advance()
+        return indent
+
+    func handle_indent():
+        if not self.at_start:
+            return
+        self.at_start = false
+        while true:
+            var indent = self.compute_indent()
+            if self.ch() == "\n":
+                self.advance()
+                indent = 0
+                continue
+            if self.ch() == "#":
+                self.skip_comment()
+                indent = 0
+                if self.ch() == "\n":
+                    self.advance()
+                continue
+            if self.ch() == "":
+                while self.indent_size > 1:
+                    self.indent_pop()
+                    self.add(T_DEDENT, "")
+                return
+            var top = self.indent_top()
+            if indent > top:
+                if self.paren_lvl == 0:
+                    self.indent_push(indent)
+                    self.add(T_INDENT, str(indent))
+            elif indent < top:
+                while self.indent_size > 1 and self.indent_top() > indent:
+                    self.indent_pop()
+                    self.add(T_DEDENT, "")
+            break
+
+    func tokenize() -> var:
+        while true:
+            if self.at_start:
+                self.handle_indent()
+                if self.err != "":
+                    return self.tokens
+            self.skip_spaces()
+            if self.ch() == "":
+                if not self.at_start:
+                    self.add(T_NL, "")
+                while self.indent_size > 1:
+                    self.indent_pop()
+                    self.add(T_DEDENT, "")
+                self.add(T_EOF, "")
+                break
+            if self.ch() == "\n":
+                self.advance()
+                if self.paren_lvl == 0:
+                    self.add(T_NL, "")
+                    self.at_start = true
+                continue
+            if self.ch() == "#":
+                self.skip_comment()
+                continue
+            var c = self.ch()
+            var n = self.peek()
+            if c == "\": self.advance(); self.add(T_STRING, self.read_string("\""))
+            elif c == "'": self.advance(); self.add(T_STRING, self.read_string("'"))
+            elif is_digit(c):
+                var r = self.read_number()
+                if r[1]: self.add(T_FLOAT, r[0])
+                else: self.add(T_INT, r[0])
+            elif is_letter(c):
+                var id = self.read_ident()
+                var kw = lookup_kw(id)
+                if kw >= 0: self.add(T_KW, id)
+                else: self.add(T_IDENT, id)
+            elif c == "(":
+                self.advance(); self.paren_lvl = self.paren_lvl + 1; self.add(T_LPAREN, "(")
+            elif c == ")":
+                self.advance(); self.paren_lvl = self.paren_lvl - 1; self.add(T_RPAREN, ")")
+            elif c == "[":
+                self.advance(); self.paren_lvl = self.paren_lvl + 1; self.add(T_LBRACKET, "[")
+            elif c == "]":
+                self.advance(); self.paren_lvl = self.paren_lvl - 1; self.add(T_RBRACKET, "]")
+            elif c == "{":
+                self.advance(); self.paren_lvl = self.paren_lvl + 1; self.add(T_LBRACE, "{")
+            elif c == "}":
+                self.advance(); self.paren_lvl = self.paren_lvl - 1; self.add(T_RBRACE, "}")
+            elif c == "+" and n == "=":
+                self.advance(); self.advance(); self.add(T_PLUSEQ, "+=")
+            elif c == "-" and n == "=":
+                self.advance(); self.advance(); self.add(T_MINUSEQ, "-=")
+            elif c == "-" and n == ">":
+                self.advance(); self.advance(); self.add(T_ARROW, "->")
+            elif c == "*" and n == "=":
+                self.advance(); self.advance(); self.add(T_STAREQ, "*=")
+            elif c == "/" and n == "=":
+                self.advance(); self.advance(); self.add(T_SLASHEQ, "/=")
+            elif c == "=" and n == "=":
+                self.advance(); self.advance(); self.add(T_EQ, "==")
+            elif c == "!" and n == "=":
+                self.advance(); self.advance(); self.add(T_NE, "!=")
+            elif c == "<" and n == "=":
+                self.advance(); self.advance(); self.add(T_LE, "<=")
+            elif c == ">" and n == "=":
+                self.advance(); self.advance(); self.add(T_GE, ">=")
+            elif c == "+" :
+                self.advance(); self.add(T_PLUS, "+")
+            elif c == "-" :
+                self.advance(); self.add(T_MINUS, "-")
+            elif c == "*" :
+                self.advance(); self.add(T_STAR, "*")
+            elif c == "/" :
+                self.advance(); self.add(T_SLASH, "/")
+            elif c == "%" :
+                self.advance(); self.add(T_PERCENT, "%")
+            elif c == "^" :
+                self.advance(); self.add(T_POWER, "^")
+            elif c == "<" :
+                self.advance(); self.add(T_LT, "<")
+            elif c == ">" :
+                self.advance(); self.add(T_GT, ">")
+            elif c == "=" :
+                self.advance(); self.add(T_ASSIGN, "=")
+            elif c == "!" :
+                self.advance(); self.add(T_NOT, "!")
+            elif c == "&" and n == "&":
+                self.advance(); self.advance(); self.add(T_AND, "and")
+            elif c == "|" and n == "|":
+                self.advance(); self.advance(); self.add(T_OR, "or")
+            elif c == ":" :
+                self.advance(); self.add(T_COLON, ":")
+            elif c == "," :
+                self.advance(); self.add(T_COMMA, ",")
+            elif c == "." :
+                self.advance(); self.add(T_DOT, ".")
+            elif c == "#" :
+                self.advance(); self.add(T_HASH, "#")
+            else:
+                self.advance()
+        return self.tokens
+
+func tokenize(source:str) -> var:
+    var l = Lexer.new(source)
+    var tokens = l.tokenize()
+    return {"tokens": tokens, "error": l.err, "count": len(tokens)}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/vx-lang/vxc/internal/bytecode"
 	"github.com/vx-lang/vxc/internal/importer"
@@ -13,121 +14,133 @@ import (
 	"github.com/vx-lang/vxc/internal/parser"
 	"github.com/vx-lang/vxc/internal/semantic"
 	"github.com/vx-lang/vxc/internal/typeirgen"
+	"github.com/vx-lang/vxc/internal/vxcout"
 )
 
 const version = "vxc-go version 1.6.0"
 
 func main() {
 	var (
-		outputFile       = flag.String("o", "out.vxobj", "输出文件名")
-		target           = flag.String("target", "x86_64-linux-gnu", "目标 triple")
-		showVer          = flag.Bool("v", false, "打印版本")
-		noOwnershipCheck = flag.Bool("no-ownership", false, "跳过所有权检查")
+		outputFile       = flag.String("o", "out.vxobj", "Output VXOBJ file")
+		target           = flag.String("target", "x86_64-linux-gnu", "Target triple")
+		showVer          = flag.Bool("version", false, "Print version")
+		verbose          = flag.Bool("v", false, "Verbose output")
+		noOwnershipCheck = flag.Bool("no-ownership", false, "Skip ownership check")
 	)
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "用法: %s [选项] <源文件>\n", os.Args[0])
-		flag.PrintDefaults()
+		vxcout.Get().PrintHelp()
 	}
 	flag.Parse()
 
+	out := vxcout.NewVXCOut(os.Stdout, *verbose)
+	vxcout.SetGlobal(out)
+
 	if *showVer {
-		fmt.Println(version)
+		out.PrintVersion()
 		os.Exit(0)
 	}
 
 	if flag.NArg() == 0 {
 		flag.Usage()
-		os.Exit(1)
+		os.Exit(0)
 	}
 
 	sourceFile := flag.Arg(0)
+	start := time.Now()
+
+	out.PrintCompiling(sourceFile)
+
 	content := readFile(sourceFile)
 
-	// 阶段 1: Lexing
+	out.PrintStep(1, 6, "lexer")
 	tokens := lexer.NewLexer(content).TokenizeAll()
 
-	// 阶段 2: Parsing
+	out.PrintStep(2, 6, "parser")
 	p := parser.NewParser(tokens)
 	ast := p.ParseProgram()
 	if len(p.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "语法错误:")
+		out.PrintError("syntax errors found")
 		for _, err := range p.Errors {
-			fmt.Fprintln(os.Stderr, err)
+			out.PrintError(err)
 		}
 		os.Exit(1)
 	}
 
-	// 阶段 2.5: 模块导入解析
-	// 将 `import` 语句展开为被引用模块的全部顶层声明（递归、去重、循环检测）。
+	out.PrintStep(3, 6, "import resolution")
 	merged, err := importer.Resolve(ast, importer.Options{
 		SourceDir:   filepath.Dir(sourceFile),
 		SearchRoots: stdSearchRoots(),
-		Verbose:     true,
+		Verbose:     *verbose,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "导入解析失败: %v\n", err)
+		out.PrintError(fmt.Sprintf("import resolution failed: %v", err))
 		os.Exit(1)
 	}
 
-	// 阶段 3: Semantic Analysis
+	out.PrintStep(4, 6, "semantic analysis")
 	st := semantic.AnalyzeProgram(merged)
 	if len(st.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "语义错误:")
+		out.PrintError("semantic errors found")
 		for _, err := range st.Errors {
-			fmt.Fprintf(os.Stderr, "%s\n", err.Msg)
+			out.PrintError(err.Msg)
 		}
 		os.Exit(1)
 	}
 
-	// 阶段 4: Ownership Check (可跳过)
+	out.PrintStep(5, 6, "ownership check")
 	if !*noOwnershipCheck {
 		checker := ownership.CheckProgram(merged)
 		if len(checker.Errors) > 0 {
-			fmt.Fprintln(os.Stderr, "所有权错误:")
+			out.PrintError("ownership errors found")
 			for _, err := range checker.Errors {
-				fmt.Fprintf(os.Stderr, "%s\n", err.Msg)
+				out.PrintError(err.Msg)
 			}
 			os.Exit(1)
 		}
 		for _, w := range checker.Warnings {
-			fmt.Fprintf(os.Stderr, "警告: %s\n", w.Msg)
+			out.PrintWarning(w.Msg)
 		}
 	}
 
-	// 阶段 5: TypeIR Generation
+	out.PrintStep(6, 6, "typeir generation")
 	moduleName := filepath.Base(sourceFile)
 	module := typeirgen.GenerateIR(merged, moduleName)
 
-	// 阶段 6: VXOBJ Serialization
+	out.PrintStage("bytecode", "serializing VXOBJ")
 	obj, err := bytecode.BuildVXOBJ(module, *target, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "生成目标文件失败: %v\n", err)
+		out.PrintError(fmt.Sprintf("VXOBJ generation failed: %v", err))
 		os.Exit(1)
 	}
 
 	writeFile(*outputFile, obj)
-	fmt.Printf("编译成功: %s -> %s\n", sourceFile, *outputFile)
+	out.PrintCompiled(sourceFile, *outputFile, len(obj))
+	out.PrintElapsed(start)
 }
 
 func readFile(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "读取文件失败 %s: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "failed to read %s: %v\n", path, err)
 		os.Exit(1)
 	}
 	return string(data)
 }
 
 func writeFile(path string, data []byte) {
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create directory %s: %v\n", dir, err)
+			os.Exit(1)
+		}
+	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "写入文件失败 %s: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "failed to write %s: %v\n", path, err)
 		os.Exit(1)
 	}
 }
 
-// stdSearchRoots returns candidate directories where the VX standard library
-// (the `std` package tree) may live, so `import std.xxx` resolves regardless of
-// the current working directory.
 func stdSearchRoots() []string {
 	roots := make([]string, 0, 4)
 	if v := os.Getenv("VX_STD"); v != "" {
@@ -135,7 +148,6 @@ func stdSearchRoots() []string {
 	}
 	if exe, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exe)
-		// go/bin/vxc -> repo root std
 		if d := filepath.Join(exeDir, "..", "std"); dirExists(d) {
 			roots = append(roots, d)
 		}

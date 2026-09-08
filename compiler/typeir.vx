@@ -1,0 +1,209 @@
+# ============================================================
+# typeir.vx — TypeIR 类型定义与序列化工具
+#
+# TypeIR 是 VX 的中间表示，这里我们提供序列化函数
+# 将 TypeIR 模块转换为二进制字节流（以字符串形式返回）
+# ============================================================
+
+import std.error
+
+# ---- 类型标签常量 ----
+const TYPE_VOID: int = 0
+const TYPE_INT: int = 1
+const TYPE_FLOAT: int = 2
+const TYPE_BOOL: int = 3
+const TYPE_STRING: int = 4
+const TYPE_STRUCT: int = 5
+const TYPE_ARRAY: int = 6
+const TYPE_MAP: int = 7
+const TYPE_FUNC: int = 8
+const TYPE_POINTER: int = 9
+const TYPE_GENERIC: int = 10
+const TYPE_UNKNOWN: int = 11
+
+# ---- 指令操作码标签 ----
+const OP_CONST_INT: int = 0
+const OP_CONST_FLOAT: int = 1
+const OP_CONST_BOOL: int = 2
+const OP_CONST_STRING: int = 3
+const OP_CONST_NIL: int = 4
+const OP_LOAD_VAR: int = 5
+const OP_STORE_VAR: int = 6
+const OP_I32_ADD: int = 10
+const OP_I32_SUB: int = 11
+const OP_I32_MUL: int = 12
+const OP_I32_DIV: int = 13
+const OP_I32_MOD: int = 14
+const OP_F64_ADD: int = 15
+const OP_F64_SUB: int = 16
+const OP_F64_MUL: int = 17
+const OP_F64_DIV: int = 18
+const OP_I64_ADD: int = 19
+const OP_I32_EQ: int = 20
+const OP_I32_NEQ: int = 21
+const OP_I32_LT: int = 22
+const OP_I32_GT: int = 23
+const OP_I32_LE: int = 24
+const OP_I32_GE: int = 25
+const OP_F64_EQ: int = 26
+const OP_F64_NE: int = 27
+const OP_F64_LT: int = 28
+const OP_F64_GT: int = 29
+const OP_F64_LE: int = 30
+const OP_F64_GE: int = 31
+const OP_I32_NEG: int = 32
+const OP_F64_NEG: int = 33
+const OP_BOOL_NOT: int = 34
+const OP_I32_AND: int = 35
+const OP_I32_OR: int = 36
+const OP_BOOL_AND: int = 37
+const OP_BOOL_OR: int = 38
+const OP_JUMP: int = 40
+const OP_JUMP_IF_FALSE: int = 41
+const OP_JUMP_IF_TRUE: int = 42
+const OP_STR_EQ: int = 43
+const OP_NEQ_INT: int = 44
+const OP_I64_SUB: int = 45
+const OP_I64_MUL: int = 46
+const OP_I64_DIV: int = 47
+const OP_CALL: int = 50
+const OP_RETURN: int = 52
+const OP_RETURN_VOID: int = 53
+const OP_STRUCT_NEW: int = 60
+const OP_FIELD_LOAD: int = 61
+const OP_FIELD_STORE: int = 62
+const OP_ARRAY_NEW: int = 63
+const OP_INDEX_GET: int = 64
+const OP_INDEX_SET: int = 65
+const OP_MAP_NEW: int = 66
+const OP_NEWZ: int = 70
+const OP_FREE: int = 71
+const OP_OWNERSHIP_MOVE: int = 72
+const OP_BORROW_CHECK: int = 73
+const OP_DEREF: int = 74
+const OP_ALIVE_CHECK: int = 75
+const OP_DUP: int = 80
+const OP_POP: int = 81
+const OP_ADDRESS_OF: int = 82
+const OP_PROPERTY_GET: int = 83
+const OP_POINTER_MEMBER: int = 84
+const OP_SCOPE_DROP: int = 85
+const OP_SYS_ARGV: int = 86
+const OP_SYSTEM: int = 87
+const OP_FILE_READ: int = 88
+const OP_FILE_WRITE: int = 89
+const OP_FILE_EXISTS: int = 90
+const OP_NOOP: int = 91
+const OP_IMPORT: int = 92
+const OP_HALT: int = 93
+const OP_STR_CONCAT: int = 94
+
+# ---- 二进制写入工具 ----
+
+# 将整数转换为大端 4 字节字符串
+func write_u32_be(v: int) -> var:
+    var result = ""
+    result = result + chr(v / 16777216 % 256)
+    result = result + chr(v / 65536 % 256)
+    result = result + chr(v / 256 % 256)
+    result = result + chr(v % 256)
+    return result
+
+# 写入大端 2 字节
+func write_u16_be(v: int) -> var:
+    var result = ""
+    result = result + chr(v / 256 % 256)
+    result = result + chr(v % 256)
+    return result
+
+# 写入单字节
+func write_u8(v: int) -> var:
+    return chr(v % 256)
+
+# 写入字符串（长度前缀 + 内容）
+func write_string(s: var) -> var:
+    return write_u32_be(len(s)) + s
+
+# ---- 类型序列化 ----
+# 序列化一个类型到二进制字符串
+# type_tag 是类型标签（0=void, 1=int, 2=float, 3=bool, 4=string, 5=struct_name, ...）
+# type_name 是结构体名（仅用于 STRUCT 类型）
+func serialize_type(type_tag: int, type_name: var) -> var:
+    var result = write_u8(type_tag)
+    # 对于结构体类型，额外写入名称
+    if type_tag == TYPE_STRUCT:
+        result = result + write_string(type_name)
+    return result
+
+# ---- 指令序列化 ----
+# 将一条指令序列化为二进制格式
+# 返回 (op_tag, payload_string) 的编码结果
+func serialize_instruction(op_tag: int, payload: var) -> var:
+    var result = write_u8(op_tag)
+    result = result + write_u32_be(len(payload))
+    result = result + payload
+    return result
+
+# 创建无参数的指令（payload 为空）
+func serialize_inst_noarg(op_tag: int) -> var:
+    return serialize_instruction(op_tag, "")
+
+# 创建带单个整数参数的指令
+func serialize_inst_int_arg(op_tag: int, arg: int) -> var:
+    return serialize_instruction(op_tag, itoa(arg))
+
+# 创建带单个字符串参数的指令
+func serialize_inst_str_arg(op_tag: int, arg: var) -> var:
+    return serialize_instruction(op_tag, arg)
+
+# ---- 函数/模块序列化 ----
+
+# 序列化一个完整的模块
+# 参数：
+#   func_count - 函数数量
+#   struct_count - 结构体数量
+#   func_data - 所有函数的序列化数据（已拼接）
+#   struct_data - 所有结构体的序列化数据（已拼接）
+#   linkage_data - 链接表数据（已拼接）
+func serialize_module_header(func_count: int, struct_count: int) -> var:
+    return write_u32_be(func_count) + write_u32_be(struct_count)
+
+# 序列化链接表条目
+func serialize_linkage_entry(func_id: int, is_external: bool, ext_name: var) -> var:
+    var result = write_u32_be(func_id)
+    if is_external:
+        result = result + write_u8(1)
+        result = result + write_string(ext_name)
+    else:
+        result = result + write_u8(0)
+    return result
+
+# 序列化函数头
+func serialize_func_header(name: var, id: int, param_count: int, has_return: bool, return_type_tag: int, return_type_name: var) -> var:
+    var result = write_string(name)
+    result = result + write_u32_be(id)
+    result = result + write_u32_be(param_count)
+    if has_return:
+        result = result + write_u8(1)
+    else:
+        result = result + write_u8(0)
+    result = result + serialize_type(return_type_tag, return_type_name)
+    return result
+
+# 序列化参数
+func serialize_param(name: var, type_tag: int, type_name: var) -> var:
+    return write_string(name) + serialize_type(type_tag, type_name)
+
+# 序列化局部变量类型表
+func serialize_local_types(local_ids: var, local_type_tags: var, local_type_names: var) -> var:
+    # 参数是数组：local_ids = [id1, id2, ...]
+    # local_type_tags = [tag1, tag2, ...]
+    # local_type_names = [name1, name2, ...]
+    var count = len(local_ids)
+    var result = write_u32_be(count)
+    var i = 0
+    while i < count:
+        result = result + write_u32_be(local_ids[i])
+        result = result + serialize_type(local_type_tags[i], local_type_names[i])
+        i = i + 1
+    return result

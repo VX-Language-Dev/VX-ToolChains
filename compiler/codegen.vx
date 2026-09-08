@@ -1,0 +1,434 @@
+# ============================================================
+# codegen.vx — VX 自举编译器代码生成器
+# 将 AST 转换为 TypeIR 指令序列
+# ============================================================
+
+import compiler.typeir
+import std.error
+
+# ---- 操作码和类型常量从 typeir.vx 导入 ----
+
+# ---- 代码生成器类 ----
+class CodeGen:
+    # 模块级数据
+    func_list: var
+    func_id_counter: int
+    linkage: var
+    # 结构体/类类型注册表
+    struct_types: var
+    # 当前函数数据
+    local_ids: var
+    local_counter: int
+    instructions: var
+    has_return: bool
+    label_counter: int
+    current_func_name: str
+    # 循环栈: 每条记录为 {"start": start_label, "end": end_label}
+    loop_stack: var
+    loop_stack_size: int
+    
+    func new() -> var:
+        var g = new CodeGen()
+        g.func_list = []
+        g.func_id_counter = 0
+        g.linkage = {}
+        g.struct_types = {}
+        g.local_ids = {}
+        g.local_counter = 0
+        g.instructions = []
+        g.has_return = false
+        g.label_counter = 0
+        g.current_func_name = ""
+        g.loop_stack = []
+        g.loop_stack_size = 0
+        return g
+    
+    func loop_push(start: str, end: str):
+        if self.loop_stack_size >= len(self.loop_stack):
+            self.loop_stack = self.loop_stack + [{"start": start, "end": end}]
+        else:
+            self.loop_stack[self.loop_stack_size] = {"start": start, "end": end}
+        self.loop_stack_size = self.loop_stack_size + 1
+    
+    func loop_pop():
+        self.loop_stack_size = self.loop_stack_size - 1
+    
+    func loop_top() -> var:
+        if self.loop_stack_size > 0:
+            return self.loop_stack[self.loop_stack_size - 1]
+        return nil
+    
+    func reset_func_state():
+        self.local_ids = {}
+        self.local_counter = 0
+        self.instructions = []
+        self.has_return = false
+        self.label_counter = 0
+        self.loop_stack = []
+    
+    func new_label() -> str:
+        self.label_counter = self.label_counter + 1
+        return "L" + itoa(self.label_counter)
+    
+    func alloc_local(name: str) -> int:
+        if self.local_ids.has_key(name):
+            return self.local_ids[name]
+        var id = self.local_counter
+        self.local_ids[name] = id
+        self.local_counter = self.local_counter + 1
+        return id
+    
+    func register_struct(name: str, fields: var):
+        self.struct_types[name] = {"fields": fields}
+    
+    func get_struct_field_index(type_name: str, field_name: str) -> int:
+        if not self.struct_types.has_key(type_name):
+            return -1
+        var fields = self.struct_types[type_name]["fields"]
+        var i = 0
+        while i < len(fields):
+            if fields[i]["name"] == field_name:
+                return i
+            i = i + 1
+        return -1
+    
+    func emit(op: int, args: str):
+        self.instructions = self.instructions + [{"op": op, "args": args}]
+    
+    func emit_noarg(op: int):
+        self.emit(op, "")
+    
+    func emit_int(op: int, value: int):
+        self.emit(op, itoa(value))
+    
+    func emit_str(op: int, value: str):
+        self.emit(op, value)
+    
+    # ---- 标签标记 ----
+    # 发射标签标记指令 (OP_NOOP with Args=[label_name])
+    # Go 翻译器通过扫描 OP_NOOP 指令构建 label→index 映射
+    func emit_label(name: str):
+        self.emit(OP_NOOP, name)
+    
+    # ---- 表达式代码生成 ----
+    func gen_expr(node: var):
+        if node == nil:
+            return
+        
+        var node_type = node["type"]
+        
+        if node_type == "int":
+            self.emit(OP_CONST_INT, "i" + node["value"])
+        
+        elif node_type == "float":
+            self.emit(OP_CONST_FLOAT, "f" + node["value"])
+        
+        elif node_type == "string":
+            self.emit(OP_CONST_STRING, "s" + node["value"])
+        
+        elif node_type == "bool":
+            self.emit(OP_CONST_BOOL, "b" + node["value"])
+        
+        elif node_type == "nil":
+            self.emit(OP_CONST_NIL, "")
+        
+        elif node_type == "ident":
+            var vid = self.alloc_local(node["name"])
+            self.emit(OP_LOAD_VAR, itoa(vid))
+        
+        elif node_type == "property":
+            # obj.prop → 先计算 obj 引用, 然后 FIELD_LOAD
+            self.gen_expr(node["obj"])
+            var prop_name = node["prop"]
+            # 尝试推断类型并查找字段索引
+            # 简化: 使用属性名作为字符串参数
+            self.emit(OP_FIELD_LOAD, prop_name)
+        
+        elif node_type == "new":
+            # new ClassName() → 分配结构体
+            self.emit(OP_NEWZ, node["class_name"])
+        
+        elif node_type == "binary":
+            self.gen_expr(node["left"])
+            self.gen_expr(node["right"])
+            var op = node["op"]
+            if op == "+":
+                self.emit_noarg(OP_I32_ADD)
+            elif op == "-":
+                self.emit_noarg(OP_I32_SUB)
+            elif op == "*":
+                self.emit_noarg(OP_I32_MUL)
+            elif op == "/":
+                self.emit_noarg(OP_I32_DIV)
+            elif op == "%":
+                self.emit_noarg(OP_I32_MOD)
+            elif op == "==":
+                self.emit_noarg(OP_I32_EQ)
+            elif op == "!=":
+                self.emit_noarg(OP_I32_NEQ)
+            elif op == "<":
+                self.emit_noarg(OP_I32_LT)
+            elif op == ">":
+                self.emit_noarg(OP_I32_GT)
+            elif op == "<=":
+                self.emit_noarg(OP_I32_LE)
+            elif op == ">=":
+                self.emit_noarg(OP_I32_GE)
+            elif op == "and":
+                self.emit_noarg(OP_BOOL_AND)
+            elif op == "or":
+                self.emit_noarg(OP_BOOL_OR)
+        
+        elif node_type == "unary":
+            self.gen_expr(node["expr"])
+            var op = node["op"]
+            if op == "-":
+                self.emit_noarg(OP_I32_NEG)
+            elif op == "!":
+                self.emit_noarg(OP_BOOL_NOT)
+        
+        elif node_type == "call":
+            var callee = node["callee"]
+            var args = node["args"]
+            var i = 0
+            while i < len(args):
+                self.gen_expr(args[i])
+                i = i + 1
+            self.emit(OP_CALL, "f;" + callee)
+        
+        elif node_type == "type_cast":
+            pass
+    
+    # ---- 语句代码生成 ----
+    func gen_stmt(node: var):
+        if node == nil:
+            return
+        
+        var node_type = node["type"]
+        
+        if node_type == "var_decl":
+            var name = node["name"]
+            self.gen_expr(node["init"])
+            var vid = self.alloc_local(name)
+            self.emit(OP_STORE_VAR, itoa(vid))
+        
+        elif node_type == "assign":
+            var target = node["target"]
+            self.gen_expr(node["value"])
+            var vid = self.alloc_local(target)
+            self.emit(OP_STORE_VAR, itoa(vid))
+        
+        elif node_type == "return":
+            if node["value"] != nil:
+                self.gen_expr(node["value"])
+                self.emit_noarg(OP_RETURN)
+            else:
+                self.emit_noarg(OP_RETURN_VOID)
+            self.has_return = true
+        
+        elif node_type == "break":
+            var loop = self.loop_top()
+            if loop != nil:
+                self.emit(OP_JUMP, loop["end"])
+            else:
+                error("break outside loop")
+        
+        elif node_type == "continue":
+            var loop = self.loop_top()
+            if loop != nil:
+                self.emit(OP_JUMP, loop["start"])
+            else:
+                error("continue outside loop")
+        
+        elif node_type == "if":
+            self.gen_expr(node["cond"])
+            var else_label = self.new_label()
+            var end_label = self.new_label()
+            self.emit(OP_JUMP_IF_FALSE, else_label)
+            self.gen_block(node["then"])
+            self.emit(OP_JUMP, end_label)
+            self.emit_label(else_label)
+            var elifs = node["elifs"]
+            var i = 0
+            while i < len(elifs):
+                var elif_cond = elifs[i][0]
+                var elif_body = elifs[i][1]
+                self.gen_expr(elif_cond)
+                var next_elif_label = self.new_label()
+                self.emit(OP_JUMP_IF_FALSE, next_elif_label)
+                self.gen_block(elif_body)
+                self.emit(OP_JUMP, end_label)
+                self.emit_label(next_elif_label)
+                i = i + 1
+            if node["else"] != nil:
+                self.gen_block(node["else"])
+            self.emit_label(end_label)
+        
+        elif node_type == "while":
+            var start_label = self.new_label()
+            var end_label = self.new_label()
+            # 将循环信息入栈 (用于 break/continue)
+            self.loop_push(start_label, end_label)
+            self.emit_label(start_label)
+            self.gen_expr(node["cond"])
+            self.emit(OP_JUMP_IF_FALSE, end_label)
+            self.gen_block(node["body"])
+            self.emit(OP_JUMP, start_label)
+            self.emit_label(end_label)
+            # 循环结束，出栈
+            self.loop_pop()
+        
+        elif node_type == "for":
+            # for-in 循环: for var_name in iterable { body }
+            var var_name = node["var"]
+            var iterable = node["iterable"]
+            var body = node["body"]
+            
+            # 1) 计算可迭代对象并存临时变量
+            self.gen_expr(iterable)
+            var iter_var = "__for_iter_" + itoa(self.label_counter)
+            var iter_vid = self.alloc_local(iter_var)
+            self.emit(OP_STORE_VAR, itoa(iter_vid))
+            
+            # 2) 初始化索引为 0
+            var idx_var = "__for_idx_" + itoa(self.label_counter)
+            var idx_vid = self.alloc_local(idx_var)
+            self.emit(OP_CONST_INT, "i0")
+            self.emit(OP_STORE_VAR, itoa(idx_vid))
+            
+            var start_label = self.new_label()
+            var end_label = self.new_label()
+            
+            # 将循环信息入栈 (用于 break/continue)
+            self.loop_push(start_label, end_label)
+            
+            # 3) 循环开始: 检查索引 < 100000 (防止无限循环)
+            self.emit_label(start_label)
+            self.emit(OP_LOAD_VAR, itoa(idx_vid))
+            self.emit(OP_CONST_INT, "i100000")
+            self.emit_noarg(OP_I32_LT)
+            self.emit(OP_JUMP_IF_FALSE, end_label)
+            
+            # 4) elem = iterable[idx]
+            self.emit(OP_LOAD_VAR, itoa(iter_vid))
+            self.emit(OP_LOAD_VAR, itoa(idx_vid))
+            self.emit_noarg(OP_INDEX_GET)
+            
+            # 5) 存入循环变量
+            var var_vid = self.alloc_local(var_name)
+            self.emit(OP_STORE_VAR, itoa(var_vid))
+            
+            # 6) 执行循环体
+            self.gen_block(body)
+            
+            # 7) 索引自增并跳回
+            self.emit(OP_LOAD_VAR, itoa(idx_vid))
+            self.emit(OP_CONST_INT, "i1")
+            self.emit_noarg(OP_I32_ADD)
+            self.emit(OP_STORE_VAR, itoa(idx_vid))
+            
+            self.emit(OP_JUMP, start_label)
+            self.emit_label(end_label)
+            
+            # 循环结束，出栈
+            self.loop_pop()
+        
+        elif node_type == "expr_stmt":
+            self.gen_expr(node["expr"])
+            self.emit_noarg(OP_POP)
+    
+    func gen_block(stmts: var):
+        var i = 0
+        while i < len(stmts):
+            self.gen_stmt(stmts[i])
+            i = i + 1
+    
+    # ---- 函数代码生成 ----
+    func gen_func(func_node: var):
+        var name = func_node["name"]
+        var params = func_node["params"]
+        var ret_type = func_node["ret_type"]
+        var body = func_node["body"]
+        
+        self.current_func_name = name
+        self.reset_func_state()
+        
+        var i = 0
+        while i < len(params):
+            var pname = params[i][0]
+            self.alloc_local(pname)
+            i = i + 1
+        
+        self.gen_block(body)
+        
+        if not self.has_return and ret_type != "void":
+            self.emit(OP_CONST_INT, "i0")
+            self.emit_noarg(OP_RETURN)
+        
+        var func_data = {
+            "name": name,
+            "id": self.func_id_counter,
+            "ret_type": ret_type,
+            "param_count": len(params),
+            "params": params,
+            "instructions": self.instructions,
+            "local_count": self.local_counter
+        }
+        
+        self.func_list = self.func_list + [func_data]
+        self.func_id_counter = self.func_id_counter + 1
+    
+    func gen_extern(extern_node: var):
+        var name = extern_node["name"]
+        var params = extern_node["params"]
+        var ret_type = extern_node["ret_type"]
+        
+        self.linkage[name] = {
+            "is_external": true,
+            "name": name,
+            "params": params,
+            "ret_type": ret_type
+        }
+    
+    # ---- 模块生成入口 ----
+    func generate_module(module: var) -> var:
+        # 第一步: 注册所有结构体类型
+        if module.has_key("classes"):
+            var classes = module["classes"]
+            var ci = 0
+            while ci < len(classes):
+                var cls = classes[ci]
+                self.register_struct(cls["name"], cls["fields"])
+                ci = ci + 1
+        
+        if module.has_key("structs"):
+            var structs = module["structs"]
+            var si = 0
+            while si < len(structs):
+                var st = structs[si]
+                self.register_struct(st["name"], st["fields"])
+                si = si + 1
+        
+        # 第二步: 生成所有函数代码
+        var funcs = module["funcs"]
+        var i = 0
+        while i < len(funcs):
+            var func_node = funcs[i]
+            if func_node["type"] == "func":
+                self.gen_func(func_node)
+            elif func_node["type"] == "extern":
+                self.gen_extern(func_node)
+            i = i + 1
+        
+        return {
+            "error": "",
+            "data": self.func_list,
+            "linkage": self.linkage,
+            "struct_types": self.struct_types,
+            "serialized_size": 0
+        }
+
+# ---- 公共接口 ----
+func generate_module(module: var) -> var:
+    var g = CodeGen.new()
+    return g.generate_module(module)

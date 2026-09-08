@@ -1,0 +1,26 @@
+{
+    "name": "hello",
+    "target": "x86_64-unknown-unknown",
+    "functions": [
+        {
+            "id": 0,
+            "name": "main",
+            "return_type": "int",
+            "body": [
+                {"op": "const_string", "args": ["Hello, Bootstrap World!\n"]},
+                {"op": "call", "args": ["1", ";out", "string"]},
+                {"op": "const_int", "args": ["0"]},
+                {"op": "return", "args": ["int"]}
+            ]
+        },
+        {
+            "id": 1,
+            "name": "ext_out",
+            "return_type": "void",
+            "params": [{"name": "s", "type": "string"}]
+        }
+    ],
+    "linkage": {
+        "1": {"external": true, "ext_name": "out"}
+    }
+}

@@ -1,0 +1,254 @@
+# ============================================================
+# VX 自举编译器 —— 主入口
+# 从 VX 源码生成 VXOBJ v4 中间文件
+#
+# 编译流水线:
+#   .vx 源码 → Lexer → Token流
+#   → Parser → AST
+#   → CodeGen → TypeIR
+#   → VXOBJ Writer → .vxobj
+#
+# 自举路径:
+#   1. 用 Go vxc 编译本文件 → vxc_bootstrap.vxobj
+#   2. 用 vlnk 链接 → vxc_bootstrap (原生可执行文件)
+#   3. 用 vxc_bootstrap 编译自身 → vxc_self.vxobj
+#   4. 验证: vxc_bootstrap 和 vxc_self 行为一致
+# ============================================================
+
+import compiler.lexer
+import compiler.parser
+import compiler.codegen
+import compiler.vxobj
+
+# ---- 全局配置 ----
+var TARGET: str = "x86_64-unknown-unknown"
+var OUTPUT: str = "out.vxobj"
+var VERBOSE: bool = false
+
+# ---- import 路径解析 ----
+func is_file_readable(path: str) -> bool:
+    var content = file_read(path)
+    if content != nil:
+        return true
+    return false
+
+func resolve_import_path(import_path: str, source_dir: str) -> str:
+    var path = ""
+    var i = 0
+    while i < len(import_path):
+        var c = import_path[i]
+        if c == ".":
+            path = path + "/"
+        else:
+            path = path + c
+        i = i + 1
+    path = path + ".vx"
+    
+    # 尝试: source_dir/path
+    if source_dir != "":
+        var full = source_dir + "/" + path
+        if is_file_readable(full):
+            return full
+    
+    # 尝试: path (相对于 CWD)
+    if is_file_readable(path):
+        return path
+    
+    # 尝试: std/path (对于 std.* 导入)
+    if is_file_readable("std/" + path):
+        return "std/" + path
+    
+    # 尝试: ../path
+    if is_file_readable("../" + path):
+        return "../" + path
+    
+    return path
+
+# 获取目录部分: "compiler/vxc.vx" -> "compiler"
+func get_source_dir(file_path: str) -> str:
+    var dir = ""
+    var last_slash = -1
+    var i = 0
+    while i < len(file_path):
+        if file_path[i] == "/":
+            last_slash = i
+        i = i + 1
+    if last_slash >= 0:
+        var j = 0
+        while j < last_slash:
+            dir = dir + file_path[j]
+            j = j + 1
+    return dir
+
+# ---- 已知标准库导入的 extern 存根 ----
+func get_known_std_externs(package_name: str) -> var:
+    var result = []
+    if package_name == "std.error" or package_name == "error":
+        result = result + [{"type": "extern", "name": "error", "params": [["msg", "string"]], "ret_type": "void"}]
+    return result
+
+# ---- 主函数 ----
+func main():
+    var args = sys_argv()
+    var arg_count = len(args)
+    var source_file: str = ""
+    
+    # 解析命令行参数
+    var i = 1
+    while i < arg_count:
+        var arg = args[i]
+        if arg == "-o":
+            if i + 1 < arg_count:
+                OUTPUT = args[i + 1]
+                i = i + 1
+        elif arg == "--target":
+            if i + 1 < arg_count:
+                TARGET = args[i + 1]
+                i = i + 1
+        elif arg == "-v" or arg == "--verbose":
+            VERBOSE = true
+        elif arg == "-h" or arg == "--help":
+            print_help()
+            return
+        else:
+            if source_file == "":
+                source_file = arg
+        i = i + 1
+    
+    if source_file == "":
+        print_help()
+        return
+    
+    if VERBOSE:
+        out("VX Self-Bootstrapping Compiler v0.1\n")
+        out("  Source: " + source_file + "\n")
+    
+    var source_dir = get_source_dir(source_file)
+    
+    # 阶段 1: 读取主源码
+    var source = file_read(source_file)
+    if source == nil:
+        out("Error: cannot read source file: " + source_file + "\n")
+        return
+    if VERBOSE:
+        out("  Read " + len(source) + " bytes\n")
+    
+    # 阶段 2: 词法分析
+    var tokens = lexer.tokenize(source)
+    if tokens.error != "":
+        out("Lexer error: " + tokens.error + "\n")
+        return
+    if VERBOSE:
+        out("  Lexer: " + tokens.count + " tokens\n")
+    
+    # 阶段 3: 语法分析
+    var module = parser.parse_program(tokens, source_file)
+    if module.error != "":
+        out("Parser error: " + module.error + "\n")
+        return
+    if VERBOSE:
+        out("  Parser: " + module.func_count + " functions\n")
+    
+    # 阶段 3.5: 处理 import 语句
+    var all_funcs = module.funcs
+    var all_classes = module.classes
+    var all_structs = module.structs
+    var all_top_vars = module.top_vars
+    
+    if module.has_key("imports") and len(module.imports) > 0:
+        var import_idx = 0
+        while import_idx < len(module.imports):
+            var imp = module.imports[import_idx]
+            var imp_path = imp["path"]
+            
+            if VERBOSE:
+                out("  Processing import: " + imp_path + "\n")
+            
+            # 检查是否是已知的 std 库导入 - 用存根替代
+            var known_stubs = get_known_std_externs(imp_path)
+            if len(known_stubs) > 0:
+                if VERBOSE:
+                    out("    Using extern stubs for: " + imp_path + "\n")
+                var si = 0
+                while si < len(known_stubs):
+                    all_funcs = all_funcs + [known_stubs[si]]
+                    si = si + 1
+                import_idx = import_idx + 1
+                continue
+            
+            # 解析实际文件
+            var resolved = resolve_import_path(imp_path, source_dir)
+            if VERBOSE:
+                out("    Resolved: " + resolved + "\n")
+            
+            var imp_source = file_read(resolved)
+            if imp_source == nil:
+                out("Warning: cannot read import: " + imp_path + " (tried: " + resolved + ")\n")
+                import_idx = import_idx + 1
+                continue
+            
+            var imp_tokens = lexer.tokenize(imp_source)
+            if imp_tokens.error != "":
+                out("Lexer error in import " + imp_path + ": " + imp_tokens.error + "\n")
+                import_idx = import_idx + 1
+                continue
+            
+            var imp_module = parser.parse_program(imp_tokens, resolved)
+            if imp_module.error != "":
+                out("Parser error in import " + imp_path + ": " + imp_module.error + "\n")
+                import_idx = import_idx + 1
+                continue
+            
+            if VERBOSE:
+                out("    Parsed: " + imp_module.func_count + " functions\n")
+            
+            # 合并函数
+            var f_i = 0
+            while f_i < len(imp_module.funcs):
+                all_funcs = all_funcs + [imp_module.funcs[f_i]]
+                f_i = f_i + 1
+            
+            # 合并类
+            var c_i = 0
+            while c_i < len(imp_module.classes):
+                all_classes = all_classes + [imp_module.classes[c_i]]
+                c_i = c_i + 1
+            
+            # 合并结构体
+            var s_i = 0
+            while s_i < len(imp_module.structs):
+                all_structs = all_structs + [imp_module.structs[s_i]]
+                s_i = s_i + 1
+            
+            import_idx = import_idx + 1
+    
+    # 构建合并后的模块 (单行 dict 字面量, Go vxc 不支持多行)
+    var merged_module = {"error": "", "funcs": all_funcs, "classes": all_classes, "structs": all_structs, "top_vars": all_top_vars, "func_count": len(all_funcs), "name": source_file}
+    
+    # 阶段 4: TypeIR 代码生成
+    var typeir = codegen.generate_module(merged_module)
+    if typeir.error != "":
+        out("CodeGen error: " + typeir.error + "\n")
+        return
+    if VERBOSE:
+        out("  CodeGen generated " + len(typeir.data) + " functions\n")
+    
+    # 阶段 5: 写入 VXOBJ
+    var vxobj_data = vxobj.write_vxobj(typeir.data, TARGET)
+    if vxobj_data == nil:
+        out("Error: VXOBJ serialization failed\n")
+        return
+    
+    file_write(OUTPUT, vxobj_data)
+    out("  Written: " + OUTPUT + " (" + len(vxobj_data) + " bytes)\n")
+    if VERBOSE:
+        out("Done.\n")
+
+func print_help():
+    out("VX Self-Bootstrapping Compiler v0.1\n")
+    out("Usage: vxc [options] <source.vx>\n")
+    out("Options:\n")
+    out("  -o <file>       Output VXOBJ file (default: out.vxobj)\n")
+    out("  --target <triple> Target triple (default: x86_64-unknown-unknown)\n")
+    out("  -v, --verbose   Verbose output\n")
+    out("  -h, --help      Show this help\n")

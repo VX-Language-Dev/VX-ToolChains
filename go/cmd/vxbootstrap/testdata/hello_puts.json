@@ -1,0 +1,26 @@
+{
+    "name": "hello_puts",
+    "target": "x86_64-unknown-unknown",
+    "functions": [
+        {
+            "id": 0,
+            "name": "main",
+            "return_type": "int",
+            "body": [
+                {"op": "const_string", "args": ["Hello from Bootstrap VX!"]},
+                {"op": "call", "args": [";puts", "string"]},
+                {"op": "const_int", "args": ["0"]},
+                {"op": "return", "args": ["int"]}
+            ]
+        },
+        {
+            "id": 1,
+            "name": "ext_puts",
+            "return_type": "int",
+            "params": [{"name": "s", "type": "string"}]
+        }
+    ],
+    "linkage": {
+        "1": {"external": true, "ext_name": "puts"}
+    }
+}
