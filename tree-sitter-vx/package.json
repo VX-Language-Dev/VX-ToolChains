@@ -1,0 +1,21 @@
+{
+  "name": "tree-sitter-vx",
+  "version": "0.1.0",
+  "description": "VX (adVanced eXecutable language) grammar for tree-sitter",
+  "keywords": [
+    "parser",
+    "tree-sitter",
+    "vx",
+    "incremental"
+  ],
+  "license": "MIT",
+  "tree-sitter": [
+    {
+      "scope": "source.vx",
+      "file-types": [
+        "vx"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ]
+}

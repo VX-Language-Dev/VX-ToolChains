@@ -66,3 +66,6 @@ zig-out/
 # Session-local TODO files
 *_TODO.md
 .pixa/
+
+# C++ (CMake+Ninja) 构建产物
+build/

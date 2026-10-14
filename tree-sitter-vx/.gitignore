@@ -1,0 +1,15 @@
+# 构建产物（src/parser.c 等生成文件遵循 tree-sitter 官方惯例入库）
+/src/tree_sitter/
+*.dylib
+*.so
+*.dll
+*.wasm
+
+# Node
+node_modules/
+package-lock.json
+
+# 编辑器
+.idea/
+.vscode/
+*.swp

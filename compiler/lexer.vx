@@ -300,7 +300,7 @@ class Lexer:
                 continue
             var c = self.ch()
             var n = self.peek()
-            if c == "\": self.advance(); self.add(T_STRING, self.read_string("\""))
+            if c == "\"": self.advance(); self.add(T_STRING, self.read_string("\""))
             elif c == "'": self.advance(); self.add(T_STRING, self.read_string("'"))
             elif is_digit(c):
                 var r = self.read_number()

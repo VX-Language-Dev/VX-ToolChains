@@ -1,5 +1,68 @@
 # CHANGELOG
 
+## v1.8.0 — 迁移至 C++ 重写、移除 Go 工具链 (2026-10-13)
+
+### 架构重构
+
+- **从 Go 迁移到 C++**：工具链正在使用 C++23 重写，采用 CMake + Ninja 构建系统
+- **移除 Go 工具链**：删除 `go/` 目录（82 个 Go 源文件）、Go 构建的二进制文件、`build.zig`、`.zig-cache`
+- **移除 Zig 构建系统**：`build.zig` 已废弃并删除
+- **构建系统**：统一使用 CMake + Ninja，Makefile 封装常用命令
+
+### 当前实现状态
+
+- ✅ **Util 基础库**：`vx::util::Arena`（线性分配器）、`vx::util::String`、`vx::util::fs`（文件系统工具）
+- 🚧 **编译器前端**（`compiler/` 目录，VX 源码，自举目标）
+- 🚧 **LSP 语言服务器**（`cpp_lsp/` 目录，C++ 实现）
+- 🚧 **编译器、链接器、包管理器、反编译器、格式化工具** —— C++ 实现开发中
+
+### 构建与测试
+
+- `make build` / `cmake --build build`：编译 Util 库与测试
+- `make test` / `ctest`：运行 C++ 单元测试
+- `make lint`：运行 cppcheck 静态分析
+- `make fmt`：使用 clang-format 格式化代码
+- `make check`：完整检查流水线
+
+### 文档更新
+
+- `README.md`：更新为描述 C++ 重写进度
+- `CONTRIBUTING.md`：更新为 C++ 开发流程
+- `INSTALL_SCRIPTS.md`：更新为 CMake 构建说明
+- `.gitignore`：更新构建产物忽略规则
+
+### 验证结果
+
+- `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel` 配置通过
+- `cmake --build build --config MinSizeRel` 编译通过
+- `ctest --output-on-failure` 全部测试通过
+
+---
+
+## v1.7.1 — 测试修复与文档更新 (2026-09-07)
+
+### 测试修复
+
+- **translator 测试**：修复 `ret i32` 断言，改为根据目标架构检查 `ret i64`（64 位平台）或 `ret i32`（32 位平台）
+- **translator 测试**：修复 macOS 上 `@main` 断言，改为检查 `@_main`（MachO 入口符号）
+- **compiler 测试**：修复 `extern` 声明语法，添加缺失的 `func` 关键字
+
+### 文档更新
+
+- `README.md`：版本号 v1.6.0 → v1.7.0，LSP 路径 `src/lsp/` → `go/cmd/vxlsp/`，项目结构修正
+- `CONTRIBUTING.md`：`make build` 描述修正为 Debug 构建，项目结构表修正
+- `INSTALL_SCRIPTS.md`：移除不存在的安装脚本引用，更新为 Makefile 构建说明
+- `BOOTSTRAP_IMPLEMENTATION.md`：路径修正，功能状态更新
+- `BOOTSTRAP_IMPROVEMENTS.md`：功能状态和目标修正
+- `FIX_ANALYSIS_TODO.md`：更新为 Go 工具链，添加最新修复条目
+
+### 验证结果
+
+- `make build` 全部 7 个二进制编译通过
+- `make test` 全部通过（含 translator 和 compiler 测试）
+
+---
+
 ## v1.7.0 — 迁移至 Go 语言工具链 (2026-07-28)
 
 ### 工具链迁移

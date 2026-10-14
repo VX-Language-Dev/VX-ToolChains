@@ -1,116 +1,55 @@
-# VX Toolkit Installation Scripts
+# VX Toolkit 安装说明
 
-Two platform-specific installation scripts have been created to automate the build and installation process.
+本项目使用 Makefile 驱动构建系统，基于 CMake + Ninja。
 
-## Files Created
-
-1. **unix-unixlike-install-vxtoolkit.bash** - For Unix and Unix-like systems (Linux, macOS, BSD, Solaris)
-2. **nt-install-vxtoolkit.bat** - For Windows systems (Windows 7, 8, 10, 11, Server)
-
-## Features
-
-Both scripts implement the following functionality:
-
-### 1. Platform Auto-Detection
-- Automatically identifies the current operating system and architecture
-- Unix script detects: Linux, macOS, FreeBSD, OpenBSD, NetBSD, Solaris
-- Windows script detects: x86, x86_64, ARM64
-
-### 2. Project Root Verification
-- Checks for `go.mod` in current directory
-- Verifies `go/` directory exists
-
-### 3. Go Environment Check & Installation
-- Detects if Go is already installed
-- If installed: proceeds directly to build
-- If not installed: automatically downloads and installs Go 1.21+
-  - Unix: Downloads from go.dev and installs to /usr/local/go
-  - Windows: Downloads MSI installer or zip archive and extracts locally
-
-### 4. Build Process
-- Executes `cd go && make build` to compile all binaries
-- Provides progress feedback and error handling
-
-### 5. Artifact Installation
-- Creates `toolkit/` directory in project root
-- Moves all compiled Go binaries to `toolkit/`:
-  - `vxc` / `vxc.exe` — VX 编译器
-  - `vlnk` / `vlnk.exe` — 原生链接器
-  - `vpm` / `vpm.exe` — 包管理器
-  - `vxde` / `vxde.exe` — 反编译器
-  - `vfmt` / `vfmt.exe` — 格式化工具
-
-### 6. User Feedback
-- Color-coded output (Unix) for better readability
-- Clear success/error messages
-- Post-installation summary with:
-  - Installation location
-  - PATH setup instructions
-  - List of available commands
-
-## Usage
-
-### Unix/Linux/macOS
+## 构建工具链
 
 ```bash
-# Make the script executable (first time only)
-chmod +x unix-unixlike-install-vxtoolkit.bash
+# 构建 Util 层库与测试
+make build
 
-# Run the installer
-./unix-unixlike-install-vxtoolkit.bash
+# 或直接使用 CMake
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
+cmake --build build --config MinSizeRel
 ```
 
-### Windows
+构建产物位于 `build/` 目录：
+- `vx_util_tests` — Util 层单元测试可执行文件
 
-```cmd
-# Run from Command Prompt or PowerShell
-nt-install-vxtoolkit.bat
-```
+> 注：C++ 版本目前仅实现 Util 层（内存分配器、字符串、文件系统），编译器、链接器、包管理器等工具正在开发中。
 
-## Error Handling
+## 安装到系统
 
-Both scripts include comprehensive error handling:
-
-- **Project root not found**: Exits with clear message about running from correct directory
-- **Go not found**: Automatically installs Go 1.21+
-- **Build failure**: Stops and displays compiler errors
-- **Missing artifacts**: Warns about missing binaries but continues with available ones
-- **Cleanup on error**: Unix script includes trap handler to clean up on failure
-
-## Post-Installation
-
-After successful installation, add the toolkit to your PATH:
-
-### Unix/Linux/macOS
 ```bash
-export PATH="$PATH:$(pwd)/toolkit"
+# 安装到 ~/.local/bin
+make install
+
+# 确保 ~/.local/bin 在 PATH 中
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Windows
-```cmd
-set "PATH=%PATH%;%CD%\toolkit"
-```
+## 卸载
 
-To make this permanent, add the export/set command to your shell profile or system environment variables.
-
-## Requirements
-
-- **Unix**: bash, curl (for Go installation)
-- **Windows**: curl (for Go installation)
-- Both scripts will install Go if not present
-
-## Troubleshooting
-
-### Unix Script
-If you encounter permission errors:
 ```bash
-chmod +x unix-unixlike-install-vxtoolkit.bash
+make uninstall
 ```
 
-### Windows Script
-If Go is not found after installation, add the Go binary directory to your system PATH.
+## 运行测试
 
-### Both Scripts
-- Ensure you're in the project root directory (where `Makefile` is located)
-- Check that you have internet connectivity for Go installation
-- Review error messages for specific build failures
+```bash
+make test          # 运行全部 C++ 单元测试
+make lint          # 运行 cppcheck 代码检查
+make check         # 完整检查（格式化 + lint + 测试）
+```
+
+## 清理
+
+```bash
+make clean         # 清理构建产物
+```
+
+## 开发环境要求
+
+- CMake 3.23+
+- Ninja 1.10+
+- 支持 C++23 的编译器（Clang 16+、GCC 13+、MSVC 19.35+）

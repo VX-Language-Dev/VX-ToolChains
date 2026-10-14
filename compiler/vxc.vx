@@ -21,17 +21,46 @@ import compiler.codegen
 import compiler.vxobj
 
 # ---- 全局配置 ----
+var VERSION: str = "v1.7.0"
 var TARGET: str = "x86_64-unknown-unknown"
 var OUTPUT: str = "out.vxobj"
 var VERBOSE: bool = false
+var COLOR_MODE: str = "always"
+
+# ---- ANSI 颜色 (VX 字符串转义不含 \x1b, 用 chr(27) 构造 ESC) ----
+var ESC: str = chr(27)
+var C_RESET: str = ESC + "[0m"
+var C_RED: str = ESC + "[31m"
+var C_YELLOW: str = ESC + "[33m"
+var C_GREEN: str = ESC + "[32m"
+var C_DIM: str = ESC + "[2m"
+var C_BOLD: str = ESC + "[1m"
+
+# ---- 输出层 ----
+# color_enabled 由 color_mode 决定: always/never
+func color_enabled() -> bool:
+    if COLOR_MODE == "never":
+        return false
+    return true
+
+func color(code: str, s: str) -> str:
+    if color_enabled():
+        return code + s + C_RESET
+    return s
+
+func err(msg: str):
+    out(C_RED + "error:" + C_RESET + " " + msg + "\n")
+
+func warn(msg: str):
+    out(C_YELLOW + "warning:" + C_RESET + " " + msg + "\n")
+
+func info(msg: str):
+    out(msg + "\n")
+
+func dim(msg: str):
+    out(color(C_DIM, msg) + "\n")
 
 # ---- import 路径解析 ----
-func is_file_readable(path: str) -> bool:
-    var content = file_read(path)
-    if content != nil:
-        return true
-    return false
-
 func resolve_import_path(import_path: str, source_dir: str) -> str:
     var path = ""
     var i = 0
@@ -43,25 +72,25 @@ func resolve_import_path(import_path: str, source_dir: str) -> str:
             path = path + c
         i = i + 1
     path = path + ".vx"
-    
-    # 尝试: source_dir/path
+
+    # source_dir/path (相对于源文件目录)
     if source_dir != "":
         var full = source_dir + "/" + path
-        if is_file_readable(full):
+        if file_exists(full):
             return full
-    
-    # 尝试: path (相对于 CWD)
-    if is_file_readable(path):
+
+    # path (相对于 CWD)
+    if file_exists(path):
         return path
-    
-    # 尝试: std/path (对于 std.* 导入)
-    if is_file_readable("std/" + path):
+
+    # std/path
+    if file_exists("std/" + path):
         return "std/" + path
-    
-    # 尝试: ../path
-    if is_file_readable("../" + path):
+
+    # ../path
+    if file_exists("../" + path):
         return "../" + path
-    
+
     return path
 
 # 获取目录部分: "compiler/vxc.vx" -> "compiler"
@@ -87,168 +116,239 @@ func get_known_std_externs(package_name: str) -> var:
         result = result + [{"type": "extern", "name": "error", "params": [["msg", "string"]], "ret_type": "void"}]
     return result
 
-# ---- 主函数 ----
-func main():
+# ---- 结构化参数解析 ----
+# 返回 {source: str, ok: bool, err: str}
+func parse_args() -> var:
     var args = sys_argv()
-    var arg_count = len(args)
-    var source_file: str = ""
-    
-    # 解析命令行参数
     var i = 1
+    var arg_count = len(args)
+    var source: str = ""
+    var out_arg: str = ""
+    var target_arg: str = ""
+    var verbose_arg: bool = false
+    var color_arg: str = ""
+    var version_arg: bool = false
+    var help_arg: bool = false
+    var errors: var = []
+
     while i < arg_count:
-        var arg = args[i]
-        if arg == "-o":
+        var arg = argv_arg(args, i)
+        if arg == "-o" or arg == "--output":
             if i + 1 < arg_count:
-                OUTPUT = args[i + 1]
+                out_arg = args[i + 1]
                 i = i + 1
+            else:
+                errors = errors + ["option " + arg + " requires an argument"]
         elif arg == "--target":
             if i + 1 < arg_count:
-                TARGET = args[i + 1]
+                target_arg = args[i + 1]
                 i = i + 1
+            else:
+                errors = errors + ["option --target requires an argument"]
         elif arg == "-v" or arg == "--verbose":
-            VERBOSE = true
+            verbose_arg = true
+        elif arg == "--color":
+            if i + 1 < arg_count:
+                color_arg = args[i + 1]
+                i = i + 1
+            else:
+                errors = errors + ["option --color requires an argument"]
+        elif arg == "--version":
+            version_arg = true
         elif arg == "-h" or arg == "--help":
-            print_help()
-            return
+            help_arg = true
+        elif arg == "--":
+            break
+        elif arg[0] == "-":
+            errors = errors + ["unknown option: " + arg]
         else:
-            if source_file == "":
-                source_file = arg
+            if source == "":
+                source = arg
+            else:
+                errors = errors + ["unexpected extra argument: " + arg]
         i = i + 1
-    
-    if source_file == "":
+
+    return {"source": source, "output": out_arg, "target": target_arg, "verbose": verbose_arg, "color": color_arg, "version": version_arg, "help": help_arg, "errors": errors, "ok": len(errors) == 0}
+
+# ---- 主函数 ----
+func main():
+    var parsed = parse_args()
+
+    if not parsed["ok"]:
+        err(parsed["errors"][0])
+        exit(1)
+
+    if parsed["help"]:
         print_help()
-        return
-    
-    if VERBOSE:
-        out("VX Self-Bootstrapping Compiler v0.1\n")
-        out("  Source: " + source_file + "\n")
-    
+        exit(0)
+
+    if parsed["version"]:
+        out("VX Self-Bootstrapping Compiler " + VERSION + "\n")
+        exit(0)
+
+    # 应用参数
+    if parsed["color"] != "":
+        var mode = parsed["color"]
+        if mode == "auto" or mode == "always" or mode == "never":
+            COLOR_MODE = mode
+        else:
+            err("invalid --color value: " + mode + " (expected auto|always|never)")
+            exit(2)
+    if parsed["output"] != "":
+        OUTPUT = parsed["output"]
+    if parsed["target"] != "":
+        TARGET = parsed["target"]
+    if parsed["verbose"]:
+        VERBOSE = true
+
+    var source_file: str = parsed["source"]
+    if source_file == "":
+        err("no source file specified")
+        print_help()
+        exit(2)
+
     var source_dir = get_source_dir(source_file)
-    
+
     # 阶段 1: 读取主源码
+    if not file_exists(source_file):
+        err("cannot read source file: " + source_file)
+        exit(1)
+
     var source = file_read(source_file)
     if source == nil:
-        out("Error: cannot read source file: " + source_file + "\n")
-        return
+        err("cannot read source file: " + source_file)
+        exit(1)
+
     if VERBOSE:
-        out("  Read " + len(source) + " bytes\n")
-    
+        out(C_GREEN + "Compiling" + C_RESET + " " + source_file + "\n")
+
     # 阶段 2: 词法分析
     var tokens = lexer.tokenize(source)
     if tokens.error != "":
-        out("Lexer error: " + tokens.error + "\n")
-        return
+        err("lexer error: " + tokens.error)
+        exit(1)
     if VERBOSE:
-        out("  Lexer: " + tokens.count + " tokens\n")
-    
+        dim("  lexer: " + str(tokens.count) + " tokens")
+
     # 阶段 3: 语法分析
     var module = parser.parse_program(tokens, source_file)
     if module.error != "":
-        out("Parser error: " + module.error + "\n")
-        return
+        err("parser error: " + module.error)
+        exit(1)
     if VERBOSE:
-        out("  Parser: " + module.func_count + " functions\n")
-    
+        dim("  parser: " + str(module.func_count) + " functions")
+
     # 阶段 3.5: 处理 import 语句
     var all_funcs = module.funcs
     var all_classes = module.classes
     var all_structs = module.structs
     var all_top_vars = module.top_vars
-    
-    if module.has_key("imports") and len(module.imports) > 0:
+    var visited: var = [""]
+
+    if len(module.imports) > 0:
         var import_idx = 0
         while import_idx < len(module.imports):
             var imp = module.imports[import_idx]
             var imp_path = imp["path"]
-            
-            if VERBOSE:
-                out("  Processing import: " + imp_path + "\n")
-            
+
             # 检查是否是已知的 std 库导入 - 用存根替代
             var known_stubs = get_known_std_externs(imp_path)
             if len(known_stubs) > 0:
                 if VERBOSE:
-                    out("    Using extern stubs for: " + imp_path + "\n")
+                    dim("  using extern stubs for: " + imp_path)
                 var si = 0
                 while si < len(known_stubs):
                     all_funcs = all_funcs + [known_stubs[si]]
                     si = si + 1
                 import_idx = import_idx + 1
                 continue
-            
+
             # 解析实际文件
             var resolved = resolve_import_path(imp_path, source_dir)
+            if resolved == "":
+                err("cannot resolve import: " + imp_path)
+                exit(1)
+
+            # 去重
+            var already = false
+            var vi = 0
+            while vi < len(visited):
+                if visited[vi] == resolved:
+                    already = true
+                vi = vi + 1
+            if already:
+                import_idx = import_idx + 1
+                continue
+            visited = visited + [resolved]
+
             if VERBOSE:
-                out("    Resolved: " + resolved + "\n")
-            
+                dim("  processing import: " + imp_path + " -> " + resolved)
+
             var imp_source = file_read(resolved)
             if imp_source == nil:
-                out("Warning: cannot read import: " + imp_path + " (tried: " + resolved + ")\n")
+                warn("cannot read import: " + imp_path + " (tried: " + resolved + ")")
                 import_idx = import_idx + 1
                 continue
-            
+
             var imp_tokens = lexer.tokenize(imp_source)
             if imp_tokens.error != "":
-                out("Lexer error in import " + imp_path + ": " + imp_tokens.error + "\n")
-                import_idx = import_idx + 1
-                continue
-            
+                err("lexer error in import " + imp_path + ": " + imp_tokens.error)
+                exit(1)
+
             var imp_module = parser.parse_program(imp_tokens, resolved)
             if imp_module.error != "":
-                out("Parser error in import " + imp_path + ": " + imp_module.error + "\n")
-                import_idx = import_idx + 1
-                continue
-            
+                err("parser error in import " + imp_path + ": " + imp_module.error)
+                exit(1)
+
             if VERBOSE:
-                out("    Parsed: " + imp_module.func_count + " functions\n")
-            
-            # 合并函数
+                dim("  parsed: " + str(imp_module.func_count) + " functions")
+
             var f_i = 0
             while f_i < len(imp_module.funcs):
                 all_funcs = all_funcs + [imp_module.funcs[f_i]]
                 f_i = f_i + 1
-            
-            # 合并类
             var c_i = 0
             while c_i < len(imp_module.classes):
                 all_classes = all_classes + [imp_module.classes[c_i]]
                 c_i = c_i + 1
-            
-            # 合并结构体
             var s_i = 0
             while s_i < len(imp_module.structs):
                 all_structs = all_structs + [imp_module.structs[s_i]]
                 s_i = s_i + 1
-            
+            var t_i = 0
+            while t_i < len(imp_module.top_vars):
+                all_top_vars = all_top_vars + [imp_module.top_vars[t_i]]
+                t_i = t_i + 1
+
             import_idx = import_idx + 1
-    
+
     # 构建合并后的模块 (单行 dict 字面量, Go vxc 不支持多行)
     var merged_module = {"error": "", "funcs": all_funcs, "classes": all_classes, "structs": all_structs, "top_vars": all_top_vars, "func_count": len(all_funcs), "name": source_file}
-    
+
     # 阶段 4: TypeIR 代码生成
     var typeir = codegen.generate_module(merged_module)
     if typeir.error != "":
-        out("CodeGen error: " + typeir.error + "\n")
-        return
+        err("codegen error: " + typeir.error)
+        exit(1)
     if VERBOSE:
-        out("  CodeGen generated " + len(typeir.data) + " functions\n")
-    
+        dim("  codegen: " + str(len(typeir.data)) + " functions")
+
     # 阶段 5: 写入 VXOBJ
     var vxobj_data = vxobj.write_vxobj(typeir.data, TARGET)
     if vxobj_data == nil:
-        out("Error: VXOBJ serialization failed\n")
-        return
-    
+        err("VXOBJ serialization failed")
+        exit(1)
+
     file_write(OUTPUT, vxobj_data)
-    out("  Written: " + OUTPUT + " (" + len(vxobj_data) + " bytes)\n")
-    if VERBOSE:
-        out("Done.\n")
+    out(C_GREEN + "Finished" + C_RESET + " " + OUTPUT + " (" + str(len(vxobj_data)) + " bytes)\n")
 
 func print_help():
-    out("VX Self-Bootstrapping Compiler v0.1\n")
+    out(C_BOLD + "VX Self-Bootstrapping Compiler" + C_RESET + " " + VERSION + "\n")
     out("Usage: vxc [options] <source.vx>\n")
     out("Options:\n")
     out("  -o <file>       Output VXOBJ file (default: out.vxobj)\n")
     out("  --target <triple> Target triple (default: x86_64-unknown-unknown)\n")
     out("  -v, --verbose   Verbose output\n")
+    out("  --color=<auto|always|never>  Color output (default: always)\n")
+    out("  --version       Print version\n")
     out("  -h, --help      Show this help\n")

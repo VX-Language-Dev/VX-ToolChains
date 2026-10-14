@@ -60,4 +60,4 @@ VX_BIN=/path/to/bin ./run_tests.sh                # 指定 vxc/vlnk 所在目录
 8. **`out()` 是内建（包装 `puts`，自动追加换行）**；要无换行输出需用 C 运行时 `out_raw`。`out_int`/`out_bool` 也由 `vxrt.o` 提供。
 9. **多语句必须分多行** —— 解析器不支持 `;` 作为语句分隔符。
 
-> 注：为支持 `out("x=" + 变量)` 这类“变量参与字符串拼接”，已修复 `go/internal/translator/platform.go` 中 `@putchar` 声明缺失的问题（变量拼接会触发 `itoa` 内建，进而引入需要 `@putchar` 的 `@len` 实现）。
+> 注：为支持 `out("x=" + 变量)` 这类“变量参与字符串拼接”，已修复编译器中 `@putchar` 声明缺失的问题（变量拼接会触发 `itoa` 内建，进而引入需要 `@putchar` 的 `@len` 实现）。

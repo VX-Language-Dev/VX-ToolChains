@@ -1,14 +1,15 @@
 # VX-ToolKit
 
-![Language](https://img.shields.io/badge/language-Go-blue)
+![Language](https://img.shields.io/badge/language-C++-green)
 ![Version](https://img.shields.io/badge/version-v1.6.0-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
 ![Platform](<https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey>)
 
-**VX 编程语言的完整工具链** — 编译器、原生链接器、包管理器，全栈 Go 实现。
+**VX 编程语言的完整工具链** — 编译器、原生链接器、包管理器，正在迁移到 C++ 实现。
 
-> 语言版本: v1.6.0
+> 语言版本: v1.7.0
 > 协议: [AGPL-3.0](LICENSE)
+> 当前实现: **C++ 重写中**（Util 层已完成，编译器/链接器等模块后续补齐）
 
 ---
 
@@ -35,13 +36,14 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Go** 语言实现，
 
 | 模块                  | 实现语言 | 职责                              | 状态      |
 | --------------------- | -------- | --------------------------------- | --------- |
-| 编译器 (vxc)          | Go       | 源码分析、TypeIR 生成、VXOBJ 输出 | ✅ 稳定   |
-| 原生链接器 (vlnk)     | Go       | TypeIR 代码生成 + 可执行文件生成  | ✅ 稳定   |
-| VPM 包管理器 (vpm)    | Go       | 多语言包管理                      | ✅ 可用   |
-| 反编译器 (vxde)       | Go       | VXOBJ → VX 源码还原              | ✅ 可用   |
-| 格式化工具 (vfmt)     | Go       | VX 源码格式化                     | ✅ 可用   |
-| 项目构建器 / 增量缓存 | Go       | vxsetting.toml 驱动的构建系统     | 🚧 开发中 |
-| LSP 语言服务器        | Go       | 代码补全、悬停、跳转定义等        | 🚧 开发中 |
+| 编译器 (vxc)          | C++      | 源码分析、TypeIR 生成、VXOBJ 输出 | 🚧 开发中 |
+| 原生链接器 (vlnk)     | C++      | TypeIR 代码生成 + 可执行文件生成  | 🚧 开发中 |
+| VPM 包管理器 (vpm)    | C++      | 多语言包管理                      | 🚧 开发中 |
+| 反编译器 (vxde)       | C++      | VXOBJ → VX 源码还原              | 🚧 开发中 |
+| 格式化工具 (vfmt)     | C++      | VX 源码格式化                     | 🚧 开发中 |
+| 项目构建器 / 增量缓存 | C++      | vxsetting.toml 驱动的构建系统     | 🚧 开发中 |
+| LSP 语言服务器        | C++      | 代码补全、悬停、跳转定义等        | 🚧 开发中 |
+| Util 基础库           | C++      | 内存分配器、字符串、文件系统      | ✅ 稳定   |
 
 ### 编译流水线
 
@@ -74,10 +76,12 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Go** 语言实现，
 
 ### 环境要求
 
-| 组件      | 最低版本                |
-| --------- | ----------------------- |
-| Go 工具链 | 1.21+                   |
-| 操作系统  | Linux / macOS / Windows |
+| 组件        | 最低版本                |
+| ----------- | ----------------------- |
+| CMake       | 3.23+                   |
+| Ninja       | 1.10+                   |
+| C++ 编译器  | 支持 C++23 (Clang 16+, GCC 13+, MSVC 19.35+)
+| 操作系统    | Linux / macOS / Windows |
 
 ### 获取源码
 
@@ -89,52 +93,46 @@ cd vx-toolkit
 ### 构建工具链
 
 ```bash
-# 进入 Go 目录
-cd go
+# 获取源码
+git clone https://gitee.com/vx-language-dev/vx-toolkit.git
+cd vx-toolkit
 
-# Debug 构建（默认）
-go build -o vxc ./cmd/vxc
-go build -o vlnk ./cmd/vlnk
-go build -o vpm ./cmd/vpm
-go build -o vxde ./cmd/vxde
-go build -o vfmt ./cmd/vfmt
-
-# 或使用 Makefile（推荐）
+# 使用 Makefile 构建（推荐）
 make build
+
+# 或直接使用 CMake
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
+cmake --build build --config MinSizeRel
 ```
 
-构建产物位于 `go/` 目录：
+构建产物位于 `build/` 目录：
 
-| 二进制文件      | 说明             |
-| --------------- | ---------------- |
-| `vxc`         | VX 编译器        |
-| `vlnk`        | 原生链接器       |
-| `vpm`         | 包管理器         |
-| `vxde`        | 反编译器         |
-| `vfmt`        | 格式化工具       |
-| `vxlsp`       | LSP 语言服务器   |
-| `vxbootstrap` | VXOBJ 引导生成器 |
+| 二进制文件         | 说明            |
+| ------------------ | --------------- |
+| `vx_util_tests`  | Util 层单元测试 |
+
+> 注：C++ 版本目前仅实现 Util 层（内存分配器、字符串、文件系统），编译器、链接器、包管理器等工具正在开发中。
 
 ### 安装到系统
 
 ```bash
 # 使用 Makefile 安装到 ~/.local/bin
-cd go
 make install
 
 # 确保 ~/.local/bin 在 PATH 中
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+> 注：当前仅安装 `vx_util_tests` 测试可执行文件。完整工具链安装待 C++ 实现完成后提供。
+
 ### 运行测试
 
 ```bash
-# 运行全部 Go 单元测试
-cd go
+# 运行全部 C++ 单元测试
 make test
 
-# 或直接使用 go test
-go test ./...
+# 或直接使用 ctest
+cmake --build build --target test
 ```
 
 ### Hello World
@@ -250,18 +248,18 @@ vxde input.vxobj -o output.vx
 
 ### 6. LSP 语言服务器
 
-LSP 已构建为独立可执行文件 `vxlsp`，位于 `src/lsp/`：
+LSP 正在 C++ 中开发，位于 `cpp_lsp/` 目录：
 
 | 功能     | 说明                                     | 状态    |
 | -------- | ---------------------------------------- | ------- |
-| 代码补全 | 关键字、函数名、变量名、成员访问、import | ✅ 可用 |
-| 悬停信息 | 类型签名、字段/方法文档、内置函数说明    | ✅ 可用 |
-| 符号导航 | 工作区符号、文档符号                     | ✅ 可用 |
-| 诊断     | 编译错误实时提示，自动发布到编辑器       | ✅ 可用 |
-| 跳转定义 | 变量/函数/参数/导入别名定义跳转          | ✅ 可用 |
-| 内嵌提示 | 类型推断、参数名提示                     | ✅ 可用 |
+| 代码补全 | 关键字、函数名、变量名、成员访问、import | 🚧 开发中 |
+| 悬停信息 | 类型签名、字段/方法文档、内置函数说明    | 🚧 开发中 |
+| 符号导航 | 工作区符号、文档符号                     | 🚧 开发中 |
+| 诊断     | 编译错误实时提示，自动发布到编辑器       | 🚧 开发中 |
+| 跳转定义 | 变量/函数/参数/导入别名定义跳转          | 🚧 开发中 |
+| 内嵌提示 | 类型推断、参数名提示                     | 🚧 开发中 |
 
-> **使用方式**: 编辑器配置 LSP 服务器路径为 `vxlsp`，支持标准 Language Server Protocol。
+> **使用方式**: 编译器前端完成后将提供 `vxlsp` 可执行文件，支持标准 Language Server Protocol。
 
 ---
 
@@ -349,52 +347,34 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 
 ```
 .
-├── go/                       # Go 源码目录
-│   ├── cmd/                  # 命令行工具入口
-│   │   ├── vxc/              # VX 编译器
-│   │   ├── vlnk/             # 原生链接器
-│   │   ├── vpm/              # 包管理器
-│   │   ├── vxde/             # 反编译器
-│   │   ├── vfmt/             # 格式化工具
-│   │   └── vxlsp/            # LSP 语言服务器
-│   │
-│   ├── internal/             # 内部包
-│   │   ├── lexer/            # 词法分析器
-│   │   ├── parser/           # 语法分析器
-│   │   ├── semantic/         # 语义分析器
-│   │   ├── compiler/         # 编译器核心
-│   │   ├── compiler_bytecode/# 编译器字节码
-│   │   ├── typeirgen/        # TypeIR 生成器
-│   │   ├── typeir/           # TypeIR 定义
-│   │   ├── type_ir/          # TypeIR 序列化
-│   │   ├── bytecode/         # VXOBJ v4 格式
-│   │   ├── linker/           # 原生链接器
-│   │   ├── llvmir/           # LLVM IR 生成
-│   │   ├── translator/       # 代码翻译
-│   │   ├── builder/          # 项目构建器
-│   │   ├── cache/            # 增量编译缓存
-│   │   ├── vxsetting/        # vxsetting.toml 配置解析
-│   │   ├── ownership/        # 所有权检查
-│   │   ├── optimize/         # 优化器
-│   │   ├── macros/           # 宏系统
-│   │   ├── opcode/           # 操作码定义
-│   │   ├── token/            # Token 定义
-│   │   ├── ast/              # AST 定义
-│   │   ├── logger/           # 日志系统
-│   │   ├── parallel_build/   # 并行构建
-│   │   ├── stubs/            # 存根定义
-│   │   ├── lsp/              # LSP 语言服务器
-│   │   └── vfmt/             # 格式化工具
-│   │
-│   ├── build.sh              # 构建脚本
-│   ├── build_all.sh          # 全量构建脚本
-│   ├── go.mod                # Go 模块定义
-│   └── go.sum                # Go 依赖锁定
-│
-├── std/                      # VX 标准库源码
+├── src/                      # C++ 源码目录
+│   └── util/                 # Util 层实现
+│       ├── arena.cpp         # 线性分配器 (bump allocator)
+│       ├── fs.cpp            # 文件系统工具
+│       └── str.cpp           # 字符串工具
+├── include/                  # 公开头文件目录
+│   └── vx/util/              # Util 层公开 API
+│       ├── arena.hpp
+│       ├── fs.hpp
+│       ├── str.hpp
+│       └── util.hpp
+├── tests/                    # 测试与示例
+│   ├── util_test.cpp         # Util 层单元测试
+│   ├── run_tests.sh          # VX 测试运行脚本
+│   ├── batch/                # 批量测试用例
+│   ├── std_lib_test.vx       # 标准库测试
+│   ├── test_math.vx          # 数学测试
+│   ├── test_prime.vx         # 素数测试
+│   ├── test_simple.vx        # 简单测试
+│   ├── test_void.vx          # void 返回测试
+│   ├── test_return.vx        # 返回值测试
+│   ├── test_import.vx        # 导入测试
+│   └── runtime.c             # 运行时支持
+├── std/                      # VX 标准库源码（.vx 源文件）
+├── compiler/                 # VX 编译器前端源码（.vx 源文件，自举目标）
+├── cpp_lsp/                  # C++ LSP 语言服务器实现
 ├── ci/                       # CI 配置
-├── .gitee/                   # Gitee 配置
-├── .github/                  # GitHub 配置
+├── CMakeLists.txt            # CMake 构建配置
 ├── Makefile                  # Make 构建脚本
 ├── CHANGELOG.md              # 变更日志
 ├── CONTRIBUTING.md           # 贡献指南
@@ -407,9 +387,9 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 
 ## 依赖概览
 
-### Go 部分
+### C++ 部分
 
-**纯自研，零外部依赖。** 工具链完全由 Go 实现，无第三方依赖。
+**纯自研，零外部运行时依赖。** Util 层仅依赖 C++ 标准库。
 
 | 架构      | 状态      |
 | --------- | --------- |
@@ -433,107 +413,31 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 
 ## API 参考
 
-### 编译器 API
+### Util 层 API (C++)
 
-```go
-import "vx-toolkit/go/internal/compiler"
+```cpp
+#include "vx/util/util.hpp"
 
-// 创建编译器
-compiler := compiler.NewCompiler(allocator)
+int main() {
+    // 线性分配器
+    vx::util::Arena arena(64 * 1024);
+    int* a = arena.create<int>(42);
+    int* b = arena.create<int>(7);
+    arena.reset(); // 批量回收
 
-// 编译源文件
-result, err := compiler.CompileFile("main.vx")
-if err != nil {
-    log.Fatal(err)
-}
+    // 字符串工具
+    vx::util::String s = "hello";
+    auto parts = vx::util::split(s, ",");
 
-// 获取 TypeIR
-typeir := result.TypeIR
-```
+    // 文件系统工具
+    auto content = vx::util::read_file("input.vx");
+    vx::util::write_file("output.txt", "result");
 
-### 链接器 API
-
-```go
-import "vx-toolkit/go/internal/linker"
-
-// 创建链接器
-linker := linker.NewLinker("x86_64-linux-gnu")
-
-// 链接 VXOBJ 文件
-err := linker.Link([]string{"main.vxobj"}, "output")
-if err != nil {
-    log.Fatal(err)
+    return 0;
 }
 ```
 
-### 缓存 API
-
-```go
-import "vx-toolkit/go/internal/cache"
-
-// 创建缓存
-cache := cache.New(cacheDir)
-
-// 检查缓存有效性
-if cache.IsTargetFresh(key, sources, optLevel) {
-    // 跳过编译
-}
-
-// 更新缓存
-err := cache.UpdateEntry(key, sources, objPath, output, optLevel)
-if err != nil {
-    log.Fatal(err)
-}
-
-// 持久化
-err = cache.SaveToDisk()
-```
-
-### 构建器 API
-
-```go
-import "vx-toolkit/go/internal/builder"
-
-// 从配置文件创建构建器
-settings, err := builder.LoadSettings("vxsetting.toml")
-if err != nil {
-    log.Fatal(err)
-}
-
-b := builder.NewBuilder(settings)
-
-// 配置选项
-b.WithForceRebuild(true)
-b.WithNoCache(false)
-
-// 执行构建
-err = b.Build()
-if err != nil {
-    log.Fatal(err)
-}
-```
-
-### 日志 API
-
-```go
-import "vx-toolkit/go/internal/logger"
-
-// 创建日志器
-logger := logger.New(writer, logger.InfoLevel)
-
-// 基础日志
-logger.info("编译开始: {s}", .{filename});
-logger.warn("未使用的变量: {s}", .{var_name});
-logger.err("编译失败: {s}", .{error_msg});
-
-// 带上下文的错误日志
-logger.logError("类型不匹配", .{}, .{
-    .file = "main.vx",
-    .line = 42,
-    .column = 10,
-    .hint = "尝试使用 `as` 进行类型转换",
-});
-```
+> 注：C++ 版本目前仅实现 Util 层。编译器、链接器、包管理器等高层 API 正在开发中，将在后续版本中提供。
 
 ---
 

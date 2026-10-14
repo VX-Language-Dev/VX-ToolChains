@@ -1,74 +1,61 @@
-.PHONY: all build test lint clean install help
+.PHONY: all build test clean install uninstall help
 
 # VX-ToolKit Makefile
-# 使用 Go 实现的工具链
+# 使用 CMake + Ninja 驱动 C++ 构建系统
 
-GO := go
-BUILD_DIR := bin
-CMD_DIR := go/cmd
-INTERNAL_DIR := go/internal
-
-BINS := vxc vlnk vpm vxde vxlsp vfmt vxbootstrap
+BUILD_DIR := build
+CMAKE := cmake
+NINJA := ninja
 
 all: build test
 
-build: $(addprefix $(BUILD_DIR)/,$(BINS))
+build:
+	$(CMAKE) -S . -B $(BUILD_DIR) -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
+	$(CMAKE) --build $(BUILD_DIR) --config MinSizeRel
 
-$(BUILD_DIR)/%: $(CMD_DIR)/%/main.go
-	@mkdir -p $(BUILD_DIR)
-	cd go && $(GO) build -ldflags "-s -w" -trimpath -o ../$@ ./cmd/$*/main.go
-
-test:
-	cd go && $(GO) test ./internal/... -v -race -coverprofile=coverage.out
-	cd go && $(GO) tool cover -func=coverage.out | tail -1
+test: build
+	cd $(BUILD_DIR) && $(CMAKE) --build . --target test
 
 lint:
-	@which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
-	cd go && golangci-lint run --config ../.golangci.yml ./...
+	@if which cppcheck > /dev/null 2>&1; then \
+		cppcheck --enable=all --inconclusive --std=c++23 src/ include/; \
+	else \
+		echo "cppcheck 未安装，跳过 lint"; \
+	fi
 
 fmt:
-	cd go && $(GO) fmt ./...
-	cd go && $(GO)imports -local github.com/vx-lang/vxc -w .
+	@which clang-format > /dev/null || (echo "Installing clang-format..." && echo "请手动安装 clang-format")
+	clang-format -i $$(find src include tests -name '*.cpp' -o -name '*.hpp') 2>/dev/null || true
 
 check: fmt lint test
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f go/coverage.out
-	rm -rf .zig-cache zig-out
 
 install: build
 	install -d ~/.local/bin
-	for bin in $(BINS); do \
-		install $(BUILD_DIR)/$$bin ~/.local/bin/; \
-	done
+	install $(BUILD_DIR)/vx_util_tests ~/.local/bin/
 
 uninstall:
-	for bin in $(BINS); do \
-		rm -f ~/.local/bin/$$bin; \
-	done
+	rm -f ~/.local/bin/vx_util_tests
 
 benchmark:
-	cd go && $(GO) test ./internal/... -bench=. -benchmem -run=^$$
-
-race:
-	cd go && $(GO) test ./internal/... -race
+	cd $(BUILD_DIR) && ctest --output-on-failure --verbose
 
 help:
-	@echo "VX-ToolKit 构建系统"
+	@echo "VX-ToolKit 构建系统 (C++)"
 	@echo ""
 	@echo "可用命令:"
 	@echo "  make all         - 构建并运行所有测试"
-	@echo "  make build       - 编译所有工具"
-	@echo "  make test        - 运行单元测试（含覆盖率）"
-	@echo "  make lint        - 运行 golangci-lint 代码检查"
-	@echo "  make fmt         - 格式化代码"
+	@echo "  make build       - 编译 Util 层与测试"
+	@echo "  make test        - 运行 C++ 单元测试 (ctest)"
+	@echo "  make lint        - 运行 cppcheck 代码检查"
+	@echo "  make fmt         - 使用 clang-format 格式化代码"
 	@echo "  make check       - 完整检查（格式化 + lint + 测试）"
 	@echo "  make clean       - 清理构建产物"
-	@echo "  make install     - 安装到 ~/.local/bin/"
+	@echo "  make install     - 安装测试可执行文件到 ~/.local/bin/"
 	@echo "  make uninstall   - 从系统卸载"
 	@echo "  make benchmark    - 运行性能基准测试"
-	@echo "  make race        - 运行竞态检测"
 	@echo "  make help        - 显示此帮助信息"
 	@echo ""
-	@echo "工具列表: $(BINS)"
+	@echo "构建方式: cmake -S . -B build -G Ninja && cmake --build build"

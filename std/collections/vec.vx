@@ -5,26 +5,36 @@
 
 import std.mem.allocator
 
-var vec_size: int = 0
+# Vec 内存布局（每个槽位 8 字节，64 位平台）:
+#   buf[0] = capacity (int)
+#   buf[1] = size (int)
+#   buf[2..] = 元素数组
 
 func Vec_new(alloc: var) -> int:
-    vec_size = 0
-    return 0
+    var buf = malloc(2048)
+    buf[0] = 254
+    buf[1] = 0
+    return buf
 
 func Vec_push(alloc: var, v: int, val: int) -> int:
-    vec_size = vec_size + 1
+    var size = v[1]
+    var cap = v[0]
+    if size >= cap:
+        return v
+    v[size + 2] = val
+    v[1] = size + 1
     return v
 
 func Vec_get(v: int, index: int) -> int:
-    if index < 0 or index >= vec_size:
+    if index < 0 or index >= v[1]:
         return 0
-    return 0
+    return v[index + 2]
 
 func Vec_size(v: int) -> int:
-    return vec_size
+    return v[1]
 
 func Vec_is_empty(v: int) -> bool:
-    return vec_size == 0
+    return v[1] == 0
 
 func Vec_dealloc(alloc: var, v: int):
-    vec_size = 0
+    c_free(v)

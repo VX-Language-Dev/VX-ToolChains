@@ -1,0 +1,40 @@
+{
+  "grammars": [
+    {
+      "name": "vx",
+      "camelcase": "Vx",
+      "scope": "source.vx",
+      "path": ".",
+      "external-files": [
+        "src/scanner.c"
+      ],
+      "file-types": [
+        "vx"
+      ],
+      "highlights": [
+        "queries/highlights.scm"
+      ]
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "VX (adVanced eXecutable language) grammar for tree-sitter",
+    "authors": [
+      {
+        "name": "VX-ToolChains"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/vx-toolchains/tree-sitter-vx"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "node": false,
+    "python": false,
+    "rust": false,
+    "go": false,
+    "swift": false
+  }
+}
