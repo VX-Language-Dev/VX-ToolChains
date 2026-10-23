@@ -6,12 +6,11 @@
 //   - ; 产生 Semi token（括号内忽略），由 Parser 作为单行语句分隔符处理
 #pragma once
 
+#include "vx/compiler/diag.hpp"
 #include "vx/util/arena.hpp"
 
 #include <cstdint>
-#include <expected>
 #include <span>
-#include <string>
 #include <string_view>
 
 namespace vx::compiler {
@@ -58,6 +57,7 @@ enum class Tok : std::uint8_t {
   Colon,   // :
   Comma,   // ,
   Dot,     // .
+  At,      // @（导入注解前缀：@imp / @cppimp）
 };
 
 // 判断单词是否为 VX 关键字
@@ -70,17 +70,17 @@ struct Token {
   Tok kind;
   std::string_view text; // 词素：字面量/运算符原文；结构与标点 token 为空
   int line;              // 1 起始行号
-};
-
-struct LexError {
-  std::string message;
-  int line; // 出错行号
+  int col;               // 1 起始列号（按 Unicode 码点计，制表符算 1 列）。
+                         // 结构性 token（Indent/Dedent）恒定位到逻辑行首 col=1。
 };
 
 // 词法分析：返回以 Tok::Eof 结尾的 token 流。
+// 采用 fail-soft 策略：遇到非法字符/未闭合字符串时推入 bag 并做最小恢复
+// （跳过 1 个字符 / 跳到文件结束），继续产出 token，不中断整个流程。
+// 返回值恒非空（至少含 Eof）；调用方用 bag.has_error() 判定是否有词法错误。
 // Token 数组存入 arena；字符串解码结果同样存入 arena（text 指向其中）。
-// text 均指向源码或 arena 内存，生命周期不超出 arena。
-std::expected<std::span<const Token>, LexError>
-tokenize(std::string_view src, vx::util::Arena &arena);
+// filename 仅用于诊断定位（写入 Diagnostic::file），可为空。
+std::span<const Token> tokenize(std::string_view src, std::string_view filename,
+                                vx::util::Arena &arena, DiagBag &bag);
 
 } // namespace vx::compiler

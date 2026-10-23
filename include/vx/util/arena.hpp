@@ -32,6 +32,7 @@ public:
   void reset() noexcept;
 
   std::size_t block_size() const noexcept { return block_size_; }
+  std::size_t size() const noexcept;
 
 private:
   struct Block;

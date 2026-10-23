@@ -1,61 +1,65 @@
-.PHONY: all build test clean install uninstall help
+# VX-ToolKit Makefile（C++ 重写）
+#
+# 实际构建由 CMake + Ninja 驱动，本文件仅封装常用命令：
+#   make          默认构建（MinSizeRel）
+#   make build    构建全部目标
+#   make test     运行全部单元测试
+#   make fmt      clang-format 格式化源码
+#   make lint     cppcheck 静态分析（若安装了 cppcheck）
+#   make check    fmt + build + test 的完整检查流水线
+#   make install  安装二进制到 ~/.local/bin
+#   make clean    清理构建目录
 
-# VX-ToolKit Makefile
-# 使用 CMake + Ninja 驱动 C++ 构建系统
+.PHONY: all build test fmt lint check install clean help
 
-BUILD_DIR := build
-CMAKE := cmake
-NINJA := ninja
+BUILD_DIR ?= build
+CMAKE_BUILD_TYPE ?= MinSizeRel
+CMAKE_GENERATOR ?= Ninja
 
-all: build test
+ifeq ($(VERBOSE),1)
+	CMAKE_BUILD_ARGS += --verbose
+endif
+
+all: build
 
 build:
-	$(CMAKE) -S . -B $(BUILD_DIR) -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
-	$(CMAKE) --build $(BUILD_DIR) --config MinSizeRel
+	cmake -S . -B $(BUILD_DIR) -G $(CMAKE_GENERATOR) \
+		-DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) \
+		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+	cmake --build $(BUILD_DIR) --config $(CMAKE_BUILD_TYPE) $(CMAKE_BUILD_ARGS)
 
 test: build
-	cd $(BUILD_DIR) && $(CMAKE) --build . --target test
-
-lint:
-	@if which cppcheck > /dev/null 2>&1; then \
-		cppcheck --enable=all --inconclusive --std=c++23 src/ include/; \
-	else \
-		echo "cppcheck 未安装，跳过 lint"; \
-	fi
+	cd $(BUILD_DIR) && ctest --output-on-failure --build-config $(CMAKE_BUILD_TYPE)
 
 fmt:
-	@which clang-format > /dev/null || (echo "Installing clang-format..." && echo "请手动安装 clang-format")
-	clang-format -i $$(find src include tests -name '*.cpp' -o -name '*.hpp') 2>/dev/null || true
+	@command -v clang-format >/dev/null 2>&1 || { \
+		echo "error: clang-format 未安装，无法格式化"; exit 1; \
+	}
+	find src include tests -name '*.cpp' -o -name '*.hpp' | \
+		xargs clang-format -i
 
-check: fmt lint test
+lint:
+	@if command -v cppcheck >/dev/null 2>&1; then \
+		cppcheck --enable=all --suppress=missingIncludeSystem \
+			-I include --std=c++23 src include tests; \
+	else \
+		echo "warn: cppcheck 未安装，跳过静态分析"; \
+	fi
+
+check: fmt build test lint
+
+install: build
+	cmake --install $(BUILD_DIR) --prefix ~/.local
 
 clean:
 	rm -rf $(BUILD_DIR)
 
-install: build
-	install -d ~/.local/bin
-	install $(BUILD_DIR)/vx_util_tests ~/.local/bin/
-
-uninstall:
-	rm -f ~/.local/bin/vx_util_tests
-
-benchmark:
-	cd $(BUILD_DIR) && ctest --output-on-failure --verbose
-
 help:
-	@echo "VX-ToolKit 构建系统 (C++)"
-	@echo ""
-	@echo "可用命令:"
-	@echo "  make all         - 构建并运行所有测试"
-	@echo "  make build       - 编译 Util 层与测试"
-	@echo "  make test        - 运行 C++ 单元测试 (ctest)"
-	@echo "  make lint        - 运行 cppcheck 代码检查"
-	@echo "  make fmt         - 使用 clang-format 格式化代码"
-	@echo "  make check       - 完整检查（格式化 + lint + 测试）"
-	@echo "  make clean       - 清理构建产物"
-	@echo "  make install     - 安装测试可执行文件到 ~/.local/bin/"
-	@echo "  make uninstall   - 从系统卸载"
-	@echo "  make benchmark    - 运行性能基准测试"
-	@echo "  make help        - 显示此帮助信息"
-	@echo ""
-	@echo "构建方式: cmake -S . -B build -G Ninja && cmake --build build"
+	@echo "VX-ToolKit Makefile 目标："
+	@echo "  build    构建全部目标（CMake + Ninja，$(CMAKE_BUILD_TYPE））"
+	@echo "  test     运行 ctest 单元测试"
+	@echo "  fmt      clang-format 格式化 src/include/tests"
+	@echo "  lint     cppcheck 静态分析（可选）"
+	@echo "  check    fmt + build + test + lint 完整检查"
+	@echo "  install  安装到 ~/.local/bin"
+	@echo "  clean    清理构建目录"

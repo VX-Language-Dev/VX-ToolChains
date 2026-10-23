@@ -42,7 +42,8 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **Go** 语言实现，
 | 反编译器 (vxde)       | C++      | VXOBJ → VX 源码还原              | 🚧 开发中 |
 | 格式化工具 (vfmt)     | C++      | VX 源码格式化                     | 🚧 开发中 |
 | 项目构建器 / 增量缓存 | C++      | vxsetting.toml 驱动的构建系统     | 🚧 开发中 |
-| LSP 语言服务器        | C++      | 代码补全、悬停、跳转定义等        | 🚧 开发中 |
+| LSP 语言服务器 (vxls)  | C++      | 代码补全、悬停、跳转定义等        | ✅ 基础可用 |
+| 静态分析 (vx-tidy)     | C++      | AST 级规则检查（VXTIDYxxx）       | ✅ 基础可用 |
 | Util 基础库           | C++      | 内存分配器、字符串、文件系统      | ✅ 稳定   |
 
 ### 编译流水线
@@ -178,8 +179,9 @@ vxc hello.vx -v
 
 1. **词法分析** (Lexer) → Token 流
 2. **语法分析** (Parser) → AST
-3. **所有权/借用检查** (OwnershipChecker) → 内存安全性验证
-4. **TypeIR 生成** + 序列化 → VXOBJ v4
+3. **库导入解析** (@imp / @cppimp) → 导入表（VX ABI 符号签名 + 链接依赖）
+4. **所有权/借用检查** (OwnershipChecker) → 内存安全性验证
+5. **TypeIR 生成** + 序列化 → VXOBJ v4
 
 ### 2. 链接为可执行文件
 
@@ -201,7 +203,42 @@ vlnk hello.vxobj -o hello --embed-vxobj
 - 处理入口符号、段布局与重定位
 - （可选）追加 VXOBJ 数据供反链接使用
 
-### 3. 项目构建 (vxsetting.toml)
+### 3. 库导入与 VX ABI (@imp / @cppimp)
+
+通过 `@imp` 导入 VX 库，通过 `@cppimp` 引用 C++ 头文件（链接期自动生成 shim）。
+导入符号以**库名前缀**限定访问。
+
+```vx
+@imp(math)                    # 根目录库：直接引用文件名
+@imp(/collections/vec)        # 子目录库：'/' + 子目录路径，库名取末段 → vec
+@imp(./mylib)                 # 自定义库：相对源文件目录
+@cppimp(cpp/greet.hpp)        # C++ 头文件 → 链接期生成 C++ ABI → VX ABI 的 shim
+
+func main():
+    out_int(math.add(2, 3))   # math 库 → 符号 _vx_math_add
+    out_int(vec.sum_to(10))   # vec 库  → 符号 _vx_vec_sum_to
+    out(greet.greet("VX"))    # greet 库 → shim 包装 C++ 符号
+```
+
+**库查找规则**：库默认位于 vxc 可执行文件同级的 `headers/` 目录及其子目录下
+（可用环境变量 `VX_HEADERS` 覆盖）。
+
+**库文件形态**：VX 声明头 `.vxh`（VX 语法的 `extern` 签名声明），
+同目录同名的 `.c` / `.a` / `.dylib` / `.cpp` 由 `vlnk` 在链接期并入。
+`@cppimp` 的 VX 签名取自与 C++ 头文件**同目录、同主名**的 `.vxh` 伴生文件
+（如 `greet.hpp` ↔ `greet.vxh`）。
+
+**VX ABI**（`_vx_<lib>_<name>`）：
+
+| VX 类型 | LLVM 类型 | C 类型（shim 用） |
+| ------- | --------- | ----------------- |
+| int     | i32       | int32_t           |
+| float   | double    | double            |
+| bool    | i32       | int32_t           |
+| string  | ptr       | const char*       |
+| void    | void      | void              |
+
+### 4. 项目构建 (vxsetting.toml)
 
 多文件项目在根目录创建 `vxsetting.toml`：
 
@@ -227,7 +264,7 @@ cache = true
 vxc
 ```
 
-### 4. VPM 包管理器
+### 5. VPM 包管理器
 
 ```bash
 # 安装包
@@ -239,27 +276,53 @@ vpm list
 
 支持语言：Python、TypeScript、JavaScript、Java、Rust、Go、C、C++。
 
-### 5. 反编译与反链接
+### 6. 反编译与反链接
 
 ```bash
 # 反编译 VXOBJ → VX 源码
 vxde input.vxobj -o output.vx
 ```
 
-### 6. LSP 语言服务器
+### 7. LSP 语言服务器（vxls）
 
-LSP 正在 C++ 中开发，位于 `cpp_lsp/` 目录：
+vxls 位于 `tools/vxls/`，C++ 实现的 LSP 服务器（stdio 传输），
+复用 vx_compiler 前端做实时诊断与语义查询；**默认集成 vx-tidy**
+（动态库 `libvxtidy.dylib`）静态检查，诊断合并发布：
 
-| 功能     | 说明                                     | 状态    |
-| -------- | ---------------------------------------- | ------- |
-| 代码补全 | 关键字、函数名、变量名、成员访问、import | 🚧 开发中 |
-| 悬停信息 | 类型签名、字段/方法文档、内置函数说明    | 🚧 开发中 |
-| 符号导航 | 工作区符号、文档符号                     | 🚧 开发中 |
-| 诊断     | 编译错误实时提示，自动发布到编辑器       | 🚧 开发中 |
-| 跳转定义 | 变量/函数/参数/导入别名定义跳转          | 🚧 开发中 |
-| 内嵌提示 | 类型推断、参数名提示                     | 🚧 开发中 |
+| 功能     | 说明                                                       | 状态 |
+| -------- | ---------------------------------------------------------- | ---- |
+| 诊断     | 前端诊断 + vx-tidy 规则合并发布（`--no-tidy` 可关闭）      | ✅   |
+| 悬停信息 | 签名+参数表+返回类型+#文档注释；类成员；局部变量/参数；内置运行时文档；导入库符号（VX ABI/来源 .vxh） | ✅   |
+| 代码补全 | 关键字、文档符号、内置运行时                               | ✅   |
+| 跳转定义 | 函数/extern/类/结构/局部变量/参数声明定位                   | ✅   |
+| 符号导航 | textDocument/documentSymbol 文档符号                       | ✅   |
+| 内嵌提示 | 类型推断、参数名提示                                       | 🚧 开发中 |
 
-> **使用方式**: 编译器前端完成后将提供 `vxlsp` 可执行文件，支持标准 Language Server Protocol。
+```bash
+cmake -G Ninja -B build -S . && ninja -C build vxls
+
+./build/tools/vxls/vxls                    # 启动 LSP（默认带 vx-tidy）
+./build/tools/vxls/vxls --no-tidy          # 仅前端诊断，不跑 vx-tidy
+./build/tools/vxls/vxls --stdio            # 显式声明 stdio（编辑器配置兼容）
+./build/tools/vxls/vxls --only-tidy a.vx   # 仅运行 vx-tidy 后退出（不启 LSP）
+./build/tools/vxls/vxls --only-tidy --format=json a.vx   # JSON 输出（CI 用）
+./build/tools/vxls/vxls --help / --version # 帮助 / 版本
+```
+
+### 8. 静态分析（vx-tidy）
+
+vx-tidy 位于 `tools/vx-tidy/`，引擎编译为**动态库 `libvxtidy.dylib`**
+（CLI `vx-tidy` 与 vxls 共用），基于 AST 与作用域符号表的单文件检查，
+规则带稳定编号（VXTIDY001~005 语义规则 + VXTIDY900 前端语法错误透传）：
+
+```bash
+cmake -G Ninja -B build -S . && ninja -C build vx-tidy
+
+./build/tools/vx-tidy/vx-tidy --list-rules
+./build/tools/vx-tidy/vx-tidy src.vx              # text 输出
+./build/tools/vx-tidy/vx-tidy --format=json src.vx  # JSON 输出（CI 用）
+# 退出码：0 = 无 error；1 = 有 error；2 = 用法错误
+```
 
 ---
 
@@ -337,9 +400,12 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
     name, offset, size
 
 [Sections]
-  TypeIR         — 类型化中间表示 (代码与类型信息)
-  ExternalDeps   — 外部依赖声明 (可选)
+  TypeIR         — 类型化中间表示 (代码、类型信息、链接表 linkage)
+  Deps           — 导入库依赖 (@imp/@cppimp 的实现文件与 C++ 头文件，可选)
 ```
+
+> 链接表条目记录每个跨模块符号：VX 侧名、参数/返回签名，以及 VX ABI 符号名
+> (`_vx_<lib>_<name>`)、来源库名与 `from_cpp` 标志。
 
 ---
 
@@ -348,37 +414,30 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 ```
 .
 ├── src/                      # C++ 源码目录
-│   └── util/                 # Util 层实现
-│       ├── arena.cpp         # 线性分配器 (bump allocator)
-│       ├── fs.cpp            # 文件系统工具
-│       └── str.cpp           # 字符串工具
-├── include/                  # 公开头文件目录
-│   └── vx/util/              # Util 层公开 API
-│       ├── arena.hpp
-│       ├── fs.hpp
-│       ├── str.hpp
-│       └── util.hpp
-├── tests/                    # 测试与示例
-│   ├── util_test.cpp         # Util 层单元测试
-│   ├── run_tests.sh          # VX 测试运行脚本
-│   ├── batch/                # 批量测试用例
-│   ├── std_lib_test.vx       # 标准库测试
-│   ├── test_math.vx          # 数学测试
-│   ├── test_prime.vx         # 素数测试
-│   ├── test_simple.vx        # 简单测试
-│   ├── test_void.vx          # void 返回测试
-│   ├── test_return.vx        # 返回值测试
-│   ├── test_import.vx        # 导入测试
-│   └── runtime.c             # 运行时支持
+│   ├── util/                 # Util 层：arena / str / fs / platform
+│   ├── compiler/             # Compiler 层：diag / vxabi / lexer / parser / importer / codegen / vxobj
+│   ├── backend/              # Backend 层：vxobj_reader / llvm_emitter / link_driver
+│   └── driver/               # vxc002（前端 CLI）与 vlnk（后端 CLI）入口
+├── include/                  # 公开头文件目录（vx/util、vx/compiler、vx/backend）
+├── headers/                  # 导入库一套（@imp/@cppimp 测试覆盖全类型）
+│   ├── math.* / text.*       # 根目录库：int / string+bool+void
+│   ├── fmath.*               # 根目录库：float（double ABI）
+│   ├── collections/vec.*     # 子目录库（@imp(/collections/vec)）
+│   └── cpp/greet.{hpp,vxh,cpp} # @cppimp 样例（C++ 头文件 + 伴生声明 + 实现）
+├── tests/                    # C++ 单元测试 + .vx 端到端样例
+│   ├── *_test.cpp            # util/diag/lexer/parser/codegen/vxobj/e2e/backend/import 测试
+│   └── test_*.vx             # e2e 样例（simple/void/return/math/prime）
+├── tools/                    # 独立工具子项目（主构建自动检测 tools/*/CMakeLists.txt）
+│   ├── vxls/                 # VX 语言服务器（LSP over stdio，集成 vx-tidy）
+│   └── vx-tidy/              # 静态分析引擎（libvxtidy.dylib + vx-tidy CLI）
 ├── std/                      # VX 标准库源码（.vx 源文件）
-├── compiler/                 # VX 编译器前端源码（.vx 源文件，自举目标）
-├── cpp_lsp/                  # C++ LSP 语言服务器实现
+├── compiler/                 # VX 编译器前端源码（.vx 源文件，自举参考）
+├── docs/                     # 语言与格式文档（SYNTAX.md 等）
 ├── ci/                       # CI 配置
-├── CMakeLists.txt            # CMake 构建配置
-├── Makefile                  # Make 构建脚本
+├── CMakeLists.txt            # CMake 构建配置（CMake + Ninja）
+├── Makefile                  # 常用构建命令封装
 ├── CHANGELOG.md              # 变更日志
 ├── CONTRIBUTING.md           # 贡献指南
-├── INSTALL_SCRIPTS.md        # 安装脚本说明
 ├── LICENSE                   # AGPL-3.0 协议
 └── README.md                 # 项目说明（本文件）
 ```
@@ -523,9 +582,9 @@ make test
 # Debug 模式构建（编译快，包含调试信息）
 make build
 
-# 构建 LSP 语言服务器
-make build
-# 产物位于 bin/vxlsp
+# 构建全部工具（含 vxls / vx-tidy，主构建自动纳入 tools/）
+cmake -G Ninja -B build -S . && ninja -C build
+# 产物：build/tools/vxls/vxls、build/tools/vx-tidy/vx-tidy
 ```
 
 ### 运行特定测试

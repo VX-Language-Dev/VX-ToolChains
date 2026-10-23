@@ -36,4 +36,45 @@ std::string repeat(std::string_view s, std::size_t n) {
   return out;
 }
 
+bool starts_with(std::string_view s, std::string_view prefix) {
+  if (prefix.size() > s.size()) {
+    return false;
+  }
+  return s.substr(0, prefix.size()) == prefix;
+}
+
+bool ends_with(std::string_view s, std::string_view suffix) {
+  if (suffix.size() > s.size()) {
+    return false;
+  }
+  return s.substr(s.size() - suffix.size()) == suffix;
+}
+
+bool contains(std::string_view s, std::string_view substr) {
+  if (substr.empty()) {
+    return true;
+  }
+  return s.find(substr) != std::string_view::npos;
+}
+
+std::string replace(std::string_view s, std::string_view from,
+                    std::string_view to) {
+  if (from.empty()) {
+    return std::string(s);
+  }
+  std::string result;
+  std::size_t start = 0;
+  while (start <= s.size()) {
+    const std::size_t pos = s.find(from, start);
+    if (pos == std::string_view::npos) {
+      result.append(s.substr(start));
+      break;
+    }
+    result.append(s.substr(start, pos - start));
+    result.append(to);
+    start = pos + from.size();
+  }
+  return result;
+}
+
 } // namespace vx::util

@@ -55,7 +55,9 @@ make check              # 本地 CI 全套检查
 | `tests/`      | 测试代码                     |
 | `std/`        | VX 标准库（.vx 源文件）      |
 | `compiler/`   | VX 编译器前端源码（.vx 源文件） |
-| `cpp_lsp/`    | C++ LSP 语言服务器           |
+| `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |
+| `tools/`      | 独立工具子项目（vxls、vx-tidy） |
+| `docs/`       | 语言与格式文档               |
 | `Makefile`    | Make 构建配置                |
 | `CMakeLists.txt` | CMake 构建配置            |
 | `ci/`         | CI 检查脚本                  |

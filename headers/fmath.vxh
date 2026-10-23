@@ -1,0 +1,5 @@
+# fmath 库 — 浮点（float/double）类型的 VX ABI 声明头
+# @imp(fmath) 后以 fmath.halve / fmath.average 访问；符号为
+# _vx_fmath_halve / _vx_fmath_average。类型映射：float → double。
+extern func halve(x: float) -> float
+extern func average(a: float, b: float) -> float

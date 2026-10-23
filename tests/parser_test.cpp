@@ -33,17 +33,11 @@ const T *cast(NodeKind k, const Node *n) {
 // 词法 + 语法一体（arena 静态，保证 AST string_view 在断言期间有效）
 std::vector<const Stmt *> parse_src(std::string_view src) {
   static Arena arena;
-  auto toks = tokenize(src, arena);
-  if (!toks) {
-    std::fprintf(stderr, "FAIL lex (line %d): %s\n", toks.error().line,
-                 toks.error().message.c_str());
-    ++g_failures;
-    return {};
-  }
-  auto prog = parse(*toks, arena);
+  DiagBag bag;
+  auto toks = tokenize(src, "<test>", arena, bag);
+  auto prog = parse(toks, "<test>", arena, bag);
   if (!prog) {
-    std::fprintf(stderr, "FAIL parse (line %d): %s\n", prog.error().line,
-                 prog.error().message.c_str());
+    std::fprintf(stderr, "FAIL parse:\n%s", render_all(bag, src, false).c_str());
     ++g_failures;
     return {};
   }
@@ -210,23 +204,69 @@ void test_decls() {
   CHECK(st && st->name == "Pair" && st->fields.size() == 2);
 }
 
+// @imp / @cppimp 导入注解：库引用（含子目录路径）与可选 as 别名
+void test_import_directives() {
+  auto stmts = parse_src(
+      "@imp(math)\n"
+      "@imp(collections/vec) as cvec\n"
+      "@cppimp(cpp/greet.hpp)\n"
+      "@cppimp(\"cpp/other.hpp\") as other\n");
+  CHECK(stmts.size() == 4);
+  if (stmts.size() != 4) {
+    return;
+  }
+  const auto *d0 = cast<ImpDecl>(NodeKind::ImpDecl, stmts[0]);
+  CHECK(d0 && d0->lib == "math" && d0->alias.empty());
+  // 子目录引用拼接为 "collections/vec"；库名取末段由 importer 完成
+  const auto *d1 = cast<ImpDecl>(NodeKind::ImpDecl, stmts[1]);
+  CHECK(d1 && d1->lib == "collections/vec" && d1->alias == "cvec");
+  const auto *d2 = cast<CppImpDecl>(NodeKind::CppImpDecl, stmts[2]);
+  CHECK(d2 && d2->header == "cpp/greet.hpp" && d2->alias.empty());
+  // 字符串形式引用（含引号）同样接受
+  const auto *d3 = cast<CppImpDecl>(NodeKind::CppImpDecl, stmts[3]);
+  CHECK(d3 && d3->header == "cpp/other.hpp" && d3->alias == "other");
+}
+
 void test_errors() {
   Arena arena;
-  auto toks = tokenize("var x = \n", arena);
-  CHECK(toks.has_value());
-  if (toks) {
-    auto prog = parse(*toks, arena);
+  {
+    DiagBag bag;
+    auto toks = tokenize("var x = \n", "<test>", arena, bag);
+    CHECK(!bag.has_error());
+    auto prog = parse(toks, "<test>", arena, bag);
     CHECK(!prog.has_value()); // '=' 后缺表达式
-    if (!prog) {
-      CHECK(prog.error().line == 1);
-      CHECK(!prog.error().message.empty());
+    CHECK(bag.has_error());
+    if (bag.has_error()) {
+      const auto &d = bag.items().back();
+      CHECK(d.code == "E2010");
+      CHECK(d.line == 1);
+      CHECK(!d.message.empty());
     }
   }
-  auto toks2 = tokenize("if x\n    y = 1\n", arena);
-  CHECK(toks2.has_value());
-  if (toks2) {
-    auto prog2 = parse(*toks2, arena);
+  {
+    DiagBag bag;
+    auto toks2 = tokenize("if x\n    y = 1\n", "<test>", arena, bag);
+    CHECK(!bag.has_error());
+    auto prog2 = parse(toks2, "<test>", arena, bag);
     CHECK(!prog2.has_value()); // 缺 ':'
+    CHECK(bag.has_error());
+  }
+  {
+    // offending token 为多字符标识符：span 覆盖 token 整段
+    DiagBag bag;
+    auto toks3 = tokenize("if foo bar:\n    y = 1\n", "<test>", arena, bag);
+    CHECK(!bag.has_error());
+    auto prog3 = parse(toks3, "<test>", arena, bag);
+    CHECK(!prog3.has_value()); // 条件后缺 ':'
+    CHECK(bag.has_error());
+    if (bag.has_error()) {
+      const auto &d = bag.items().back();
+      CHECK(d.code == "E2010");
+      CHECK(d.line == 1);
+      CHECK(d.col == 8);       // "bar" 起始列
+      CHECK(d.end_line == 1);
+      CHECK(d.end_col == 11);  // 覆盖 3 个码点
+    }
   }
 }
 
@@ -265,24 +305,17 @@ void test_pipeline_vx_sources() {
         continue;
       }
       Arena arena;
-      auto toks = tokenize(*src, arena);
-      CHECK(toks.has_value());
-      if (!toks) {
-        std::fprintf(stderr, "FAIL lex %s (line %d): %s\n",
-                     it->path().string().c_str(), toks.error().line,
-                     toks.error().message.c_str());
+      DiagBag bag;
+      auto toks = tokenize(*src, it->path().string(), arena, bag);
+      auto prog = parse(toks, it->path().string(), arena, bag);
+      CHECK(!bag.has_error());
+      if (bag.has_error()) {
+        std::fprintf(stderr, "FAIL %s\n%s\n", it->path().string().c_str(),
+                     render_all(bag, *src, false).c_str());
         ++g_failures;
         continue;
       }
-      auto prog = parse(*toks, arena);
       CHECK(prog.has_value());
-      if (!prog) {
-        std::fprintf(stderr, "FAIL parse %s (line %d): %s\n",
-                     it->path().string().c_str(), prog.error().line,
-                     prog.error().message.c_str());
-        ++g_failures;
-        continue;
-      }
       CHECK(!prog->stmts.empty());
       stmts_total += prog->stmts.size();
       ++files;
@@ -296,28 +329,26 @@ void test_pipeline_vx_sources() {
   CHECK(src.has_value());
   if (src) {
     Arena arena;
-    auto toks = tokenize(*src, arena);
-    CHECK(toks.has_value());
-    if (toks) {
-      auto prog = parse(*toks, arena);
-      CHECK(prog.has_value());
-      if (prog) {
-        const auto *imp =
-            cast<Import>(NodeKind::Import, prog->stmts[0]);
-        CHECK(imp && imp->path == "std.error");
-        bool has_class = false;
-        bool has_tokenize = false;
-        for (const Stmt *s : prog->stmts) {
-          if (const auto *c = cast<ClassDecl>(NodeKind::ClassDecl, s)) {
-            has_class = c->name == "Lexer" && !c->methods.empty();
-          }
-          if (const auto *f = cast<FuncDecl>(NodeKind::FuncDecl, s)) {
-            has_tokenize = f->name == "tokenize";
-          }
+    DiagBag bag;
+    auto toks = tokenize(*src, "<lexer.vx>", arena, bag);
+    auto prog = parse(toks, "<lexer.vx>", arena, bag);
+    CHECK(!bag.has_error());
+    if (prog) {
+      const auto *imp =
+          cast<Import>(NodeKind::Import, prog->stmts[0]);
+      CHECK(imp && imp->path == "std.error");
+      bool has_class = false;
+      bool has_tokenize = false;
+      for (const Stmt *s : prog->stmts) {
+        if (const auto *c = cast<ClassDecl>(NodeKind::ClassDecl, s)) {
+          has_class = c->name == "Lexer" && !c->methods.empty();
         }
-        CHECK(has_class);
-        CHECK(has_tokenize);
+        if (const auto *f = cast<FuncDecl>(NodeKind::FuncDecl, s)) {
+          has_tokenize = f->name == "tokenize";
+        }
       }
+      CHECK(has_class);
+      CHECK(has_tokenize);
     }
   }
 }
@@ -333,6 +364,7 @@ int main() {
   test_control_flow();
   test_inline_body_with_semi();
   test_decls();
+  test_import_directives();
   test_errors();
   test_pipeline_vx_sources();
 

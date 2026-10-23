@@ -1,0 +1,2 @@
+# collections/vec 库 — 子目录库，用 @imp(collections/vec) 引用（库名取末段 vec）
+extern func sum_to(n: int) -> int

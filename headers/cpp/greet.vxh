@@ -1,0 +1,4 @@
+# cpp/greet 库 — @cppimp 伴生声明头（.vxh，必须与 greet.hpp 同目录同主名）
+# 用 @cppimp(cpp/greet.hpp) 引用；以 greet.greet(x) 访问。
+# VX ABI 类型映射：string → const char*。
+extern func greet(name: string) -> string

@@ -54,8 +54,14 @@ void Arena::new_block(std::size_t bytes, std::size_t alignment) {
 }
 
 void *Arena::allocate(std::size_t bytes, std::size_t alignment) {
+  // 零长度分配：不占用任何空间，仅返回对齐后的当前位置。
   if (bytes == 0) {
-    bytes = 1;
+    if (!current_) {
+      new_block(alignment, alignment);
+    }
+    const auto base = reinterpret_cast<std::uintptr_t>(current_->data());
+    return reinterpret_cast<void *>(
+        align_up(base + current_->used, alignment));
   }
 
   auto fits = [bytes, alignment](Block *b) -> bool {
@@ -78,6 +84,14 @@ void Arena::reset() noexcept {
     b->used = 0;
   }
   current_ = head_;
+}
+
+std::size_t Arena::size() const noexcept {
+  std::size_t total = 0;
+  for (Block *b = head_; b; b = b->next) {
+    total += b->used;
+  }
+  return total;
 }
 
 } // namespace vx::util

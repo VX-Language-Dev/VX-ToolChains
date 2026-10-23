@@ -27,18 +27,19 @@ using vx::compiler::Tok;
 using vx::compiler::Token;
 using vx::compiler::tokenize;
 
-// 词法分析辅助：返回 token 流；失败时输出错误并返回空。
+// 词法分析辅助：返回 token 流；出现词法错误时输出诊断并返回空。
 // 用静态 arena 承载字符串解码结果，保证返回后 text 仍然有效。
 std::vector<Token> lex(std::string_view src) {
   static vx::util::Arena arena;
-  auto r = tokenize(src, arena);
-  if (!r) {
-    std::fprintf(stderr, "unexpected lex error (line %d): %s\n",
-                 r.error().line, r.error().message.c_str());
+  vx::compiler::DiagBag bag;
+  auto toks = tokenize(src, "<test>", arena, bag);
+  if (bag.has_error()) {
+    std::fprintf(stderr, "unexpected lex error:\n%s",
+                 vx::compiler::render_all(bag, src, false).c_str());
     ++g_failures;
     return {};
   }
-  return {r->begin(), r->end()};
+  return {toks.begin(), toks.end()};
 }
 
 const Token *tok_at(const std::vector<Token> &toks, std::size_t i) {
@@ -57,6 +58,22 @@ const Token *tok_at(const std::vector<Token> &toks, std::size_t i) {
                    __FILE__, __LINE__, static_cast<std::size_t>(i),            \
                    std::string(vx::compiler::tok_name(t->kind)).c_str(),       \
                    std::string(t->text).c_str(), #kind_, text_);               \
+      ++g_failures;                                                            \
+    }                                                                          \
+  } while (0)
+
+// 断言 token 的行列位置（越界或行列不符时报告）
+#define CHECK_POS(toks, i, expect_line, expect_col)                            \
+  do {                                                                         \
+    if ((i) >= (toks).size()) {                                                \
+      std::fprintf(stderr, "FAIL %s:%d: token %zu 不存在\n", __FILE__,          \
+                   __LINE__, static_cast<std::size_t>(i));                     \
+      ++g_failures;                                                            \
+    } else if ((toks)[i].line != (expect_line) ||                              \
+               (toks)[i].col != (expect_col)) {                                \
+      std::fprintf(stderr, "FAIL %s:%d: token[%zu] 位置 = %d:%d, 期望 %d:%d\n", \
+                   __FILE__, __LINE__, static_cast<std::size_t>(i),            \
+                   (toks)[i].line, (toks)[i].col, (expect_line), (expect_col));\
       ++g_failures;                                                            \
     }                                                                          \
   } while (0)
@@ -201,26 +218,131 @@ void test_strings_comments() {
 }
 
 void test_errors() {
-  // 未闭合字符串
+  // 未闭合字符串（fail-soft：诊断入 bag，token 流仍以 Eof 收尾）
   {
     vx::util::Arena arena;
-    auto r = tokenize("\"abc", arena);
-    CHECK(!r.has_value());
-    if (!r) {
-      CHECK(r.error().line == 1);
-      CHECK(r.error().message == "字符串未闭合");
+    vx::compiler::DiagBag bag;
+    auto toks = tokenize("\"abc", "<test>", arena, bag);
+    CHECK(bag.has_error());
+    CHECK(toks.back().kind == Tok::Eof); // 流仍可用
+    CHECK(bag.size() == 1);
+    if (bag.size() == 1) {
+      const auto &d = bag.items()[0];
+      CHECK(d.code == "E2002");
+      CHECK(d.severity == vx::compiler::Severity::Error);
+      CHECK(d.file == "<test>");
+      CHECK(d.line == 1);
+      CHECK(d.col == 1);
+      CHECK(d.end_line == 1);
+      CHECK(d.end_col == 5); // span 覆盖 "abc 到 EOF
+      CHECK(d.message == "字符串未闭合");
     }
   }
-  // 无法识别的字符
+  // 无法识别的字符（恢复：跳过该字符，后续 token 仍产出）
   {
     vx::util::Arena arena;
-    auto r = tokenize("a = 1\n$\n", arena);
-    CHECK(!r.has_value());
-    if (!r) {
-      CHECK(r.error().line == 2);
-      CHECK(!r.error().message.empty());
+    vx::compiler::DiagBag bag;
+    auto toks = tokenize("a = 1\n$\nb = 2\n", "<test>", arena, bag);
+    CHECK(bag.has_error());
+    CHECK(bag.size() == 1);
+    if (bag.size() == 1) {
+      const auto &d = bag.items()[0];
+      CHECK(d.code == "E2001");
+      CHECK(d.line == 2);
+      CHECK(d.col == 1);
+      CHECK(d.end_line == 2);
+      CHECK(d.end_col == 2); // 高亮该非法字符本身（1 列）
+      CHECK(!d.message.empty());
     }
+    // 恢复后仍能看到后继标识符 b（位于第 3 行）
+    bool found_b = false;
+    for (const auto &t : toks) {
+      if (t.kind == Tok::Ident && t.text == "b") {
+        found_b = true;
+        CHECK(t.line == 3);
+      }
+    }
+    CHECK(found_b);
   }
+  // span 渲染联动：未闭合字符串的插入符覆盖到行尾（真实触发 P1-5 跨行退化）
+  {
+    vx::util::Arena arena;
+    vx::compiler::DiagBag bag;
+    const std::string_view src = "\"abc\n";
+    (void)tokenize(src, "<test>", arena, bag);
+    const std::string out = vx::compiler::render_all(bag, src, false);
+    CHECK(out.find("1 | \"abc\n") != std::string::npos);
+    CHECK(out.find("^^^^") != std::string::npos);
+  }
+}
+
+// token 列号：普通 token 定位到词素首字符，Indent/Dedent 定位到行首
+void test_token_columns() {
+  auto toks = lex("var x = 1\n    y = 2\n");
+  CHECK_TOK(toks, 0, Tok::Kw, "var");
+  CHECK_POS(toks, 0, 1, 1);  // var
+  CHECK_POS(toks, 1, 1, 5);  // x
+  CHECK_POS(toks, 2, 1, 7);  // =
+  CHECK_POS(toks, 3, 1, 9);  // 1
+  CHECK_POS(toks, 4, 1, 10); // Nl（行尾换行符所在列）
+  CHECK_POS(toks, 5, 2, 1);  // Indent（结构性 token → 行首）
+  CHECK_POS(toks, 6, 2, 5);  // y（缩进 4 空格后）
+  CHECK_POS(toks, 7, 2, 7);  // =
+  CHECK_POS(toks, 8, 2, 9);  // 2
+  CHECK_POS(toks, 9, 2, 10); // Nl
+  CHECK_POS(toks, 10, 3, 1); // Dedent
+  CHECK_POS(toks, 11, 3, 1); // Eof
+}
+
+// 列按 Unicode 码点计：UTF-8 标识符的后续字节不推进列号
+void test_token_columns_utf8() {
+  auto toks = lex("var 变量 = 1\n");
+  CHECK_TOK(toks, 0, Tok::Kw, "var");
+  CHECK_POS(toks, 0, 1, 1);  // var
+  CHECK_POS(toks, 1, 1, 5);  // 变量（6 字节但占 2 列）
+  CHECK_POS(toks, 2, 1, 8);  // =
+  CHECK_POS(toks, 3, 1, 10); // 1
+  CHECK_POS(toks, 4, 1, 11); // Nl
+}
+
+// 跨行字符串：换行同时推进行号（回归：不可重复计数）
+void test_multiline_string_positions() {
+  auto toks = lex("s = \"a\nb\"\nx = 1\n");
+  CHECK_TOK(toks, 0, Tok::Ident, "s");
+  CHECK_POS(toks, 0, 1, 1);
+  CHECK_POS(toks, 1, 1, 3); // =
+  CHECK_TOK(toks, 2, Tok::Str, "a\nb");
+  CHECK_POS(toks, 2, 1, 5); // 起始引号
+  CHECK_POS(toks, 3, 2, 3); // 字符串后的 Nl（第 2 行）
+  CHECK_TOK(toks, 4, Tok::Ident, "x");
+  CHECK_POS(toks, 4, 3, 1); // x 位于第 3 行（而非漂移到第 4 行）
+  CHECK_POS(toks, 6, 3, 5); // 1
+  CHECK_POS(toks, 7, 3, 6); // Nl
+}
+
+// 导入注解前缀 '@'：应为独立 At token（供 @imp / @cppimp 使用）
+void test_at_directive() {
+  auto toks = lex("@imp(math)\n");
+  CHECK_TOK(toks, 0, Tok::At, "@");
+  CHECK_TOK(toks, 1, Tok::Ident, "imp");
+  CHECK_TOK(toks, 2, Tok::LParen, "(");
+  CHECK_TOK(toks, 3, Tok::Ident, "math");
+  CHECK_TOK(toks, 4, Tok::RParen, ")");
+  CHECK_TOK(toks, 5, Tok::Nl, "");
+  CHECK_TOK(toks, 6, Tok::Eof, "");
+  CHECK_POS(toks, 0, 1, 1); // '@' 位于行首第 1 列
+
+  // 子目录库引用（路径片段）与字符串形式引用
+  auto path = lex("@cppimp(cpp/greet.hpp)\n");
+  CHECK_TOK(path, 0, Tok::At, "@");
+  CHECK_TOK(path, 1, Tok::Ident, "cppimp");
+  CHECK_TOK(path, 2, Tok::LParen, "(");
+  CHECK_TOK(path, 3, Tok::Ident, "cpp");
+  CHECK_TOK(path, 4, Tok::Slash, "/");
+  CHECK_TOK(path, 5, Tok::Ident, "greet");
+  CHECK_TOK(path, 6, Tok::Dot, ".");
+  CHECK_TOK(path, 7, Tok::Ident, "hpp");
+  CHECK_TOK(path, 8, Tok::RParen, ")");
 }
 
 // 用仓库内全部真实 VX 源码驱动词法分析器
@@ -260,27 +382,28 @@ void test_vx_sources() {
       }
 
       vx::util::Arena arena;
-      auto r = tokenize(*src, arena);
-      CHECK(r.has_value());
-      if (!r) {
-        std::fprintf(stderr, "FAIL %s:%d: %s (line %d): %s\n", __FILE__,
-                     __LINE__, it->path().string().c_str(), r.error().line,
-                     r.error().message.c_str());
+      vx::compiler::DiagBag bag;
+      auto toks = tokenize(*src, it->path().string(), arena, bag);
+      CHECK(!bag.has_error());
+      if (bag.has_error()) {
+        std::fprintf(stderr, "FAIL %s:%d: %s\n%s\n", __FILE__, __LINE__,
+                     it->path().string().c_str(),
+                     vx::compiler::render_all(bag, *src, false).c_str());
         ++g_failures;
         continue;
       }
-      CHECK(!r->empty());
-      if (r->empty()) {
+      CHECK(!toks.empty());
+      if (toks.empty()) {
         continue;
       }
       // 流以 Eof 结尾，行号单调不减
-      CHECK(r->back().kind == Tok::Eof);
+      CHECK(toks.back().kind == Tok::Eof);
       int last_line = 1;
-      for (const auto &t : *r) {
+      for (const auto &t : toks) {
         CHECK(t.line >= last_line);
         last_line = t.line;
       }
-      total_tokens += r->size();
+      total_tokens += toks.size();
       ++total_files;
     }
   }
@@ -309,6 +432,10 @@ int main() {
   test_operators_numbers();
   test_strings_comments();
   test_errors();
+  test_token_columns();
+  test_token_columns_utf8();
+  test_multiline_string_positions();
+  test_at_directive();
   test_vx_sources();
 
   if (g_failures != 0) {

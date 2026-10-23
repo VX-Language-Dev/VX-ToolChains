@@ -16,6 +16,7 @@ enum class NodeKind : std::uint8_t {
   // 语句
   ExprStmt, VarDecl, Assign, FuncDecl, ExternDecl, Import, Export,
   Return, Break, Continue, If, While, For, ClassDecl, StructDecl,
+  ImpDecl, CppImpDecl, // @imp / @cppimp 导入注解
 };
 
 struct Node {
@@ -155,6 +156,18 @@ struct Import : Stmt { // import a.b.c [as alias]
 struct Export : Stmt { // export name
   std::string_view name;
   Export(std::string_view n, int l) : Stmt{NodeKind::Export, l}, name(n) {}
+};
+struct ImpDecl : Stmt { // @imp(库引用) [as alias]
+  std::string_view lib;   // 库引用："math" | "collections/vec" | "/sub/lib" | "./mylib"
+  std::string_view alias; // 空表示取库名末段作为访问前缀
+  ImpDecl(std::string_view l_, std::string_view a, int ln)
+      : Stmt{NodeKind::ImpDecl, ln}, lib(l_), alias(a) {}
+};
+struct CppImpDecl : Stmt { // @cppimp(头文件路径) [as alias]
+  std::string_view header; // C++ 头文件路径
+  std::string_view alias;
+  CppImpDecl(std::string_view h, std::string_view a, int ln)
+      : Stmt{NodeKind::CppImpDecl, ln}, header(h), alias(a) {}
 };
 struct Return : Stmt {
   const Expr *value; // 可空

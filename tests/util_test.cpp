@@ -221,6 +221,37 @@ void test_vx_sources() {
   CHECK(!read_file(root / "compiler").has_value());
 }
 
+void test_platform() {
+  const std::string arch = vx::util::host_arch();
+  const std::string os = vx::util::host_os();
+  const std::string triple = vx::util::host_triple();
+
+  // 架构取值在已知集合内
+  CHECK(arch == "arm64" || arch == "x86_64" || arch == "arm" ||
+        arch == "i386" || arch == "riscv64" || arch == "unknown");
+  // 系统取值在已知集合内
+  CHECK(os == "macosx" || os == "linux" || os == "windows" || os == "unix" ||
+        os == "unknown");
+
+  // triple = arch-vendor-os 的规范拼接
+  if (os == "macosx") {
+    CHECK(triple == arch + "-apple-macosx");
+  } else if (os == "linux") {
+    // Linux 上 arm64 规范名为 aarch64
+    CHECK(triple ==
+          std::string(arch == "arm64" ? "aarch64" : arch) + "-unknown-linux-gnu");
+  } else if (os == "windows") {
+    CHECK(triple == arch + "-pc-windows-msvc");
+  } else {
+    CHECK(triple == arch + "-unknown-" + os);
+  }
+
+  // 人读名非空且含架构
+  const std::string name = vx::util::host_name();
+  CHECK(!name.empty());
+  CHECK(name.find(arch) != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -228,6 +259,7 @@ int main() {
   test_str();
   test_fs();
   test_vx_sources();
+  test_platform();
 
   if (g_failures != 0) {
     std::fprintf(stderr, "%d 项检查失败\n", g_failures);

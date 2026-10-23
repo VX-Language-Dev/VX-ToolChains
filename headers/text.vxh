@@ -1,0 +1,6 @@
+# text 库 — 字符串/布尔/void 类型的 VX ABI 声明头
+# @imp(text) 后以 text.length / text.is_empty / text.shout 访问。
+# 类型映射：string → const char*，bool → int32_t，无返回 = void。
+extern func length(s: string) -> int
+extern func is_empty(s: string) -> bool
+extern func shout(s: string)

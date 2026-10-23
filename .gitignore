@@ -69,3 +69,9 @@ zig-out/
 
 # C++ (CMake+Ninja) 构建产物
 build/
+.info/
+.kilo/
+.opencode/
+.qwen/
+.continue/
+.workbuddy

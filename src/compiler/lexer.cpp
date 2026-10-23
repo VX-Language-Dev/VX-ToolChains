@@ -32,8 +32,9 @@ bool is_digit(char c) { return c >= '0' && c <= '9'; }
 
 class Lexer {
 public:
-  Lexer(std::string_view src, vx::util::Arena &arena)
-      : src_(src), arena_(arena) {}
+  Lexer(std::string_view src, std::string_view filename,
+        vx::util::Arena &arena, DiagBag &bag)
+      : src_(src), filename_(filename), arena_(arena), bag_(bag) {}
 
   bool run() {
     while (true) {
@@ -48,14 +49,14 @@ public:
 
       const char c = src_[pos_];
       const char n = peek();
+      begin_token(); // 记录本 token 起始行列，供 emit 使用
 
       if (c == '\n') {
-        const int ln = line_; // Nl 归属其终止的逻辑行，便于诊断定位
-        advance();
-        if (paren_lvl_ == 0) {
-          tokens_.push_back(Token{Tok::Nl, {}, ln});
+        if (paren_lvl_ == 0) { // Nl 归属其终止的逻辑行，列为其终止符列
+          emit(Tok::Nl);
           at_start_ = true;
         }
+        advance();
         continue;
       }
       if (c == '\r') { // CRLF 兼容：回车视为空白
@@ -97,7 +98,6 @@ public:
   }
 
   std::span<const Token> tokens() const { return tokens_; }
-  const LexError &error() const { return err_; }
 
 private:
   char ch() const { return pos_ < src_.size() ? src_[pos_] : '\0'; }
@@ -107,12 +107,21 @@ private:
   }
 
   void advance() {
-    if (pos_ < src_.size()) {
-      if (src_[pos_] == '\n') {
-        ++line_;
-      }
-      ++pos_;
+    if (pos_ >= src_.size()) {
+      return;
     }
+    const char c = src_[pos_];
+    if (c == '\n') {
+      ++line_;
+      col_ = 1;
+    } else if (c == '\t') {
+      // 制表符按 4 列宽计，与 handle_indent() 的缩进宽度保持一致
+      col_ += 4;
+    } else if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) {
+      // 列按 Unicode 码点计：UTF-8 后续字节（10xxxxxx）不推进列号
+      ++col_;
+    }
+    ++pos_;
   }
 
   void skip_spaces() {
@@ -128,12 +137,27 @@ private:
   }
 
   void emit(Tok kind, std::string_view text = {}) {
-    tokens_.push_back(Token{kind, text, line_});
+    tokens_.push_back(Token{kind, text, tok_line_, tok_col_});
   }
 
-  bool err(std::string_view message) {
-    err_ = LexError{std::string(message), line_};
-    return false;
+  // 记录当前 token 起始位置：读取 token 文本前调用
+  void begin_token() {
+    tok_line_ = line_;
+    tok_col_ = col_;
+  }
+
+  // 结构性 token（Indent/Dedent）不对应具体字符，定位到逻辑行首
+  void begin_line_token() {
+    tok_line_ = line_;
+    tok_col_ = 1;
+  }
+
+  // 词法错误（fail-soft）：把带 span 的诊断推入 bag。
+  // 调用方随后做最小恢复并继续词法分析，不中断整个流程。
+  void fail_span(std::string_view code, std::string message, int sline,
+                 int scol, int eline, int ecol) {
+    bag_.add(make_diag_span(code, Severity::Error, std::move(message),
+                            std::string(filename_), sline, scol, eline, ecol));
   }
 
   // 行首缩进处理：跳过空行/注释行，产出 INDENT/DEDENT
@@ -165,7 +189,8 @@ private:
         continue;
       }
       if (pos_ >= src_.size()) { // 文件结束：回退全部缩进
-        while (indents_.size() > 1) {
+        begin_line_token();
+        while (indents_.size() > 1 && !indents_.empty()) {
           indents_.pop_back();
           emit(Tok::Dedent);
         }
@@ -175,9 +200,11 @@ private:
       if (indent > top) {
         if (paren_lvl_ == 0) { // 括号内续行不产生 INDENT
           indents_.push_back(indent);
+          begin_line_token();
           emit(Tok::Indent);
         }
       } else if (indent < top) {
+        begin_line_token();
         while (indents_.size() > 1 && indents_.back() > indent) {
           indents_.pop_back();
           emit(Tok::Dedent);
@@ -192,7 +219,10 @@ private:
     decoded_.clear();
     while (true) {
       if (pos_ >= src_.size()) {
-        return err("字符串未闭合");
+        // span：自起始引号覆盖到文件末尾
+        fail_span(diag_code::lex_unterminated_string, "字符串未闭合", tok_line_,
+                  tok_col_, line_, col_);
+        return true; // 恢复：字符串已读到文件末尾，交由 run() 收尾
       }
       if (ch() == quote) {
         advance();
@@ -201,7 +231,10 @@ private:
       if (ch() == '\\') {
         advance();
         if (pos_ >= src_.size()) {
-          return err("转义序列不完整");
+          // span：高亮行尾反斜杠本身（col_ 已越过它）
+          fail_span(diag_code::lex_incomplete_escape, "转义序列不完整", line_,
+                    col_ - 1, line_, col_);
+          return true;
         }
         const char e = ch();
         advance();
@@ -227,9 +260,7 @@ private:
         }
         continue;
       }
-      if (ch() == '\n') { // 字符串允许跨行（与自举实现一致）
-        ++line_;
-      }
+      // 字符串允许跨行（与自举实现一致）；换行由 advance() 统一维护行/列
       decoded_ += ch();
       advance();
     }
@@ -421,11 +452,19 @@ private:
       advance();
       emit(Tok::Dot, ".");
       return true;
+    case '@':
+      advance();
+      emit(Tok::At, "@");
+      return true;
     default: {
       char buf[32];
       const auto u = static_cast<unsigned char>(c);
       std::snprintf(buf, sizeof(buf), "无法识别的字符 0x%02X", u);
-      return err(buf);
+      // span：高亮该字符本身（1 列）
+      fail_span(diag_code::lex_unknown_char, buf, tok_line_, tok_col_, tok_line_,
+                tok_col_ + 1);
+      advance(); // 恢复：跳过该字符，继续词法分析
+      return true;
     }
     }
   }
@@ -435,26 +474,33 @@ private:
     if (!at_start_ && !tokens_.empty()) {
       const Tok last = tokens_.back().kind;
       if (last != Tok::Nl && last != Tok::Indent && last != Tok::Dedent) {
+        begin_token(); // 合成的 Nl 定位到当前行末
         emit(Tok::Nl);
       }
     }
-    while (indents_.size() > 1) {
+    begin_line_token();
+    while (indents_.size() > 1 && !indents_.empty()) {
       indents_.pop_back();
       emit(Tok::Dedent);
     }
+    begin_token(); // Eof 定位到文件结束处
     emit(Tok::Eof);
   }
 
   std::string_view src_;
+  std::string_view filename_; // 诊断定位用（可为空）
   vx::util::Arena &arena_;
+  DiagBag &bag_;              // 共享诊断收集器
   std::vector<Token> tokens_;
   std::vector<int> indents_{0}; // 缩进栈，栈底为 0
   std::string decoded_;         // 字符串解码缓冲
   std::size_t pos_ = 0;
   int line_ = 1;
+  int col_ = 1;
+  int tok_line_ = 1; // 当前 token 起始行（emit 使用）
+  int tok_col_ = 1;  // 当前 token 起始列
   int paren_lvl_ = 0;
   bool at_start_ = true; // 是否位于行首（待处理缩进）
-  LexError err_;
 };
 
 } // namespace
@@ -550,16 +596,16 @@ std::string_view tok_name(Tok kind) {
     return "Comma";
   case Tok::Dot:
     return "Dot";
+  case Tok::At:
+    return "At";
   }
   return "?";
 }
 
-std::expected<std::span<const Token>, LexError>
-tokenize(std::string_view src, vx::util::Arena &arena) {
-  Lexer lex(src, arena);
-  if (!lex.run()) {
-    return std::unexpected(lex.error());
-  }
+std::span<const Token> tokenize(std::string_view src, std::string_view filename,
+                                vx::util::Arena &arena, DiagBag &bag) {
+  Lexer lex(src, filename, arena, bag);
+  lex.run(); // fail-soft：诊断已推入 bag，token 流始终可用
   const std::span<const Token> toks = lex.tokens();
   auto *arr = static_cast<Token *>(
       arena.allocate(sizeof(Token) * toks.size(), alignof(Token)));

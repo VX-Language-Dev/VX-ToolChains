@@ -5,27 +5,24 @@
 #pragma once
 
 #include "vx/compiler/ast.hpp"
+#include "vx/compiler/diag.hpp"
 #include "vx/compiler/lexer.hpp"
 #include "vx/util/arena.hpp"
 
-#include <expected>
+#include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 
 namespace vx::compiler {
-
-struct ParseError {
-  std::string message;
-  int line;
-};
 
 struct Program {
   std::span<const Stmt *const> stmts;
 };
 
 // 解析整个程序；AST 节点全部在 arena 上分配，生命周期随 arena。
-std::expected<Program, ParseError> parse(std::span<const Token> tokens,
-                                         vx::util::Arena &arena);
+// fail-fast：首个语法错误即推入 bag 并返回 std::nullopt（不做恢复重同步）。
+std::optional<Program> parse(std::span<const Token> tokens,
+                             std::string_view filename, vx::util::Arena &arena,
+                             DiagBag &bag);
 
 } // namespace vx::compiler

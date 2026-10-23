@@ -1,0 +1,4 @@
+# math 库 — VX ABI 声明头（.vxh）
+# @imp(math) 后以 math.add / math.mul 访问；符号 _vx_math_add / _vx_math_mul
+extern func add(a: int, b: int) -> int
+extern func mul(a: int, b: int) -> int
