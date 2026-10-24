@@ -30,10 +30,12 @@ LinkResult link_executable(std::string_view ll_ir, std::string_view exe_path,
 
 // 模块感知链接：在 link_executable 基础上，依 ModuleIR::libs 并入导入库的
 // 实现文件（@imp 的 .c/.a/.dylib），并为 @cppimp 生成 C++ shim 一并编译。
+// shared 为 true 时输出动态库（clang -shared -fPIC），否则输出可执行文件。
 LinkResult link_module(std::string_view ll_ir,
                        const vx::compiler::ir::ModuleIR &mod,
                        std::string_view exe_path,
-                       std::string_view target = {});
+                       std::string_view target = {},
+                       bool shared = false);
 
 // 生成 @cppimp 的 C++ shim 源码：为每个 C++ 导入符号生成 extern "C" 包装，
 // 把 C++ ABI 转换为 VX ABI（符号 _vx_<lib>_<name>，类型映射见 vxabi.hpp）。

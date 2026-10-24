@@ -69,6 +69,15 @@ zig-out/
 
 # C++ (CMake+Ninja) 构建产物
 build/
+# 交叉构建产物
+build-*/
+dist/
+.cross-wrappers/
+# 交叉编译器 wrapper（由 make-cross-wrappers.sh 生成）
+scripts/toolchains/zig-cxx-*
+scripts/toolchains/clang-cxx-*
+scripts/toolchains/zig-ar
+scripts/toolchains/zig-ranlib
 .info/
 .kilo/
 .opencode/

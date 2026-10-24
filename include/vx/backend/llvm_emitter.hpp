@@ -17,9 +17,11 @@ struct EmitResult {
 
 // 将 ModuleIR 降为 LLVM IR 文本。
 // - target_triple 写入 IR 头（供 clang 选择目标）。
-// - 函数 main 发射为 @vx_main，并额外生成 i32 @main() 包装作为可执行入口。
+// - 函数 main 发射为 @vx_main；emit_entry 为 true 时额外生成 i32 @main()
+//   包装作为可执行入口，动态库目标传 false 以避免导出进程入口。
 // - 遇到 MVP 未覆盖的 opcode 或无法解析的调用时 ok=false，error 含中文原因。
 EmitResult emit_llvm_ir(const vx::compiler::ir::ModuleIR &mod,
-                        std::string_view target_triple);
+                        std::string_view target_triple,
+                        bool emit_entry = true);
 
 } // namespace vx::backend

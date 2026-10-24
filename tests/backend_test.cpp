@@ -165,6 +165,19 @@ void test_emitter_simple() {
   CHECK(ir.find("ret i32 0") != std::string::npos);
 }
 
+void test_emitter_no_entry_wrapper() {
+  // 动态库模式：main 仍发射为 @vx_main，但不生成进程入口 @main
+  auto m = gen_src(
+      "func main() -> int:\n"
+      "    return 0\n");
+  CHECK(m);
+  auto r = backend::emit_llvm_ir(*m, kTriple, false);
+  CHECK(r.ok);
+  if (!r.ok) return;
+  CHECK(r.ir.find("define i32 @vx_main()") != std::string::npos);
+  CHECK(r.ir.find("define i32 @main()") == std::string::npos);
+}
+
 void test_emitter_arithmetic_and_branch() {
   auto m = gen_src(
       "extern out_int(v: int)\n"
@@ -324,6 +337,7 @@ int main() {
   test_reader_bad_version();
 
   test_emitter_simple();
+  test_emitter_no_entry_wrapper();
   test_emitter_arithmetic_and_branch();
   test_emitter_param_and_return();
   test_emitter_void_function();

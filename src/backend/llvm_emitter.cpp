@@ -156,8 +156,8 @@ const char *op_name(std::uint8_t op) {
 
 class Emitter {
 public:
-  Emitter(const ir::ModuleIR &mod, std::string_view triple)
-      : mod_(mod), triple_(triple) {}
+  Emitter(const ir::ModuleIR &mod, std::string_view triple, bool emit_entry)
+      : mod_(mod), triple_(triple), emit_entry_(emit_entry) {}
 
   EmitResult run() {
     for (const ir::FuncIR &f : mod_.funcs) {
@@ -173,9 +173,11 @@ public:
       if (!emit_function(f)) return {false, error_, {}};
       funcs_txt += func_block_;
     }
-    // main 入口包装
-    if (!emit_main_wrapper()) return {false, error_, {}};
-    funcs_txt += func_block_;
+    // main 入口包装（动态库不需要进程入口）
+    if (emit_entry_) {
+      if (!emit_main_wrapper()) return {false, error_, {}};
+      funcs_txt += func_block_;
+    }
 
     // 组装输出
     std::string out;
@@ -758,6 +760,7 @@ private:
   // 状态
   const ir::ModuleIR &mod_;
   std::string_view triple_;
+  bool emit_entry_ = true;
   std::map<std::string_view, const ir::FuncIR *> fn_by_name_;
   std::map<std::string, const ir::LinkEntry *> extern_by_sym_;
   std::set<std::string> used_externs_;
@@ -783,8 +786,9 @@ private:
 
 } // namespace
 
-EmitResult emit_llvm_ir(const ir::ModuleIR &mod, std::string_view target_triple) {
-  return Emitter(mod, target_triple).run();
+EmitResult emit_llvm_ir(const ir::ModuleIR &mod, std::string_view target_triple,
+                        bool emit_entry) {
+  return Emitter(mod, target_triple, emit_entry).run();
 }
 
 } // namespace vx::backend

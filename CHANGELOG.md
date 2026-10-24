@@ -1,5 +1,79 @@
 # CHANGELOG
 
+## v1.10.0 — VMake 构建系统与多文件 / 动态库链接 (2026-10-23)
+
+### VMake（`tools/vmake`）
+
+- **VMakeLists.toml**：最小 TOML 子集解析（注释、`[[exe]]` / `[[dylib]]` 数组表、转义/字面量字符串、跨行字符串数组与尾随逗号）
+- **目标模型**：当前仅支持从源文件声明可执行文件与动态链接库；`name` / `sources` 必填，`output` 可选（相对构建目录）
+- **构建编排**：动态库先于可执行文件；每个源文件调用 `vxc -o <obj>.vxobj`，随后 `vlnk <obj...> -o <产物>`（dylib 加 `--shared`）
+- **Cargo 风格输出**：`Compiling` / `Finished` / `Fresh` / `error: could not compile ...`，`--color auto|always|never`
+- **`-B <dir>` 必填**（CMake 风格，不存在自动创建），产物与中间文件均隔离在构建目录
+- **增量构建**：产物新于配置与全部源文件时跳过；`-v` 打印实际命令
+- **工具链定位**：`VX_VXC` / `VX_VLNK` 覆盖 → vmake 附近（适配 `build/tools/vmake` 布局）→ `PATH`；导入库根自动回退到项目/编译器旁 `headers/`
+- 单元测试（配置/计划/命名）+ 端到端测试（真实 vxc/vlnk/clang，覆盖顺序、多文件、增量、失败诊断）
+
+### 后端（`vlnk`）
+
+- **多输入合并**：接受多个 `.vxobj`，合并函数/链接表/库依赖/全局名；重复函数定义干净报错，支持 VMake 多源文件目标
+- **`--shared`**：动态库输出（`clang -shared -fPIC`），`emit_llvm_ir` 新增入口包装开关，动态库不生成 `@main`
+- 版本 `vlnk 0.2.0`
+
+### 构建与文档
+
+- CTest **15/15 全绿**（新增 `vmake_tests` / `vmake_e2e_tests`）
+- README：模块表、构建产物、vlnk 多输入/动态库用法、使用指南第 4 节改为 VMake、结构树与测试组数同步
+- CONTRIBUTING：工具目录与测试组数同步
+
+## v1.9.0 — C++ 工具链核心落地：前端、后端与开发工具 (2026-10-23)
+
+### 编译器前端（`vxc002`，`--version` 显示 vxc003）
+
+- **diag 诊断模块**：Severity / DiagBag / Cargo 风格渲染，`--color auto|always|never`，Lexer fail-soft 聚合多错误
+- **Lexer**：Python 风格缩进（INDENT/DEDENT）、`;` → Nl、1 起始 Unicode 列号、UTF-8 标识符
+- **Parser**：核心子集 + `class` / `struct` / `extern` / `const` / `export` / 列表 / 字典 / 下标与属性赋值
+- **Codegen**：TypeIR 栈机指令发射（对齐自举 `codegen.vx`），方法调用、列表/字典字面量、复合赋值、for 降级、无 return 补齐
+- **VXOBJ writer**（v4）：`target` 三元组由 `platform.hpp` 自动检测（host triple）
+- **四项核心改进**：
+  - `and` / `or` 短路求值（临时槽位 alloca 合流，规避 SSA 汇合点无 phi）
+  - 变量类型传播（浮点/字符串变量的运算与比较不再退化为 I32 族）
+  - 字符串 `==` / `!=` 改为 `strcmp` 内容比较（修复地址比较）
+  - `^` 幂运算（内置 `vx_pow_i32` 快速幂）
+
+### 后端链接器（`vlnk`）
+
+- **SSA 直接发射**：VXOBJ → ModuleIR → LLVM IR（`.ll` 文本）→ 宿主 clang 链接为原生可执行文件（Mach-O / ELF）
+- **vxrt 内置运行时**：out / out_int / out_bool / out_float / vx_str_concat / vx_pow_i32，malloc/free/puts/exit/strcmp 走 libc
+- **F64 族**：常量、四则、比较、取负；`need_i32` 类型校验让 int/float 混用在发射期干净报错
+- **CLI**：`-o` / `--emit-ir` / `--dump` / `--target <triple>`（默认自动检测 host，显式指定时透传 `clang -target` 交叉编译）
+- 栈机约定：每个表达式恰占一个栈槽，void 调用压占位值以保证 POP 不下溢
+
+### 库导入与 VX ABI
+
+- `@imp(lib) [as 别名]` / `@cppimp(header) [as 别名]`：importer 装载 `.vxh` 声明头 + 同名实现文件
+- **VX ABI**：符号 `_vx_<lib>_<name>`，类型映射 int→i32 / float→double / bool→i32 / string→ptr / void→void（`VX_ABI_VERSION=1`）
+- VXOBJ 新增可选 `Deps` 段记录链接依赖；`@cppimp` 链接期自动生成 `extern "C"` C++ shim（按需 `-lc++`/`-lstdc++`）
+- `headers/` 示例库覆盖全部 5 种 ABI 类型：`math`（int）、`fmath`（float）、`text`（string/void）、`collections/vec`（子目录）、`cpp/greet`（C++）
+- 修复 `@imp(...) as 别名` 被去重跳过、别名调用落入方法分支导致后端报未知方法的 bug
+
+### 开发工具
+
+- **vxls 0.2.0**（`tools/vxls`）：LSP over stdio，前端诊断 + vx-tidy 合并发布（`--no-tidy` 关闭）、富化 hover（签名/参数表/文档注释/内置运行时/导入库 ABI 与来源）、definition / documentSymbol / completion、`--only-tidy` 单独跑检查（text/json）、`--stdio` / `-V` / `-h`
+- **vx-tidy**（`tools/vx-tidy`）：引擎动态库化为 `libvxtidy.dylib`（CLI 与 vxls 共用），VXTIDY001~005 语义规则 + VXTIDY900 前端透传，退出码 0/1/2
+- **tree-sitter-vx**：Tree-sitter 语法（缩进扫描器、语料库测试），供编辑器高亮与语法导航
+
+### 文档
+
+- 新增 `docs/SYNTAX.md`：编译器实际支持的语法参考（词法/类型/声明/导入/语句/表达式优先级/栈机语义注意/已知限制）
+- README 全面同步真实状态：C++23 实现、模块状态表、编译/链接流水线、构建产物与 CLI 用法、vlnk 选项、内置类型列表、项目结构（`tree-sitter-vx/`、`cpp_lsp/`）、规划中特性显式标注
+- CONTRIBUTING 结构表与 README 对齐
+
+### 构建与测试
+
+- CMake 自动纳入 `tools/*/CMakeLists.txt`（须在 `enable_testing()` 之后），工具子项目支持独立配置
+- **CTest 13/13 全绿**：util / diag / lexer / parser / codegen / vxobj / e2e / backend / vlnk_e2e / import / import_e2e / vx_tidy / vxls
+- 移除引导期一次性文档（BOOTSTRAP_*、IMPROVEMENTS、FIX_ANALYSIS_TODO 等）、旧测试产物与工具残留目录
+
 ## v1.8.0 — 迁移至 C++ 重写、移除 Go 工具链 (2026-10-13)
 
 ### 架构重构

@@ -70,11 +70,12 @@ struct MemorySource {
   std::string content;
 };
 
-// 核心链接实现：.ll + vxrt.c + 附加磁盘文件 + 附加内存源 → 可执行文件。
+// 核心链接实现：.ll + vxrt.c + 附加磁盘文件 + 附加内存源 → 可执行文件/动态库。
 LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
                      std::string_view target,
                      const std::vector<std::string> &extra_files,
-                     const std::vector<MemorySource> &extra_sources) {
+                     const std::vector<MemorySource> &extra_sources,
+                     bool shared = false) {
   LinkResult r;
   const std::string clang = find_clang();
   if (clang.empty()) {
@@ -120,6 +121,12 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
   }
   args.push_back("-Wno-override-module");
   r.command += " -Wno-override-module";
+  // 动态库：位置无关代码 + 共享链接（macOS .dylib / Linux .so）
+  if (shared) {
+    args.push_back("-shared");
+    args.push_back("-fPIC");
+    r.command += " -shared -fPIC";
+  }
   // C++ 源（@cppimp shim / 实现）：clang 驱动不会自动补 C++ 标准库，
   // 显式链接之，否则 std::string 等符号未定义。
   bool any_cxx = false;
@@ -275,7 +282,8 @@ std::string generate_cpp_shim(const vx::compiler::ir::ModuleIR &mod) {
 
 LinkResult link_module(std::string_view ll_ir,
                        const vx::compiler::ir::ModuleIR &mod,
-                       std::string_view exe_path, std::string_view target) {
+                       std::string_view exe_path, std::string_view target,
+                       bool shared) {
   std::vector<std::string> extra_files;
   for (const vx::compiler::ir::LibDep &d : mod.libs) {
     if (d.impl_file.empty()) continue;
@@ -288,7 +296,7 @@ LinkResult link_module(std::string_view ll_ir,
     if (d.from_cpp && !d.cpp_header.empty()) any_cpp = true;
   }
   if (any_cpp) extra_sources.push_back({"vxshim.cpp", generate_cpp_shim(mod)});
-  return link_impl(ll_ir, exe_path, target, extra_files, extra_sources);
+  return link_impl(ll_ir, exe_path, target, extra_files, extra_sources, shared);
 }
 
 } // namespace vx::backend

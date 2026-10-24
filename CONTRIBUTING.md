@@ -50,13 +50,15 @@ make check              # 本地 CI 全套检查
 
 | 目录/文件     | 说明                         |
 | ------------- | ---------------------------- |
-| `src/`        | C++ 源码（Util 层等）        |
+| `src/`        | C++ 源码（util / compiler / backend / driver） |
 | `include/`    | 公开头文件                   |
-| `tests/`      | 测试代码                     |
+| `tests/`      | 测试代码（CTest 15 组）      |
 | `std/`        | VX 标准库（.vx 源文件）      |
 | `compiler/`   | VX 编译器前端源码（.vx 源文件） |
 | `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |
-| `tools/`      | 独立工具子项目（vxls、vx-tidy） |
+| `tools/`      | 独立工具子项目（vmake、vxls、vx-tidy） |
+| `tree-sitter-vx/` | Tree-sitter 语法（编辑器高亮） |
+| `cpp_lsp/`    | 早期独立 LSP 原型（已由 tools/vxls 取代） |
 | `docs/`       | 语言与格式文档               |
 | `Makefile`    | Make 构建配置                |
 | `CMakeLists.txt` | CMake 构建配置            |
