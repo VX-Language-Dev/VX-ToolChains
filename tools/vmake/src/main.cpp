@@ -48,7 +48,7 @@ static void print_help() {
                "  -V, --version   打印版本\n"
                "  -h, --help      显示本帮助\n"
                "\n"
-               "VMakeLists.toml（当前仅支持 exe / dylib 两类目标）：\n"
+               "VMakeSet.vmake（当前仅支持 exe / dylib 两类目标）：\n"
                "  [[exe]]\n"
                "  name = \"hello\"\n"
                "  sources = [\"src/main.vx\"]\n"
@@ -176,11 +176,11 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "error: 无法获取当前目录: %s\n", ec.message().c_str());
     return 1;
   }
-  const fs::path manifest_path = cwd / "VMakeLists.toml";
+  const fs::path manifest_path = cwd / "VMakeSet.vmake";
   auto text = vx::util::read_file(manifest_path);
   if (!text) {
     std::fprintf(stderr,
-                 "error: 未找到 VMakeLists.toml（请在项目根目录运行 vmake）\n");
+                 "error: 未找到 VMakeSet.vmake（请在项目根目录运行 vmake）\n");
     return 1;
   }
 

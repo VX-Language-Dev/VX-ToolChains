@@ -56,14 +56,9 @@ bool fails_with(std::string_view text, std::string_view needle) {
 
 void test_basic_targets() {
   const std::string text = "# demo\n"
-                           "[[exe]]\n"
-                           "name = \"hello\"\n"
-                           "sources = [\"src/main.vx\", \"src/util.vx\"]\n"
+                           "exe(\"hello\", sources=[\"src/main.vx\", \"src/util.vx\"])\n"
                            "\n"
-                           "[[dylib]]\n"
-                           "name = \"mylib\"\n"
-                           "sources = ['lib.vx']\n"
-                           "output = \"libmylib.dylib\"\n";
+                           "dylib(\"mylib\", sources=['lib.vx'], output=\"libmylib.dylib\")\n";
   const Manifest m = must_parse(text);
   CHECK(m.targets.size() == 2);
   if (m.targets.size() != 2)
@@ -78,16 +73,14 @@ void test_basic_targets() {
   CHECK(m.targets[1].sources.at(0) == "lib.vx");
   CHECK(m.targets[1].output.value_or("") == "libmylib.dylib");
   CHECK(m.targets[0].line == 2);
-  CHECK(m.targets[1].line == 6);
+  CHECK(m.targets[1].line == 4);
 }
 
 void test_multiline_array_and_escapes() {
-  const char *text = "[[exe]]\n"
-                     "name = \"app\"\n"
-                     "sources = [\n"
+  const char *text = "exe(\"app\", sources=[\n"
                      "  \"src/\\u006dain.vx\",  # 入口\n"
                      "  'src/util.vx',\n"
-                     "]\n";
+                     "])\n";
   const Manifest m = must_parse(text);
   CHECK(m.targets.size() == 1);
   if (m.targets.empty())
@@ -98,39 +91,28 @@ void test_multiline_array_and_escapes() {
 }
 
 void test_parse_errors() {
-  CHECK(fails_with("[package]\nname = \"x\"\n", "数组表"));
-  CHECK(fails_with("[[foo]]\nname = \"x\"\n", "未知目标类型"));
-  CHECK(fails_with("name = \"x\"\n", "键值必须位于"));
-  CHECK(fails_with("[[exe]]\nsources = [\"a.vx\"]\n", "缺少 name"));
-  CHECK(fails_with("[[exe]]\nname = \"a\"\n", "缺少 sources"));
-  CHECK(fails_with("[[exe]]\nname = \"a\"\nsources = []\n", "不能为空"));
-  CHECK(fails_with("[[exe]]\nname = \"a\"\nsources = [\"a.txt\"]\n",
-                   "必须是 .vx"));
-  CHECK(fails_with("[[exe]]\nname = \"a\"\nname = \"b\"\nsources = "
-                   "[\"a.vx\"]\n",
-                   "name 重复"));
-  CHECK(fails_with("[[exe]]\nname = \"a\"\nsources = [\"a.vx\"]\n"
-                   "version = 1\n",
-                   "未知配置键"));
-  CHECK(fails_with("[[exe]]\nname = \"bad name\"\nsources = [\"a.vx\"]\n",
-                   "非法"));
-  CHECK(fails_with("[[exe]]\nname = \"a\"\nsources = [\"a.vx\"]\n"
-                   "output = \"/abs/out\"\n",
-                   "相对构建目录"));
-  CHECK(fails_with("[[exe]]\nname = \"a\"\nsources = [\"a.vx\"]\n"
-                   "output = \"../out\"\n",
-                   "不得包含"));
+  CHECK(fails_with("foo()\n", "未知目标类型"));
+  CHECK(fails_with("name = \"x\"\n", "未知目标类型"));
+  CHECK(fails_with("exe(sources=[\"a.vx\"])\n", "缺少 name"));
+  CHECK(fails_with("exe(\"a\")\n", "缺少 sources"));
+  CHECK(fails_with("exe(\"a\", sources=[])\n", "不能为空"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.txt\"])\n", "必须是 .vx"));
+  CHECK(fails_with("exe(\"a\", name=\"b\", sources=[\"a.vx\"])\n", "name 重复"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], version=1)\n", "未知字段"));
+  CHECK(fails_with("exe(\"bad name\", sources=[\"a.vx\"])\n", "非法"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], output=\"/abs/out\")\n", "相对构建目录"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], output=\"../out\")\n", "不得包含"));
   CHECK(fails_with("", "未声明任何目标"));
-  CHECK(fails_with("[[exe]]\nname = \"a\"\nsources = [\"a.vx\"]\n"
-                   "[[dylib]]\nname = \"a\"\nsources = [\"b.vx\"]\n",
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"])\n"
+                   "dylib(\"a\", sources=[\"b.vx\"])\n",
                    "重复"));
 }
 
 void test_plan_order() {
-  const char *text = "[[exe]]\nname = \"app\"\nsources = [\"main.vx\"]\n"
-                     "[[dylib]]\nname = \"core\"\nsources = [\"core.vx\"]\n"
-                     "[[exe]]\nname = \"tool\"\nsources = [\"tool.vx\"]\n"
-                     "[[dylib]]\nname = \"extra\"\nsources = [\"extra.vx\"]\n";
+  const char *text = "exe(\"app\", sources=[\"main.vx\"])\n"
+                     "dylib(\"core\", sources=[\"core.vx\"])\n"
+                     "exe(\"tool\", sources=[\"tool.vx\"])\n"
+                     "dylib(\"extra\", sources=[\"extra.vx\"])\n";
   const Manifest m = must_parse(text);
   const auto all = vmake::plan_order(m, {});
   CHECK(all.size() == 4);

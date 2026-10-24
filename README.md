@@ -260,7 +260,7 @@ func main():
 
 ### 4. 项目构建（VMake，VMakeLists.toml）
 
-vmake 位于 `tools/vmake/`。它读取项目根目录的 `VMakeLists.toml`，
+vmake 位于 `tools/vmake/`。它读取项目根目录的 `VMakeSet.vmake`，
 **自身不编译任何代码**，而是按正确顺序在后台调用工具链：
 
 ```

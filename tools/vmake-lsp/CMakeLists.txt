@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.23)
+project(vmake-lsp LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+add_executable(vmake-lsp src/main.cpp)
+target_compile_options(vmake-lsp PRIVATE -Wall -Wextra -Wpedantic)

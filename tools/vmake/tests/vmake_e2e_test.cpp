@@ -134,14 +134,10 @@ int main() {
   }
 
   // exe 声明在前，dylib 在后：验证 VMake 将动态库排到前面
-  const std::string config = "[[exe]]\n"
-                             "name = \"app\"\n"
-                             "sources = [\"main.vx\", \"util.vx\"]\n"
+  const std::string config = "exe(\"app\", sources=[\"main.vx\", \"util.vx\"])\n"
                              "\n"
-                             "[[dylib]]\n"
-                             "name = \"calc\"\n"
-                             "sources = [\"calc.vx\"]\n";
-  CHECK(write_text(root / "VMakeLists.toml", config));
+                             "dylib(\"calc\", sources=[\"calc.vx\"])\n";
+  CHECK(write_text(root / "VMakeSet.vmake", config));
   CHECK(write_text(root / "main.vx", "extern out_int(v: int)\n"
                                      "func main() -> int:\n"
                                      "    out_int(add(19, 23))\n"
