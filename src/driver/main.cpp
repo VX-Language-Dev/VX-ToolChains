@@ -23,7 +23,7 @@ namespace fs = std::filesystem;
 using namespace vx::compiler;
 using vx::util::Arena;
 
-static constexpr std::string_view VERSION = "vxc003";
+static constexpr std::string_view VERSION = "0.3.0";
 
 struct Options {
   std::string source;
@@ -32,6 +32,8 @@ struct Options {
   bool verbose = false;
   bool help = false;
   bool version = false;
+  bool check = false;
+  bool dump = false;
 };
 
 // auto 模式下仅当 stderr 是终端时才上色
@@ -44,11 +46,13 @@ static bool want_color(const Options &opts) {
 static void print_help() {
   std::fprintf(
       stdout,
-      "VX Compiler %s\n"
-      "Usage: vxc003 [options] <source.vx>\n"
+      "VX Compiler v%s\n"
+      "Usage: vxc [options] <source.vx>\n"
       "Stages: read → lex → parse → codegen → vxobj\n"
       "Options:\n"
       "  -o <file>       Output VXOBJ file (default: <source>.vxobj)\n"
+      "  --check         Type-check only; do not write output\n"
+      "  --dump          Print module summary to stdout\n"
       "  -v, --verbose   Verbose output\n"
       "  --color <when>  Colorize diagnostics: auto|always|never (default auto;\n"
       "                  also accepts --color=<when>)\n"
@@ -82,6 +86,10 @@ static int parse_args(int argc, char **argv, Options &opts) {
                      opts.color.c_str());
         return 2;
       }
+    } else if (a == "--check") {
+      opts.check = true;
+    } else if (a == "--dump") {
+      opts.dump = true;
     } else if (a == "-o") {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "error: -o requires an argument\n");
@@ -224,10 +232,28 @@ int main(int argc, char **argv) {
   }
 
   // --- 阶段 5: VXOBJ writer（vxc003 实现）---
-  // 默认输出路径：<source>.vxobj
   std::string out_path = opts.output;
   if (out_path.empty()) {
-    out_path = opts.source + ".vxobj";
+    std::string base = opts.source;
+    const auto pos = base.find_last_of("/\\");
+    const std::string dir = (pos == std::string::npos) ? std::string{} : base.substr(0, pos + 1);
+    std::string name = (pos == std::string::npos) ? base : base.substr(pos + 1);
+    const auto dot = name.find_last_of('.');
+    if (dot != std::string::npos) name.erase(dot);
+    out_path = dir + name + ".vxobj";
+  }
+
+  if (opts.dump) {
+    std::fprintf(stdout, "funcs=%zu insts=%zu externs=%zu globals=%zu\n",
+                 ir_res->funcs.size(), total_insts, ir_res->linkage.size(),
+                 ir_res->global_vars.size());
+  }
+
+  if (opts.check) {
+    std::fprintf(stdout, "OK %s: %zu funcs, %zu insts, %zu externs\n",
+                 opts.source.c_str(), ir_res->funcs.size(), total_insts,
+                 ir_res->linkage.size());
+    return 0;
   }
   // 平台三元组：编译期自动检测宿主（架构 + 操作系统），如 "arm64-apple-macosx"
   const std::string target = vx::util::host_triple();

@@ -53,6 +53,7 @@ target_compile_options(vx_compiler PRIVATE -Wall -Wextra -Wpedantic)
 # vxc002 = Lexer + Parser + Codegen（read → lex → parse → codegen）。
 # VXOBJ writer 后续版本补齐。
 add_executable(vxc002 src/driver/main.cpp)
+set_target_properties(vxc002 PROPERTIES OUTPUT_NAME vxc)
 target_link_libraries(vxc002 PRIVATE vx_compiler vx_util)
 target_compile_options(vxc002 PRIVATE -Wall -Wextra -Wpedantic)
 
