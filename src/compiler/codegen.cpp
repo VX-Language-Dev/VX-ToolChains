@@ -31,8 +31,18 @@ public:
     for (const Stmt *s : prog.stmts) {
       if (s->kind == NodeKind::ClassDecl) {
         register_struct(static_cast<const ClassDecl *>(s));
+        ir::StructLayout sl;
+        const auto *c = static_cast<const ClassDecl *>(s);
+        sl.name = std::string(c->name);
+        for (const ClassField &f : c->fields) sl.fields.push_back({std::string(f.name), std::string(f.type)});
+        mod.structs.push_back(std::move(sl));
       } else if (s->kind == NodeKind::StructDecl) {
         register_struct(static_cast<const StructDecl *>(s));
+        ir::StructLayout sl;
+        const auto *st = static_cast<const StructDecl *>(s);
+        sl.name = std::string(st->name);
+        for (const ClassField &f : st->fields) sl.fields.push_back({std::string(f.name), std::string(f.type)});
+        mod.structs.push_back(std::move(sl));
       }
     }
 
@@ -215,7 +225,20 @@ private:
         const auto *ix = static_cast<const Index *>(e);
         gen_expr(ix->obj);
         gen_expr(ix->index);
-        emit(ir::OP_INDEX_GET);
+        // 元素类型推断（用于后端按槽位发射）
+        std::string elem = "i32";
+        if (ix->obj->kind == NodeKind::Ident) {
+          auto it = var_kind_.find(std::string(static_cast<const Ident *>(ix->obj)->name));
+          if (it != var_kind_.end()) {
+            switch (it->second) {
+              case kVarListFloat: elem = "f64"; break;
+              case kVarListStr: elem = "ptr"; break;
+              case kVarMap: elem = "map"; break;
+              default: break;
+            }
+          }
+        }
+        emit(ir::OP_INDEX_GET, elem);
         break;
       }
       case NodeKind::Property: {
@@ -224,10 +247,15 @@ private:
         emit(ir::OP_FIELD_LOAD, std::string(p->name));
         break;
       }
-      case NodeKind::New:
-        emit(ir::OP_NEWZ,
-             std::string(static_cast<const New *>(e)->class_name));
+      case NodeKind::New: {
+        const std::string cn = std::string(static_cast<const New *>(e)->class_name);
+        std::size_t nfields = 0;
+        auto it = struct_fields_.find(cn);
+        if (it != struct_fields_.end()) nfields = it->second.size();
+        const std::size_t bytes = (nfields == 0 ? 1 : nfields) * 8;
+        emit(ir::OP_NEWZ, cn + ";" + std::to_string(bytes));
         break;
+      }
       case NodeKind::Unary: {
         const auto *u = static_cast<const Unary *>(e);
         gen_expr(u->operand);
@@ -307,6 +335,21 @@ private:
   // 记录变量声明/赋值推断出的类型（浮点/字符串），供后续表达式选择运算族
   void note_var_kind(std::string_view name, const Expr *value) {
     if (value == nullptr) return;
+    if (value->kind == NodeKind::ListLit) {
+      const auto *l = static_cast<const ListLit *>(value);
+      if (!l->items.empty() && is_float_expr(l->items[0])) {
+        var_kind_[std::string(name)] = kVarListFloat;
+      } else if (!l->items.empty() && is_str_expr(l->items[0])) {
+        var_kind_[std::string(name)] = kVarListStr;
+      } else {
+        var_kind_[std::string(name)] = kVarListInt;
+      }
+      return;
+    }
+    if (value->kind == NodeKind::DictLit) {
+      var_kind_[std::string(name)] = kVarMap;
+      return;
+    }
     if (is_float_expr(value)) {
       var_kind_[std::string(name)] = kVarFloat;
     } else if (is_str_expr(value)) {
@@ -546,6 +589,10 @@ private:
         gen_expr(ix->obj);
         gen_expr(ix->index);
         gen_expr(a->value);
+        if (ix->obj->kind == NodeKind::Ident) {
+          auto it = var_kind_.find(std::string(static_cast<const Ident *>(ix->obj)->name));
+          if (it != var_kind_.end() && it->second == kVarMap) { emit(ir::OP_INDEX_SET, "map"); break; }
+        }
         emit(ir::OP_INDEX_SET);
         break;
       }
@@ -592,12 +639,22 @@ private:
         emit(ir::OP_STORE_VAR, idx_slot);
         emit(ir::OP_LOAD_VAR, obj_slot);
         emit(ir::OP_LOAD_VAR, idx_slot);
-        emit(ir::OP_INDEX_GET);
+        if (ix->obj->kind == NodeKind::Ident) {
+          auto it = var_kind_.find(std::string(static_cast<const Ident *>(ix->obj)->name));
+          if (it != var_kind_.end() && it->second == kVarMap) { emit(ir::OP_INDEX_GET, "map"); } else { emit(ir::OP_INDEX_GET, "i32"); }
+        } else {
+          emit(ir::OP_INDEX_GET, "i32");
+        }
         gen_expr(a->value);
         emit_binary_op(std::string_view(&bin_op, 1), ix, a->value, a->line);
         emit(ir::OP_LOAD_VAR, obj_slot);
         emit(ir::OP_LOAD_VAR, idx_slot);
-        emit(ir::OP_INDEX_SET);
+        if (ix->obj->kind == NodeKind::Ident) {
+          auto it = var_kind_.find(std::string(static_cast<const Ident *>(ix->obj)->name));
+          if (it != var_kind_.end() && it->second == kVarMap) { emit(ir::OP_INDEX_SET, "map"); } else { emit(ir::OP_INDEX_SET); }
+        } else {
+          emit(ir::OP_INDEX_SET);
+        }
         break;
       }
       default:
@@ -810,7 +867,9 @@ private:
   std::uint32_t local_counter_ = 0;
   // 变量类型传播（函数级）：名称 → 推断类型，供 is_float_expr/is_str_expr
   // 选择运算族（LLVM 层槽位类型由首条写入决定，二者需一致）
-  enum VarKind : int { kVarUnknown = 0, kVarFloat = 1, kVarStr = 2 };
+  enum VarKind : int { kVarUnknown = 0, kVarFloat = 1, kVarStr = 2,
+                       kVarListInt = 3, kVarListFloat = 4, kVarListStr = 5,
+                       kVarMap = 6 };
   std::unordered_map<std::string, int> var_kind_;
   std::vector<Inst> insts_;
   bool has_return_ = false;

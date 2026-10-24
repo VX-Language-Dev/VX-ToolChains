@@ -257,7 +257,7 @@ void test_class_method_new() {
   const auto &make = m->funcs[1];
   CHECK(make.instructions.size() == 5);
   CHECK(op_at(*m, 1, 0) == ir::OP_NEWZ);
-  CHECK(args_at(*m, 1, 0) == "P");
+  CHECK(args_at(*m, 1, 0) == "P;8");
   CHECK(op_at(*m, 1, 1) == ir::OP_STORE_VAR);
   CHECK(op_at(*m, 1, 2) == ir::OP_LOAD_VAR);
   CHECK(op_at(*m, 1, 3) == ir::OP_CALL);

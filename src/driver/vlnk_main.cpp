@@ -93,9 +93,9 @@ static int parse_args(int argc, char **argv, Options &opts) {
 }
 
 static void dump_module(const ir::ModuleIR &m, std::string_view target) {
-  std::fprintf(stdout, "Module: target=%.*s funcs=%zu linkage=%zu globals=%zu\n",
+  std::fprintf(stdout, "Module: target=%.*s funcs=%zu structs=%zu linkage=%zu globals=%zu\n",
                static_cast<int>(target.size()), target.data(), m.funcs.size(),
-               m.linkage.size(), m.global_vars.size());
+               m.structs.size(), m.linkage.size(), m.global_vars.size());
   for (const ir::FuncIR &f : m.funcs) {
     std::fprintf(stdout,
                  "  func %s ret=%s params=%zu locals=%u insts=%zu\n",
@@ -149,6 +149,12 @@ static bool merge_inputs(std::vector<vx::backend::VxobjReadResult> &results,
     for (std::string &g : rt.module.global_vars) {
       if (globals.insert(g).second) out.global_vars.push_back(std::move(g));
     }
+  for (ir::StructLayout &s : rt.module.structs) {
+    // 按名称去重
+    bool dup = false;
+    for (const ir::StructLayout &e : out.structs) if (e.name == s.name) { dup = true; break; }
+    if (!dup) out.structs.push_back(std::move(s));
+  }
   }
   return true;
 }

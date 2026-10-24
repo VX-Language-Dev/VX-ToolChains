@@ -123,7 +123,15 @@ std::string serialize(const ir::ModuleIR &mod, std::string_view target) {
   // TypeIR 数据段
   std::string typeir_data;
   append_u32_be(typeir_data, static_cast<std::uint32_t>(mod.funcs.size()));
-  append_u32_be(typeir_data, 0); // struct_count = 0
+  append_u32_be(typeir_data, static_cast<std::uint32_t>(mod.structs.size()));
+  for (const ir::StructLayout &sl : mod.structs) {
+    append_write_string(typeir_data, sl.name);
+    append_u32_be(typeir_data, static_cast<std::uint32_t>(sl.fields.size()));
+    for (const ir::StructField &f : sl.fields) {
+      append_write_string(typeir_data, f.name);
+      append_u8(typeir_data, type_tag_for(f.type));
+    }
+  }
   for (const ir::FuncIR &f : mod.funcs) {
     serialize_func(typeir_data, f);
   }

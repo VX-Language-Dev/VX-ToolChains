@@ -125,7 +125,7 @@ VxobjReadResult read_vxobj(std::string_view data) {
   // ---- 解析 TypeIR 数据段 ----
   Cursor t{data.substr(typeir_off, typeir_size)};
   const std::uint32_t func_count = t.u32();
-  (void)t.u32(); // struct_count
+  const std::uint32_t struct_count = t.u32();
   if (t.bad) {
     r.error = t.error;
     return r;
@@ -135,6 +135,20 @@ VxobjReadResult read_vxobj(std::string_view data) {
     r.pool.emplace_back(s);
     return r.pool.back();
   };
+
+  for (std::uint32_t i = 0; i < struct_count; ++i) {
+    ir::StructLayout sl;
+    sl.name = std::string(t.str());
+    const std::uint32_t fcount = t.u32();
+    for (std::uint32_t j = 0; j < fcount; ++j) {
+      ir::StructField sf;
+      sf.name = std::string(t.str());
+      const std::uint8_t tag = t.u8();
+      sf.type = std::string(tag_to_type(tag));
+      sl.fields.push_back(std::move(sf));
+    }
+    r.module.structs.push_back(std::move(sl));
+  }
 
   for (std::uint32_t i = 0; i < func_count; ++i) {
     ir::FuncIR f;

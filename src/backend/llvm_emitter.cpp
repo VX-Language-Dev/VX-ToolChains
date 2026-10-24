@@ -63,6 +63,12 @@ const Builtin *lookup_builtin(std::string_view name) {
       {"exit", {"exit", {VT::I32}, false, VT::I32}},
       {"malloc", {"malloc", {VT::I64}, true, VT::PTR}},
       {"free", {"free", {VT::PTR}, false, VT::I32}},
+      {"vx_array_new", {"vx_array_new", {VT::I64}, true, VT::PTR}},
+      {"vx_array_get", {"vx_array_get", {VT::PTR, VT::I64}, true, VT::I64}},
+      {"vx_array_set", {"vx_array_set", {VT::PTR, VT::I64, VT::I64}, false, VT::I32}},
+      {"vx_map_new", {"vx_map_new", {VT::I64}, true, VT::PTR}},
+      {"vx_map_get", {"vx_map_get", {VT::PTR, VT::I64, VT::I64, VT::PTR}, true, VT::I64}},
+      {"vx_map_set", {"vx_map_set", {VT::PTR, VT::I64, VT::I64, VT::PTR, VT::I64}, false, VT::I32}},
       {"vx_str_concat", {"vx_str_concat", {VT::PTR, VT::PTR}, true, VT::PTR}},
       {"strcmp", {"strcmp", {VT::PTR, VT::PTR}, true, VT::I32}},
       {"vx_pow_i32", {"vx_pow_i32", {VT::I32, VT::I32}, true, VT::I32}},
@@ -167,6 +173,15 @@ public:
     for (const ir::LinkEntry &e : mod_.linkage) {
       const std::string key = e.abi_symbol.empty() ? e.name : e.abi_symbol;
       extern_by_sym_[key] = &e;
+    }
+    // P4：类/结构字段布局（字段名 -> 索引/类型；首个定义优先）
+    for (const ir::StructLayout &sl : mod_.structs) {
+      for (std::size_t i = 0; i < sl.fields.size(); ++i) {
+        if (field_index_.find(sl.fields[i].name) == field_index_.end()) {
+          field_index_[sl.fields[i].name] = i;
+          field_type_[sl.fields[i].name] = vt_of(sl.fields[i].type);
+        }
+      }
     }
     std::string funcs_txt;
     for (const ir::FuncIR &f : mod_.funcs) {
@@ -535,6 +550,215 @@ private:
         if (!pop(v)) return false;
         return true;
       }
+      // ---- P4: NEWZ / FREE ----
+      case ir::OP_NEWZ: {
+        std::size_t sep = inst.args.find(';');
+        std::size_t bytes = 8;
+        if (sep != std::string::npos) {
+          try { bytes = std::stoull(inst.args.substr(sep + 1)); } catch (...) { bytes = 8; }
+        }
+        if (bytes == 0) bytes = 8;
+        used_builtins_.insert("malloc");
+        std::string t = new_temp();
+        line(t + " = call ptr @malloc(i64 " + std::to_string(bytes) + ")");
+        push({t, VT::PTR});
+        return true;
+      }
+      case ir::OP_FREE: {
+        Value p;
+        if (!pop(p)) return false;
+        used_builtins_.insert("free");
+        line("call void @free(ptr " + p.val + ")");
+        push({"0", VT::I32});
+        return true;
+      }
+      // ---- P4: FIELD_LOAD / FIELD_STORE ----
+      case ir::OP_FIELD_LOAD: {
+        Value obj;
+        if (!pop(obj)) return false;
+        if (obj.vt != VT::PTR) return fail_inst("FIELD_LOAD 对象须为指针");
+        auto it = field_index_.find(inst.args);
+        if (it == field_index_.end()) return fail_inst("未知字段 " + inst.args);
+        std::size_t idx = it->second;
+        VT ft = field_type_.count(inst.args) ? field_type_[inst.args] : VT::I32;
+        std::string gep = new_temp();
+        line(gep + " = getelementptr i8, ptr " + obj.val + ", i64 " +
+             std::to_string(idx * 8));
+        std::string t = new_temp();
+        line(t + " = load " + std::string(vt_name(ft)) + ", ptr " + gep);
+        push({t, ft});
+        return true;
+      }
+      case ir::OP_FIELD_STORE: {
+        Value val, obj;
+        if (!pop(val) || !pop(obj)) return false;
+        if (obj.vt != VT::PTR) return fail_inst("FIELD_STORE 对象须为指针");
+        auto it = field_index_.find(inst.args);
+        if (it == field_index_.end()) return fail_inst("未知字段 " + inst.args);
+        std::size_t idx = it->second;
+        VT ft = field_type_.count(inst.args) ? field_type_[inst.args] : VT::I32;
+        std::string v = val.val;
+        VT vt = val.vt;
+        // 类型转换到字段类型
+        auto conv = [&](VT to) {
+          if (vt == to) return;
+          std::string t = new_temp();
+          if (to == VT::I32 && vt == VT::I64) line(t + " = trunc i64 " + v + " to i32");
+          else if (to == VT::I64 && vt == VT::I32) line(t + " = zext i32 " + v + " to i64");
+          else if (to == VT::F64 && vt == VT::I32) line(t + " = sitofp i32 " + v + " to double");
+          else if (to == VT::I32 && vt == VT::F64) line(t + " = fptosi double " + v + " to i32");
+          else if (to == VT::PTR && vt == VT::I64) line(t + " = inttoptr i64 " + v + " to ptr");
+          else if (to == VT::I64 && vt == VT::PTR) line(t + " = ptrtoint ptr " + v + " to i64");
+          else { /* no-op conversion */ }
+          v = t; vt = to;
+        };
+        conv(ft);
+        std::string gep = new_temp();
+        line(gep + " = getelementptr i8, ptr " + obj.val + ", i64 " +
+             std::to_string(idx * 8));
+        line("store " + std::string(vt_name(ft)) + " " + v + ", ptr " + gep);
+        return true;
+      }
+      // ---- P4: ARRAY_NEW ----
+      case ir::OP_ARRAY_NEW: {
+        int n = 0;
+        try { n = std::stoi(inst.args); } catch (...) { n = 0; }
+        if (n < 0) n = 0;
+        std::vector<Value> vals(n);
+        for (int i = n - 1; i >= 0; --i) {
+          if (!pop(vals[i])) return false;
+        }
+        used_builtins_.insert("vx_array_new");
+        used_builtins_.insert("vx_array_set");
+        std::string arr = new_temp();
+        line(arr + " = call ptr @vx_array_new(i64 " + std::to_string(n) + ")");
+        for (int i = 0; i < n; ++i) {
+          std::string iv = vals[i].val;
+          VT vt = vals[i].vt;
+          if (vt == VT::I32) { std::string t = new_temp(); line(t + " = zext i32 " + iv + " to i64"); iv = t; }
+          else if (vt == VT::F64) { std::string t = new_temp(); line(t + " = bitcast double " + iv + " to i64"); iv = t; }
+          else if (vt == VT::PTR) { std::string t = new_temp(); line(t + " = ptrtoint ptr " + iv + " to i64"); iv = t; }
+          line("call void @vx_array_set(ptr " + arr + ", i64 " +
+               std::to_string(i) + ", i64 " + iv + ")");
+        }
+        push({arr, VT::PTR});
+        return true;
+      }
+      // ---- P4: INDEX_GET ----
+      case ir::OP_INDEX_GET: {
+        Value idxv, objv;
+        if (!pop(idxv) || !pop(objv)) return false;
+        std::string idx = idxv.val;
+        if (idxv.vt == VT::I32) {
+          std::string t = new_temp();
+          line(t + " = sext i32 " + idx + " to i64");
+          idx = t;
+        }
+        if (inst.args == "map") {
+          used_builtins_.insert("vx_map_get");
+          std::string keyptr = "null";
+          std::string isstr = "0";
+          std::string keyi64 = idx;
+          if (idxv.vt == VT::PTR) {
+            keyptr = idxv.val;
+            isstr = "1";
+            std::string t = new_temp();
+            line(t + " = ptrtoint ptr " + idxv.val + " to i64");
+            keyi64 = t;
+          }
+          std::string t = new_temp();
+          line(t + " = call i64 @vx_map_get(ptr " + objv.val + ", i64 " + keyi64 +
+               ", i64 " + isstr + ", ptr " + keyptr + ")");
+          std::string r = new_temp();
+          line(r + " = trunc i64 " + t + " to i32");
+          push({r, VT::I32});
+          return true;
+        }
+        used_builtins_.insert("vx_array_get");
+        std::string t = new_temp();
+        line(t + " = call i64 @vx_array_get(ptr " + objv.val + ", i64 " + idx + ")");
+        std::string elem = inst.args.empty() ? std::string("i32") : inst.args;
+        if (elem == "f64") {
+          std::string r = new_temp();
+          line(r + " = bitcast i64 " + t + " to double");
+          push({r, VT::F64});
+        } else if (elem == "ptr") {
+          std::string r = new_temp();
+          line(r + " = inttoptr i64 " + t + " to ptr");
+          push({r, VT::PTR});
+        } else {
+          std::string r = new_temp();
+          line(r + " = trunc i64 " + t + " to i32");
+          push({r, VT::I32});
+        }
+        return true;
+      }
+      // ---- P4: INDEX_SET ----
+      case ir::OP_INDEX_SET: {
+        Value val, idxv, objv;
+        if (!pop(val) || !pop(idxv) || !pop(objv)) return false;
+        std::string idx = idxv.val;
+        if (idxv.vt == VT::I32) {
+          std::string t = new_temp();
+          line(t + " = sext i32 " + idx + " to i64");
+          idx = t;
+        }
+        std::string iv = val.val;
+        if (val.vt == VT::I32) { std::string t = new_temp(); line(t + " = zext i32 " + iv + " to i64"); iv = t; }
+        else if (val.vt == VT::F64) { std::string t = new_temp(); line(t + " = bitcast double " + iv + " to i64"); iv = t; }
+        else if (val.vt == VT::PTR) { std::string t = new_temp(); line(t + " = ptrtoint ptr " + iv + " to i64"); iv = t; }
+        if (inst.args == "map") {
+          used_builtins_.insert("vx_map_set");
+          std::string keyptr = "null";
+          std::string isstr = "0";
+          std::string keyi64 = idx;
+          if (idxv.vt == VT::PTR) {
+            keyptr = idxv.val;
+            isstr = "1";
+            std::string t = new_temp();
+            line(t + " = ptrtoint ptr " + idxv.val + " to i64");
+            keyi64 = t;
+          }
+          line("call void @vx_map_set(ptr " + objv.val + ", i64 " + keyi64 +
+               ", i64 " + isstr + ", ptr " + keyptr + ", i64 " + iv + ")");
+          return true;
+        }
+        used_builtins_.insert("vx_array_set");
+        line("call void @vx_array_set(ptr " + objv.val + ", i64 " + idx +
+             ", i64 " + iv + ")");
+        return true;
+      }
+      // ---- P4: MAP_NEW ----
+      case ir::OP_MAP_NEW: {
+        int n = 0;
+        try { n = std::stoi(inst.args); } catch (...) { n = 0; }
+        if (n < 0) n = 0;
+        std::vector<Value> keys(n), vals(n);
+        for (int i = n - 1; i >= 0; --i) {
+          if (!pop(vals[i])) return false;
+          if (!pop(keys[i])) return false;
+        }
+        used_builtins_.insert("vx_map_new");
+        used_builtins_.insert("vx_map_set");
+        std::string m = new_temp();
+        line(m + " = call ptr @vx_map_new(i64 " + std::to_string(n == 0 ? 1 : n) + ")");
+        for (int i = 0; i < n; ++i) {
+          std::string keyi64 = keys[i].val;
+          std::string keyptr = "null";
+          std::string isstr = "0";
+          if (keys[i].vt == VT::I32) { std::string t = new_temp(); line(t + " = zext i32 " + keyi64 + " to i64"); keyi64 = t; }
+          else if (keys[i].vt == VT::F64) { std::string t = new_temp(); line(t + " = bitcast double " + keyi64 + " to i64"); keyi64 = t; }
+          else if (keys[i].vt == VT::PTR) { keyptr = keys[i].val; isstr = "1"; std::string t = new_temp(); line(t + " = ptrtoint ptr " + keys[i].val + " to i64"); keyi64 = t; }
+          std::string iv = vals[i].val;
+          if (vals[i].vt == VT::I32) { std::string t = new_temp(); line(t + " = zext i32 " + iv + " to i64"); iv = t; }
+          else if (vals[i].vt == VT::F64) { std::string t = new_temp(); line(t + " = bitcast double " + iv + " to i64"); iv = t; }
+          else if (vals[i].vt == VT::PTR) { std::string t = new_temp(); line(t + " = ptrtoint ptr " + iv + " to i64"); iv = t; }
+          line("call void @vx_map_set(ptr " + m + ", i64 " + keyi64 +
+               ", i64 " + isstr + ", ptr " + keyptr + ", i64 " + iv + ")");
+        }
+        push({m, VT::PTR});
+        return true;
+      }
       case ir::OP_CALL:
         return emit_call(inst);
       case ir::OP_JUMP: {
@@ -763,6 +987,8 @@ private:
   bool emit_entry_ = true;
   std::map<std::string_view, const ir::FuncIR *> fn_by_name_;
   std::map<std::string, const ir::LinkEntry *> extern_by_sym_;
+  std::map<std::string, std::size_t> field_index_;
+  std::map<std::string, VT> field_type_;
   std::set<std::string> used_externs_;
   std::set<std::string> used_builtins_;
   std::vector<std::string> globals_;

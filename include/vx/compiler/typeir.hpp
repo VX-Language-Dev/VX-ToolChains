@@ -158,6 +158,17 @@ struct LibDep {
   std::string cpp_header; // from_cpp 时的 C++ 头文件绝对路径
 };
 
+// 类/结构布局：字段名与类型（用于后端按偏移访问字段）。
+struct StructField {
+  std::string name;
+  std::string type; // VX 类型名（int/float/bool/string/var/...）
+};
+
+struct StructLayout {
+  std::string name;
+  std::vector<StructField> fields;
+};
+
 struct ModuleIR {
   std::vector<FuncIR> funcs;
   std::vector<LinkEntry> linkage;
@@ -166,6 +177,8 @@ struct ModuleIR {
   std::vector<std::string> global_vars;
   // 导入的库依赖（@imp / @cppimp），供后端链接期并入实现文件并生成 shim。
   std::vector<LibDep> libs;
+  // 类/结构布局表（P4：后端按字段索引访问）。
+  std::vector<StructLayout> structs;
 };
 
 } // namespace vx::compiler::ir

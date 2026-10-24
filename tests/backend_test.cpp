@@ -298,7 +298,7 @@ void test_emitter_unsupported_opcode() {
   f.ret_type = "void";
   f.local_count = 0;
   ir::Inst inst;
-  inst.op = ir::OP_ARRAY_NEW; // MVP 未覆盖
+  inst.op = ir::OP_STRUCT_NEW; // 仍未覆盖
   inst.args = "2";
   f.instructions.push_back(inst);
   mod.funcs.push_back(std::move(f));
@@ -306,7 +306,7 @@ void test_emitter_unsupported_opcode() {
   auto r = backend::emit_llvm_ir(mod, kTriple);
   CHECK(!r.ok);
   CHECK(r.error.find("后端暂不支持") != std::string::npos);
-  CHECK(r.error.find("OP_ARRAY_NEW") != std::string::npos);
+  CHECK(r.error.find("OP_STRUCT_NEW") != std::string::npos);
 }
 
 void test_emitter_unknown_call() {
