@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.23)
 
 # VX-ToolKit C++ 重写工程：Util / Compiler / Backend 三层 + vxc002 / vlnk 二进制
 # 构建由 CMake + Ninja 驱动（见 Makefile），同时导出 compile_commands.json 供 clangd 使用
-project(vx-toolkit LANGUAGES CXX)
+project(vx-toolkit LANGUAGES CXX C)
 
 # C++23
 set(CMAKE_CXX_STANDARD 23)
@@ -55,6 +55,12 @@ target_compile_options(vx_compiler PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(vxc002 src/driver/main.cpp)
 target_link_libraries(vxc002 PRIVATE vx_compiler vx_util)
 target_compile_options(vxc002 PRIVATE -Wall -Wextra -Wpedantic)
+
+# ==================== Runtime 层 ====================
+# 预编译的 VX 运行时（vxrt.c），供 vlnk 链接期直接并入，避免每次重新编译 C 源。
+add_library(vx_runtime STATIC src/runtime/vxrt.c)
+target_include_directories(vx_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime)
+set_target_properties(vx_runtime PROPERTIES OUTPUT_NAME vxrt)
 
 # ==================== Backend 层 ====================
 # 后端 vlnk：VXOBJ reader（字节流 → ModuleIR）+ LLVM emitter（ModuleIR → .ll 文本）。

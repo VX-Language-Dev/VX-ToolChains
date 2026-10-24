@@ -162,6 +162,22 @@ struct MemorySource {
   std::string content;
 };
 
+// 查找预编译的 vxrt 运行时库（.a），避免每次重新编译 C 源。
+static std::string find_vxrt_lib() {
+  if (const char *env = std::getenv("VX_VXRT")) {
+    if (env[0] != '\\0' && ::access(env, R_OK) == 0) return env;
+  }
+  std::vector<fs::path> cands;
+  cands.push_back(fs::current_path() / "libvxrt.a");
+  cands.push_back(fs::current_path() / "libvx_runtime.a");
+  cands.push_back(fs::current_path() / "build" / "libvxrt.a");
+  for (const fs::path &p : cands) {
+    std::error_code ec;
+    if (fs::is_regular_file(p, ec) && !ec) return p.string();
+  }
+  return {};
+}
+
 // 核心链接实现：.ll + vxrt.c + 附加磁盘文件 + 附加内存源 → 可执行文件/动态库。
 LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
                      std::string_view target,
@@ -186,19 +202,29 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
   }
   const fs::path tmp(dir);
   const fs::path ll_file = tmp / "module.ll";
-  const fs::path rt_file = tmp / "vxrt.c";
   const fs::path log_file = tmp / "clang.log";
+
+  const std::string vxrt_lib = find_vxrt_lib();
 
   {
     std::ofstream(ll_file, std::ios::binary) << std::string(ll_ir);
-    std::ofstream(rt_file, std::ios::binary) << kRuntimeSource;
+    if (vxrt_lib.empty()) {
+      const fs::path rt_file = tmp / "vxrt.c";
+      std::ofstream(rt_file, std::ios::binary) << kRuntimeSource;
+    }
   }
 
   // 单次调用 clang：.ll 与所有 .c/.cpp/.a 一并编译并链接为可执行文件。
-  std::vector<std::string> args = {clang,
-                                   ll_file.string(),
-                                   rt_file.string()};
-  r.command = clang + " " + ll_file.string() + " " + rt_file.string();
+  std::vector<std::string> args = {clang, ll_file.string()};
+  r.command = clang + " " + ll_file.string();
+  if (vxrt_lib.empty()) {
+    const fs::path rt_file = tmp / "vxrt.c";
+    args.push_back(rt_file.string());
+    r.command += " " + rt_file.string();
+  } else {
+    args.push_back(vxrt_lib);
+    r.command += " " + vxrt_lib;
+  }
   // 附加内存源（如 C++ shim）
   for (const MemorySource &src : extra_sources) {
     const fs::path p = tmp / src.name;
