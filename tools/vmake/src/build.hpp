@@ -1,5 +1,5 @@
 // build.hpp — 构建计划与编排：按依赖顺序调用 vxc（每源文件）→
-// vlnk（合并链接）。 VMake 本身不生成任何机器码；它只是把 VMakeLists.toml
+// vlnk（合并链接）。 VMake 本身不生成任何机器码；它只是把 VMakeSet.vmake
 // 翻译成正确的工具链调用。
 #pragma once
 
@@ -14,7 +14,7 @@ namespace vmake {
 
 struct BuildOptions {
   std::filesystem::path build_dir;    // -B（绝对路径，已创建）
-  std::filesystem::path manifest_dir; // VMakeLists.toml 所在目录
+  std::filesystem::path manifest_dir; // VMakeSet.vmake 所在目录
   std::filesystem::path manifest_path;
   std::string vxc;
   std::string vlnk;

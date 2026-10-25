@@ -1,4 +1,4 @@
-// main.cpp — vmake CLI：解析 VMakeLists.toml 并编排 vxc/vlnk。
+// main.cpp — vmake CLI：解析 VMakeSet.vmake 并编排 vxc/vlnk。
 // 工作目录（构建目录）必须通过 -B <dir> 显式指定；输出风格对齐 Cargo。
 #include "build.hpp"
 #include "config.hpp"
@@ -36,7 +36,7 @@ static void print_help() {
                "VX Make %s\n"
                "Usage: vmake [build] -B <dir> [options] [target...]\n"
                "\n"
-               "读取当前目录的 VMakeLists.toml，按依赖顺序在后台调用工具链：\n"
+               "读取当前目录的 VMakeSet.vmake，按依赖顺序在后台调用工具链：\n"
                "  vxc <source> -o <obj>   （每个源文件）\n"
                "  vlnk <obj...> -o <out>  （合并链接；dylib 目标加 --shared）\n"
                "VMake 自身不编译任何代码，只负责编排参数与顺序。\n"
@@ -49,14 +49,9 @@ static void print_help() {
                "  -h, --help      显示本帮助\n"
                "\n"
                "VMakeSet.vmake（当前仅支持 exe / dylib 两类目标）：\n"
-               "  [[exe]]\n"
-               "  name = \"hello\"\n"
-               "  sources = [\"src/main.vx\"]\n"
-               "\n"
-               "  [[dylib]]\n"
-               "  name = \"mylib\"\n"
-               "  sources = [\"src/lib.vx\", \"src/util.vx\"]\n"
-               "  output = \"libmylib.dylib\"   # 可选，相对 -B 构建目录\n"
+               "  exe(\"hello\", sources=[\"src/main.vx\", \"src/util.vx\"])\n"
+               "  dylib(\"mylib\", sources=[\"src/lib.vx\"], output=\"libmylib.dylib\")\n"
+               "  # output 可选，相对 -B 构建目录\n"
                "\n"
                "环境变量：VX_VXC / VX_VLNK 指定工具链路径；VX_HEADERS "
                "指定导入库根目录。\n",
@@ -188,7 +183,7 @@ int main(int argc, char **argv) {
   auto manifest = vmake::parse_manifest(*text, errors);
   if (!manifest) {
     for (const vmake::ParseError &e : errors) {
-      std::fprintf(stderr, "error: VMakeLists.toml:%zu: %s\n", e.line,
+      std::fprintf(stderr, "error: VMakeSet.vmake:%zu: %s\n", e.line,
                    e.message.c_str());
     }
     return 2;

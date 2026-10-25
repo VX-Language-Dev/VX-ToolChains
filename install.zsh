@@ -7,4 +7,5 @@ mkdir -p ~/.local/bin
 cp ./tools/vxls/vxls ~/.local/bin/vxls
 cp ./tools/vx-tidy/vx-tidy ~/.local/bin/vx-tidy
 cp ./tools/vmake/vmake ~/.local/bin/vmake
+cp ./tools/vmake-lsp/vmake-lsp ~/.local/bin/vmake-lsp
 echo "VX 工具包安装完成"

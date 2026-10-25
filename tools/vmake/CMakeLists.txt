@@ -1,4 +1,4 @@
-# vmake — VX 项目构建编排器（VMakeLists.toml），独立 CMake 工程。
+# vmake — VX 项目构建编排器（VMakeSet.vmake），独立 CMake 工程。
 # 自身不编译 VX 代码，只按顺序调用 vxc / vlnk；输出风格对齐 Cargo。
 # 单独配置（cmake -S tools/vmake）时反向引入 vx-toolkit 根工程的库与工具目标
 #（置位 VX_TOOLS_SUBBUILD 防止根工程递归纳入 tools/）。

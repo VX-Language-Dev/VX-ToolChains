@@ -228,8 +228,8 @@ VXOBJ → vlnk（读回 → LLVM IR → clang 链接）→ 原生可执行文件
 ```
 
 ```bash
-vxc002 hello.vx            # → hello.vxobj
-vlnk hello.vxobj -o hello  # → 可执行文件
+vxc hello.vx                # → hello.vxobj（--check 仅检查，--dump 打印模块摘要）
+vlnk hello.vxobj -o hello   # → 可执行文件
 ```
 
 ## 8. 已知限制

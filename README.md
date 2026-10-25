@@ -1,7 +1,7 @@
 # VX-ToolKit
 
 ![Language](https://img.shields.io/badge/language-C++-green)
-![Version](https://img.shields.io/badge/version-v1.9.0-blue)
+![Version](https://img.shields.io/badge/version-v1.11.0-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
 ![Platform](<https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey>)
 
@@ -9,8 +9,8 @@
 
 > 语言版本: v1.7.0
 > 协议: [AGPL-3.0](LICENSE)
-> 当前实现: **C++ 工具链核心可用**（编译前端 vxc003、后端 vlnk、构建编排 vmake、
-> vxls / vx-tidy；数组/字典、PE 等特性开发中，见 [CHANGELOG](CHANGELOG.md)）
+> 当前实现: **C++ 工具链核心可用**（编译前端 vxc 0.3.0、后端 vlnk、构建编排 vmake、
+> vxls / vx-tidy；所有权检查、PE 输出等特性开发中，见 [CHANGELOG](CHANGELOG.md)）
 
 ---
 
@@ -44,7 +44,8 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **C++23** 实现（CMa
 | VPM 包管理器 (vpm)    | C++      | 多语言包管理                      | 🚧 开发中 |
 | 反编译器 (vxde)       | C++      | VXOBJ → VX 源码还原              | 🚧 开发中 |
 | 格式化工具 (vfmt)     | C++      | VX 源码格式化                     | 🚧 开发中 |
-| 项目构建器 (vmake)    | C++      | VMakeLists.toml 驱动，编排 vxc/vlnk | ✅ 基础可用 |
+| 项目构建器 (vmake)    | C++      | VMakeSet.vmake 驱动，编排 vxc/vlnk  | ✅ 基础可用 |
+| VMake LSP (vmake-lsp) | C++      | VMakeSet.vmake 诊断、补全、跳转、格式化 | ✅ 基础可用 |
 | LSP 语言服务器 (vxls)  | C++      | 代码补全、悬停、跳转定义等        | ✅ 基础可用 |
 | 静态分析 (vx-tidy)     | C++      | AST 级规则检查（VXTIDYxxx）       | ✅ 基础可用 |
 | Util 基础库           | C++      | 内存分配器、字符串、文件系统      | ✅ 稳定   |
@@ -113,15 +114,18 @@ cmake --build build --config MinSizeRel
 
 | 产物                          | 说明                                    |
 | ----------------------------- | --------------------------------------- |
-| `vxc002`                      | 编译器前端 CLI（`--version` 显示 vxc003：lex → parse → codegen → .vxobj） |
+| `vxc`                         | 编译器前端 CLI（CMake 目标 `vxc002`；`--version` 显示 0.3.0：lex → parse → codegen → .vxobj，支持 `--check` / `--dump`） |
 | `vlnk`                        | 原生链接器 CLI（.vxobj → LLVM IR → clang 链接） |
 | `tools/vxls/vxls`             | LSP 语言服务器                          |
 | `tools/vx-tidy/vx-tidy`       | 静态分析 CLI                            |
-| `tools/vmake/vmake`           | 项目构建编排器（VMakeLists.toml）       |
+| `tools/vmake/vmake`           | 项目构建编排器（VMakeSet.vmake）        |
+| `tools/vmake-lsp/vmake-lsp`   | VMakeSet.vmake 语言服务器（LSP over stdio） |
 | `libvx_util.a` / `libvx_compiler.a` / `libvx_backend.a` | 静态库 |
+| `libvxrt.a`                   | 预编译 VX 运行时（vlnk 链接期直接并入） |
 | `tools/vx-tidy/libvxtidy.dylib` | vx-tidy 检查引擎动态库                |
 
-> 另有 15 组测试可执行文件（`vx_*_tests`），由 CTest 统一调度。
+> 另有 17 组测试可执行文件（`vx_*_tests`、`vmake*` 与 `vmake-lsp` 相关），
+> 由 CTest 统一调度。
 
 ### 安装到系统
 
@@ -130,8 +134,9 @@ cmake --build build --config MinSizeRel
 zsh install.zsh
 ```
 
-> 注：CMake 暂未定义 `install()` 规则；`install.zsh` 会复制 `build/tools/*` 下的二进制
-> 到 `~/.local/bin`，请确保该目录在 PATH 中。
+> 注：CMake 暂未定义 `install()` 规则；`install.zsh` 会构建工具链并将 `vxls`、
+> `vx-tidy`、`vmake`、`vmake-lsp` 复制到 `~/.local/bin`（`vxc` / `vlnk` 暂未纳入安装脚本），
+> 请确保该目录在 PATH 中。
 
 ### 运行测试
 
@@ -152,8 +157,8 @@ func main():
 编译并运行：
 
 ```bash
-# 编译为 VXOBJ
-./build/vxc002 hello.vx
+# 编译为 VXOBJ（默认输出 hello.vxobj）
+./build/vxc hello.vx
 
 # 链接为原生可执行文件
 ./build/vlnk hello.vxobj -o hello
@@ -169,14 +174,20 @@ func main():
 ### 1. 编译 VX 源码
 
 ```bash
-# 编译单文件（输出 hello.vxobj）
-./build/vxc002 hello.vx
+# 编译单文件（默认输出 <源文件主名>.vxobj，即 hello.vx → hello.vxobj）
+./build/vxc hello.vx
 
 # 指定输出文件名
-./build/vxc002 hello.vx -o output.vxobj
+./build/vxc hello.vx -o output.vxobj
+
+# 仅做检查，不写输出文件
+./build/vxc hello.vx --check
+
+# 打印模块摘要（funcs/insts/externs/globals）
+./build/vxc hello.vx --dump
 
 # 查看编译过程详细信息
-./build/vxc002 hello.vx -v
+./build/vxc hello.vx -v
 ```
 
 编译器流水线：
@@ -212,7 +223,8 @@ func main():
 
 链接器自动完成：
 
-- 解析并合并多个 VXOBJ → 发射 LLVM IR（.ll 文本，含 vxrt 运行时常量）
+- 解析并合并多个 VXOBJ → 发射 LLVM IR（.ll 文本）
+- 并入预编译 VX 运行时 `libvxrt.a`（找不到时回退为临时 `vxrt.c` 源现编）
 - 调用宿主 clang 编译链接（`--target` 非宿主时自动交叉编译）
 - @imp/@cppimp 的实现文件（.c/.a/.dylib/.cpp）与 C++ shim 一并参与链接
 
@@ -258,29 +270,25 @@ func main():
 **内置示例库**（`headers/`，覆盖全部 5 种 ABI 类型）：`math` / `fmath`（根库 int/float）、
 `text`（string 入参、int/bool/void 返回）、`collections/vec`（子目录库）、`cpp/greet`（@cppimp）。
 
-### 4. 项目构建（VMake，VMakeLists.toml）
+### 4. 项目构建（VMake，VMakeSet.vmake）
 
-vmake 位于 `tools/vmake/`。它读取项目根目录的 `VMakeSet.vmake`，
-**自身不编译任何代码**，而是按正确顺序在后台调用工具链：
+vmake 位于 `tools/vmake/`。它读取项目根目录的 `VMakeSet.vmake`
+（Python 风格、函数调用式配置），**自身不编译任何代码**，
+而是按正确顺序在后台调用工具链：
 
 ```
 每个源文件 → vxc <src> -o <obj>.vxobj
 全部 .vxobj → vlnk <obj...> -o <产物> [--shared]
 ```
 
-目前仅支持从源文件声明两类目标：可执行文件（`[[exe]]`）与动态链接库（`[[dylib]]`）。
+目前仅支持从源文件声明两类目标：可执行文件（`exe(...)`）与动态链接库（`dylib(...)`）。
 动态库目标始终先于可执行文件构建；同一目标内的多个源文件由 `vlnk` 合并链接。
 
-```toml
-# VMakeLists.toml
-[[exe]]
-name = "hello"
-sources = ["src/main.vx", "src/util.vx"]
+```python
+# VMakeSet.vmake
+exe("hello", sources=["src/main.vx", "src/util.vx"])
 
-[[dylib]]
-name = "mylib"
-sources = ["src/lib.vx"]
-output = "libmylib.dylib"   # 可选，相对 -B 构建目录
+dylib("mylib", sources=["src/lib.vx"], output="libmylib.dylib")  # output 可选，相对 -B 构建目录
 ```
 
 构建目录必须显式用 `-B` 指定（不存在会自动创建），输出风格对齐 Cargo：
@@ -367,6 +375,30 @@ cmake -G Ninja -B build -S . && ninja -C build vx-tidy
 ./build/tools/vx-tidy/vx-tidy --format=json src.vx  # JSON 输出（CI 用）
 # 退出码：0 = 无 error；1 = 有 error；2 = 用法错误
 ```
+
+### 9. VMake 配置语言服务器（vmake-lsp）
+
+vmake-lsp 位于 `tools/vmake-lsp/`，针对 `VMakeSet.vmake` 的 LSP 服务器（stdio 传输，
+纯标准 C++23、零外部依赖），诊断规则与 `tools/vmake/src/config.cpp` 逐条对齐：
+
+| 功能       | 说明                                                   | 状态 |
+| ---------- | ------------------------------------------------------ | ---- |
+| 诊断       | 未知/缺失/重复字段、目标名、源文件后缀、output 路径约束；推送 + 拉取（`textDocument/diagnostic`） | ✅   |
+| 悬停信息   | 目标类型、目标名、`sources` / `output` 字段与源文件      | ✅   |
+| 跳转定义   | 目标名/字段定位；源文件跳到清单目录下对应的 `.vx`        | ✅   |
+| 代码补全   | 语句位（`exe` / `dylib`）、字段名、字段值片段            | ✅   |
+| 格式化     | 目标声明规范化为 `exe("name", sources=[...])` 单行      | ✅   |
+| 大纲 / 折叠 | documentSymbol 大纲、foldingRange 折叠                 | ✅   |
+| 跨文件语义 | 引用查找、重命名、工作区符号                            | 🚧 规划中 |
+
+```bash
+cmake -G Ninja -B build -S . && ninja -C build vmake-lsp
+
+./build/tools/vmake-lsp/vmake-lsp --stdio     # 启动 LSP（编辑器配置用）
+./build/tools/vmake-lsp/vmake-lsp --help      # 帮助 / --version 版本
+```
+
+编辑器接入方式与 `tree-sitter-vmake` 高亮见 [docs/VMAKE_SYNTAX.md](docs/VMAKE_SYNTAX.md) 第 12 节。
 
 ---
 
@@ -465,7 +497,8 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 │   ├── util/                 # Util 层：arena / str / fs / platform
 │   ├── compiler/             # Compiler 层：diag / vxabi / lexer / parser / importer / codegen / vxobj
 │   ├── backend/              # Backend 层：vxobj_reader / llvm_emitter / link_driver
-│   └── driver/               # vxc002（前端 CLI）与 vlnk（后端 CLI）入口
+│   ├── runtime/              # vxrt.c：预编译为 libvxrt.a（vlnk 链接期并入）
+│   └── driver/               # vxc（前端 CLI）与 vlnk（后端 CLI）入口
 ├── include/                  # 公开头文件目录（vx/util、vx/compiler、vx/backend）
 ├── headers/                  # 导入库一套（@imp/@cppimp 测试覆盖全类型）
 │   ├── math.* / text.*       # 根目录库：int / string+bool+void
@@ -476,17 +509,20 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 │   ├── *_test.cpp            # util/diag/lexer/parser/codegen/vxobj/e2e/backend/import 测试
 │   └── test_*.vx             # e2e 样例（simple/void/return/math/prime）
 ├── tools/                    # 独立工具子项目（主构建自动检测 tools/*/CMakeLists.txt）
-│   ├── vmake/                # 项目构建编排器（VMakeLists.toml → vxc/vlnk）
+│   ├── vmake/                # 项目构建编排器（VMakeSet.vmake → vxc/vlnk）
+│   ├── vmake-lsp/            # VMakeSet.vmake 语言服务器（诊断/补全/悬停/跳转/格式化）
 │   ├── vxls/                 # VX 语言服务器（LSP over stdio，集成 vx-tidy）
 │   └── vx-tidy/              # 静态分析引擎（libvxtidy.dylib + vx-tidy CLI）
 ├── tree-sitter-vx/           # Tree-sitter 语法（编辑器高亮、语法导航）
+├── tree-sitter-vmake/        # Tree-sitter 语法（VMakeSet.vmake 高亮）
+├── scripts/toolchains/       # CMake 交叉编译工具链预设（toolchain-*.cmake）
 ├── cpp_lsp/                  # 早期独立 LSP 原型（已由 tools/vxls 取代，保留参考）
 ├── std/                      # VX 标准库源码（.vx 源文件）
 ├── compiler/                 # VX 编译器前端源码（.vx 源文件，自举参考）
 ├── docs/                     # 语言与格式文档（SYNTAX.md 等）
 ├── ci/                       # CI 配置
 ├── CMakeLists.txt            # CMake 构建配置（CMake + Ninja）
-├── Makefile                  # 常用构建命令封装
+├── install.zsh               # 安装脚本（vxls / vx-tidy / vmake → ~/.local/bin）
 ├── CHANGELOG.md              # 变更日志
 ├── CONTRIBUTING.md           # 贡献指南
 ├── LICENSE                   # AGPL-3.0 协议
@@ -522,7 +558,7 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 | RISC-V 32 | `riscv32-unknown-linux-gnu`     | RISC-V 32位           |
 | RISC-V 64 | `riscv64-unknown-linux-gnu`     | RISC-V 64位           |
 
-> `--target` 接受任意 clang 认识的三元组；`vxc002 -v` 会打印本次编译所用的 target。
+> `--target` 接受任意 clang 认识的三元组；`vxc -v` 会打印本次编译所用的 target。
 
 ---
 
@@ -553,7 +589,7 @@ int main() {
 ```
 
 > 注：编译器与后端库（`libvx_compiler.a` / `libvx_backend.a`）目前面向内部工具
-> （vxc002 / vlnk / vxls）使用，公开 API 将随版本演进稳定。
+> （vxc / vlnk / vxls）使用，公开 API 将随版本演进稳定。
 
 ---
 
@@ -623,7 +659,7 @@ func main():
 ### 开发环境
 
 ```bash
-# 克隆后运行测试确保环境正常（15 组测试）
+# 克隆后运行测试确保环境正常（17 组测试）
 cmake --build build --target test
 
 # 默认构建（MinSizeRel）

@@ -29,10 +29,10 @@
 5. **运行测试套件**：
 
 ```bash
-make test               # 运行全部单元测试
-make build              # Debug 构建验证（带调试信息）
-make lint               # 代码质量检查
-make check              # 本地 CI 全套检查
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
+cmake --build build          # 构建全部工具与测试
+ctest --test-dir build --output-on-failure   # 运行全部单元测试
+bash ci/check.sh             # 本地 CI 全套检查
 ```
 
 6. **提交 Pull Request** 到 `master` 分支，并关联相关 issue
@@ -52,15 +52,17 @@ make check              # 本地 CI 全套检查
 | ------------- | ---------------------------- |
 | `src/`        | C++ 源码（util / compiler / backend / driver） |
 | `include/`    | 公开头文件                   |
-| `tests/`      | 测试代码（CTest 15 组）      |
+| `tests/`      | 测试代码（CTest 17 组）      |
 | `std/`        | VX 标准库（.vx 源文件）      |
 | `compiler/`   | VX 编译器前端源码（.vx 源文件） |
 | `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |
-| `tools/`      | 独立工具子项目（vmake、vxls、vx-tidy） |
-| `tree-sitter-vx/` | Tree-sitter 语法（编辑器高亮） |
+| `tools/`      | 独立工具子项目（vmake、vmake-lsp、vxls、vx-tidy） |
+| `tree-sitter-vx/` | Tree-sitter 语法（VX 编辑器高亮） |
+| `tree-sitter-vmake/` | Tree-sitter 语法（VMakeSet.vmake 高亮） |
+| `scripts/`    | CMake 交叉编译工具链预设（toolchain-*.cmake） |
 | `cpp_lsp/`    | 早期独立 LSP 原型（已由 tools/vxls 取代） |
 | `docs/`       | 语言与格式文档               |
-| `Makefile`    | Make 构建配置                |
+| `install.zsh` | 安装脚本（vxls / vx-tidy / vmake → ~/.local/bin） |
 | `CMakeLists.txt` | CMake 构建配置            |
 | `ci/`         | CI 检查脚本                  |
 

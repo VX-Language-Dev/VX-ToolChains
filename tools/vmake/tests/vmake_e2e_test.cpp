@@ -1,4 +1,4 @@
-// vmake_e2e_test — VMake 端到端：VMakeLists.toml → vxc × N → vlnk → 产物运行。
+// vmake_e2e_test — VMake 端到端：VMakeSet.vmake → vxc × N → vlnk → 产物运行。
 // 覆盖：dylib 先于 exe 的构建顺序、多源文件合并、Cargo 风格输出、增量 Fresh、
 // 编译失败诊断。找不到 clang 时返回 77（CTest SKIP）。
 #include "vx/backend/link_driver.hpp"

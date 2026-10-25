@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## v1.11.0 — vxc 更名、数组/字典后端与 VMakeSet.vmake (2026-10-24)
+
+### 编译器前端（`vxc` 0.3.0）
+
+- **更名**：可执行文件由 `vxc002` 更名为 `vxc`（CMake 目标仍为 `vxc002`，`OUTPUT_NAME` 覆盖）；`--version` 显示 `0.3.0`
+- **默认输出路径修复**：`hello.vx` → `hello.vxobj`（剥离源文件扩展名，不再产出 `hello.vx.vxobj`）
+- **新选项**：`--check`（仅类型检查不写输出）、`--dump`（打印 funcs/insts/externs/globals 摘要）
+
+### 后端（`vlnk`）
+
+- **P4 MVP 发射**：数组/字典字面量（ARRAY_NEW / MAP_NEW）、下标读写（INDEX_GET / INDEX_SET）、属性读写（FIELD_LOAD / FIELD_STORE）、`new` 分配（NEWZ）接入 LLVM IR 发射；8 字节统一槽位表示，浮点数组精度与复杂布局仍受限
+- **预编译运行时**：新增 `src/runtime/vxrt.c`，构建期编译为静态库 `libvxrt.a`，链接期直接并入（找不到时回退为临时 `vxrt.c` 源现编）
+
+### VMake（`tools/vmake`）
+
+- **VMakeSet.vmake**：配置格式由 TOML 子集（`[[exe]]` 数组表）改为 **Python 风格函数调用** `exe("name", sources=[...])` / `dylib(...)`，支持注释、尾随逗号、括号内换行与 `\uXXXX` 转义
+- 其余编排语义不变：`-B` 必填、动态库先于可执行文件、Cargo 风格输出、增量构建
+
+### 工具与生态
+
+- **tree-sitter-vmake**：新增 VMakeSet.vmake 的 Tree-sitter 语法（`tree-sitter-vmake/grammar.js`），供编辑器高亮
+- **vmake-lsp**：VMakeSet.vmake 语言服务器（`tools/vmake-lsp/`，LSP over stdio，纯标准 C++23、零外部依赖）：
+  - **解析与诊断**：内嵌与 `vmake` 同源规则的解析器（词法/语义逐条对齐 `tools/vmake/src/config.cpp`），提供未知字段、缺字段、字段重复、目标名非法/重复、源文件后缀、output 路径约束等行级诊断；推送（`publishDiagnostics`）与拉取（`textDocument/diagnostic`）双通道
+  - **编辑能力**：`documentSymbol` 大纲、`hover`（目标/字段/源文件说明）、`definition`（源文件跳转到磁盘上对应的 `.vx`）、`completion`（`exe`/`dylib`、字段名、值片段）、`formatting`（规范化为单行目标声明）、`foldingRange` 折叠
+  - **协议**：遵循 LSP 生命周期（initialize 前请求 `-32002`、shutdown 后请求 `-32600`、未 shutdown 即 exit 退出码 1），`--stdio` / `--version` / `--help`
+  - **测试**：`vmake_lsp_tests`（解析器单测）与 `vmake_lsp_e2e_tests`（真实子进程完整 LSP 会话）纳入 CTest
+
+### 文档
+
+- README：vxc 0.3.0 用法（`--check` / `--dump` / 默认输出）、libvxrt.a、VMakeSet.vmake 配置示例、模块表与结构树（vmake-lsp、tree-sitter-vmake、scripts/、src/runtime）同步；新增 vmake-lsp 功能表与构建产物条目，安装脚本纳入 `vmake-lsp`
+- CONTRIBUTING：移除已删除的 Makefile 相关命令，改为 CMake/CTest/ci/check.sh；结构表同步
+- docs/SYNTAX.md：流水线示例改为 `vxc`
+- docs/VMAKE_SYNTAX.md：新增 VMakeSet.vmake 语法参考（词法、语句、EBNF、已知限制、编辑器支持与 vmake-lsp 能力表）
+
 ## v1.10.0 — VMake 构建系统与多文件 / 动态库链接 (2026-10-23)
 
 ### VMake（`tools/vmake`）

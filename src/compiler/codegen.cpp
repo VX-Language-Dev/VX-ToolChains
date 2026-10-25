@@ -14,6 +14,8 @@
 #include <vector>
 
 namespace vx::compiler {
+using std::optional;
+
 namespace {
 
 using ir::Inst;
@@ -879,10 +881,9 @@ private:
 
 } // namespace
 
-std::optional<ir::ModuleIR> generate_module(const Program &prog,
-                                           std::string_view filename,
-                                           DiagBag &bag,
-                                           const ImportTable *imports) {
+optional<ir::ModuleIR> generate_module(const Program &prog,
+                                       std::string_view filename, DiagBag &bag,
+                                       const ImportTable *imports) {
   return CodeGen(filename, bag, imports).run(prog);
 }
 
