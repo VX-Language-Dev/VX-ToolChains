@@ -43,4 +43,7 @@ add_executable(vxls_tests
 target_include_directories(vxls_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(vxls_tests PRIVATE vx_compiler vxtidy)
 target_compile_options(vxls_tests PRIVATE -Wall -Wextra -Wpedantic)
+# 仓库根路径：供补全测试解析 @imp 导入库（headers/ 目录）
+target_compile_definitions(vxls_tests PRIVATE
+    VX_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 add_test(NAME vxls_tests COMMAND vxls_tests)

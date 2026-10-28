@@ -16,12 +16,14 @@ struct BuildOptions {
   std::filesystem::path build_dir;    // -B（绝对路径，已创建）
   std::filesystem::path manifest_dir; // VMakeSet.vmake 所在目录
   std::filesystem::path manifest_path;
+  std::filesystem::path headers_root; // 导入库根（空 = 无），参与增量依赖签名
   std::string vxc;
   std::string vlnk;
   std::vector<std::string> selected; // 空 = 全部
   std::vector<std::pair<std::string, std::string>> child_env;
   bool verbose = false;
   bool color = false;
+  int jobs = 0; // 0 = 自动（CPU 核数）
 };
 
 // 目标构建顺序：动态库先于可执行文件（组内保持声明顺序），并按 selected 过滤。

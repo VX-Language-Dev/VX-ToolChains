@@ -198,7 +198,9 @@ void test_parser_recovery() {
       "var x =\nvar y = 1\nfunc bad() -> int:\n    return\nvar z = 2\n",
       "recovery.vx", arena, bag);
   auto prog = parse(toks, "recovery.vx", arena, bag);
-  // fail-soft：即使中间有错误，也应尽量产出后续语句，不至于全盘丢弃
+  // fail-soft：即使中间有错误，也应返回部分 AST（绝不丢弃后续语句）
+  CHECK(prog.has_value());
+  CHECK(bag.has_error());
   if (prog) {
     CHECK(prog->stmts.size() >= 2); // 至少 var y / var z 等后续语句应被解析
   }

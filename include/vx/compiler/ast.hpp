@@ -208,6 +208,8 @@ struct For : Stmt { // for name in expr: body
 struct ClassField {
   std::string_view name;
   std::string_view type;
+  // 非空 = 类常量字段（NAME = expr）：类级共享，不占实例布局槽位
+  const Expr *init = nullptr;
 };
 struct ClassDecl : Stmt { // class Name: 字段与方法
   std::string_view name;

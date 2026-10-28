@@ -53,28 +53,46 @@ struct Builtin {
   VT ret;
 };
 
+// 键为 VX 源码中可见的调用名，sym 为链接期实际符号（可与键不同）。
+static const std::map<std::string_view, Builtin> kBuiltinTable = {
+    {"out", {"out", {VT::PTR}, false, VT::I32}},
+    {"out_int", {"out_int", {VT::I32}, false, VT::I32}},
+    {"out_bool", {"out_bool", {VT::I32}, false, VT::I32}},
+    {"out_float", {"out_float", {VT::F64}, false, VT::I32}},
+    {"puts", {"puts", {VT::PTR}, true, VT::I32}},
+    {"exit", {"exit", {VT::I32}, false, VT::I32}},
+    {"malloc", {"malloc", {VT::I64}, true, VT::PTR}},
+    {"free", {"free", {VT::PTR}, false, VT::I32}},
+    {"vx_array_new", {"vx_array_new", {VT::I64}, true, VT::PTR}},
+    {"vx_array_get", {"vx_array_get", {VT::PTR, VT::I64}, true, VT::I64}},
+    {"vx_array_set", {"vx_array_set", {VT::PTR, VT::I64, VT::I64}, false, VT::I32}},
+    {"vx_map_new", {"vx_map_new", {VT::I64}, true, VT::PTR}},
+    {"vx_map_get", {"vx_map_get", {VT::PTR, VT::I64, VT::I64, VT::PTR}, true, VT::I64}},
+    {"vx_map_set", {"vx_map_set", {VT::PTR, VT::I64, VT::I64, VT::PTR, VT::I64}, false, VT::I32}},
+    {"vx_str_concat", {"vx_str_concat", {VT::PTR, VT::PTR}, true, VT::PTR}},
+    {"strcmp", {"strcmp", {VT::PTR, VT::PTR}, true, VT::I32}},
+    {"vx_pow_i32", {"vx_pow_i32", {VT::I32, VT::I32}, true, VT::I32}},
+    // 系统能力：命令行参数 / 文件 I/O / 执行 shell 命令（实现见 vxrt.c）
+    {"sys_argv_count", {"vx_argv_count", {}, true, VT::I32}},
+    {"sys_argv_get", {"vx_argv_get", {VT::I32}, true, VT::PTR}},
+    {"file_read", {"vx_file_read", {VT::PTR}, true, VT::PTR}},
+    {"file_write", {"vx_file_write", {VT::PTR, VT::PTR}, true, VT::I32}},
+    {"file_exists", {"vx_file_exists", {VT::PTR}, true, VT::I32}},
+    {"system", {"vx_system", {VT::PTR}, true, VT::I32}},
+};
+
+// 按 VX 源码中的调用名查找
 const Builtin *lookup_builtin(std::string_view name) {
-  static const std::map<std::string_view, Builtin> table = {
-      {"out", {"out", {VT::PTR}, false, VT::I32}},
-      {"out_int", {"out_int", {VT::I32}, false, VT::I32}},
-      {"out_bool", {"out_bool", {VT::I32}, false, VT::I32}},
-      {"out_float", {"out_float", {VT::F64}, false, VT::I32}},
-      {"puts", {"puts", {VT::PTR}, true, VT::I32}},
-      {"exit", {"exit", {VT::I32}, false, VT::I32}},
-      {"malloc", {"malloc", {VT::I64}, true, VT::PTR}},
-      {"free", {"free", {VT::PTR}, false, VT::I32}},
-      {"vx_array_new", {"vx_array_new", {VT::I64}, true, VT::PTR}},
-      {"vx_array_get", {"vx_array_get", {VT::PTR, VT::I64}, true, VT::I64}},
-      {"vx_array_set", {"vx_array_set", {VT::PTR, VT::I64, VT::I64}, false, VT::I32}},
-      {"vx_map_new", {"vx_map_new", {VT::I64}, true, VT::PTR}},
-      {"vx_map_get", {"vx_map_get", {VT::PTR, VT::I64, VT::I64, VT::PTR}, true, VT::I64}},
-      {"vx_map_set", {"vx_map_set", {VT::PTR, VT::I64, VT::I64, VT::PTR, VT::I64}, false, VT::I32}},
-      {"vx_str_concat", {"vx_str_concat", {VT::PTR, VT::PTR}, true, VT::PTR}},
-      {"strcmp", {"strcmp", {VT::PTR, VT::PTR}, true, VT::I32}},
-      {"vx_pow_i32", {"vx_pow_i32", {VT::I32, VT::I32}, true, VT::I32}},
-  };
-  auto it = table.find(name);
-  return it == table.end() ? nullptr : &it->second;
+  auto it = kBuiltinTable.find(name);
+  return it == kBuiltinTable.end() ? nullptr : &it->second;
+}
+
+// 按链接期实际符号查找（发射 declare 时使用）
+const Builtin *lookup_builtin_by_sym(std::string_view sym) {
+  for (const auto &[name, b] : kBuiltinTable) {
+    if (sym == b.sym) return &b;
+  }
+  return nullptr;
 }
 
 // LLVM c"..." 字节转义
@@ -199,7 +217,7 @@ public:
     out += "; VXOBJ -> LLVM IR by vlnk\n";
     out += "target triple = \"" + std::string(triple_) + "\"\n\n";
     for (const std::string &sym : used_builtins_) {
-      const Builtin *b = lookup_builtin(sym);
+      const Builtin *b = lookup_builtin_by_sym(sym);
       if (!b) continue;
       out += "declare ";
       out += b->has_ret ? vt_name(b->ret) : "void";

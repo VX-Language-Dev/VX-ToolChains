@@ -36,8 +36,12 @@ using vx::util::Arena;
 namespace backend = vx::backend;
 
 // 执行可执行文件，返回 (退出码, stdout) ；退出码 -1 表示启动失败
-std::pair<int, std::string> run_capture(const std::string &exe) {
-  std::string cmd = "\"" + exe + "\" 2>/dev/null";
+// extra_args 为追加的命令行参数（用于验证 argv 能力）
+std::pair<int, std::string> run_capture(const std::string &exe,
+                                       const std::string &extra_args = {}) {
+  std::string cmd = "\"" + exe + "\"";
+  if (!extra_args.empty()) cmd += " " + extra_args;
+  cmd += " 2>/dev/null";
   FILE *p = ::popen(cmd.c_str(), "r");
   if (!p) return {-1, {}};
   std::string out;
@@ -55,7 +59,8 @@ std::pair<int, std::string> run_capture(const std::string &exe) {
 // 断言 stdout 等于 expected。tag 用于临时文件与诊断输出。
 // explicit_target 为 true 时走 link_executable 的显式 -target 路径并校验命令行。
 void run_case(const char *src, const std::string &expected,
-              const std::string &tag, bool explicit_target = false) {
+              const std::string &tag, bool explicit_target = false,
+              const std::string &extra_args = {}) {
   const std::string exe = "/tmp/vx_vlnk_e2e_" + tag + "_" +
                           std::to_string(::getpid());
   static Arena arena;
@@ -92,7 +97,7 @@ void run_case(const char *src, const std::string &expected,
   if (explicit_target)
     CHECK(lr.command.find("-target " + host) != std::string::npos);
 
-  auto [code, out] = run_capture(exe);
+  auto [code, out] = run_capture(exe, extra_args);
   CHECK(code == 0);
   CHECK(out == expected);
   ::remove(exe.c_str());
@@ -171,6 +176,42 @@ int main() {
            "    out_float(y)\n"
            "    return 0\n",
            "34.5", "fprop");
+
+  // 系统能力：文件 I/O（写入 → 读取 → 存在性检查）
+  {
+    const std::string path =
+        "/tmp/vx_vlnk_fileio_" + std::to_string(::getpid()) + ".txt";
+    const std::string src =
+        "extern out(msg: string)\n"
+        "extern out_int(v: int)\n"
+        "func main() -> int:\n"
+        "    var n = file_write(\"" + path + "\", \"hello file\")\n"
+        "    out_int(n)\n"
+        "    out(\"|\")\n"
+        "    var content = file_read(\"" + path + "\")\n"
+        "    out(content)\n"
+        "    out(\"|\")\n"
+        "    if file_exists(\"" + path + "\"):\n"
+        "        out(\"exists\")\n"
+        "    out(\"|\")\n"
+        "    out_int(file_exists(\"/tmp/vx_vlnk_absent_" +
+        std::to_string(::getpid()) + ".txt\"))\n"
+        "    return 0\n";
+    run_case(src.c_str(), "10|hello file|exists|0", "fileio");
+    ::remove(path.c_str());
+  }
+
+  // 系统能力：命令行参数（argv 数量与取值）
+  run_case("extern out(msg: string)\n"
+           "extern out_int(v: int)\n"
+           "func main() -> int:\n"
+           "    out_int(sys_argv_count())\n"
+           "    out(\"|\")\n"
+           "    out(sys_argv_get(1))\n"
+           "    out(\"|\")\n"
+           "    out(sys_argv_get(99))\n" // 越界 → 空串
+           "    return 0\n",
+           "2|hello-arg|", "argv", false, "hello-arg");
 
   if (g_failures == 0) {
     std::fprintf(stdout, "vlnk e2e: all passed\n");

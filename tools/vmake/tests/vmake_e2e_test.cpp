@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -111,6 +112,14 @@ bool contains(const std::string &text, std::string_view needle) {
   return text.find(needle) != std::string::npos;
 }
 
+// 仅更新 mtime（内容不变）：用于验证内容哈希增量不会误判重编
+void bump_mtime(const fs::path &p) {
+  std::error_code ec;
+  const auto t = fs::last_write_time(p, ec);
+  if (!ec)
+    fs::last_write_time(p, t + std::chrono::seconds(2), ec);
+}
+
 std::vector<std::pair<std::string, std::string>> tool_env() {
   return {{"VX_VXC", VXC_BIN_PATH}, {"VX_VLNK", VLNK_BIN_PATH}};
 }
@@ -149,17 +158,17 @@ int main() {
 
   const std::string vmake = VMAKE_BIN_PATH;
 
-  // ---- 首次构建 ----
+  // ---- 首次构建（-j2 同时覆盖线程池路径） ----
   RunResult first =
-      run_in_dir(vmake, {"build", "-B", "bdir"}, root, tool_env());
+      run_in_dir(vmake, {"build", "-B", "bdir", "-j2"}, root, tool_env());
   CHECK(first.code == 0);
   if (first.code != 0)
     std::fprintf(stderr, "%s\n", first.output.c_str());
-  CHECK(contains(first.output, "Compiling calc (dylib)"));
-  CHECK(contains(first.output, "Compiling app (exe)"));
-  CHECK(contains(first.output, "Finished build in"));
-  const std::size_t pos_calc = first.output.find("Compiling calc");
-  const std::size_t pos_app = first.output.find("Compiling app");
+  CHECK(contains(first.output, "vxc"));
+  CHECK(contains(first.output, "vlnk"));
+  CHECK(contains(first.output, "vmake-builder: build"));
+  const std::size_t pos_calc = first.output.find("calc");
+  const std::size_t pos_app = first.output.find("app");
   CHECK(pos_calc != std::string::npos && pos_app != std::string::npos &&
         pos_calc < pos_app);
 
@@ -183,8 +192,16 @@ int main() {
   RunResult second =
       run_in_dir(vmake, {"build", "-B", "bdir"}, root, tool_env());
   CHECK(second.code == 0);
-  CHECK(!contains(second.output, "Compiling "));
-  CHECK(contains(second.output, "Finished build in"));
+  CHECK(!contains(second.output, "vxc"));
+  CHECK(contains(second.output, "vmake-builder: build"));
+
+  // ---- 仅更新 mtime（内容未变）：内容哈希命中，不应重编也不应重链 ----
+  bump_mtime(root / "util.vx");
+  RunResult touch_only =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, root, tool_env());
+  CHECK(touch_only.code == 0);
+  CHECK(!contains(touch_only.output, "vxc"));
+  CHECK(!contains(touch_only.output, "vlnk"));
 
   // ---- 触达一个 exe 源文件：只重编 app，calc 保持 Fresh ----
   CHECK(write_text(root / "util.vx", "func add(a: int, b: int) -> int:\n"
@@ -193,8 +210,49 @@ int main() {
   RunResult third =
       run_in_dir(vmake, {"build", "-B", "bdir"}, root, tool_env());
   CHECK(third.code == 0);
-  CHECK(contains(third.output, "Compiling app (exe)"));
-  CHECK(!contains(third.output, "Compiling calc"));
+  CHECK(contains(third.output, "vxc"));
+  CHECK(!contains(third.output, "libcalc"));
+
+  // ---- 导入头/实现变更：headers 依赖纳入增量签名，必须触发重编+重链 ----
+  const fs::path hdr = root / "hdrproj";
+  fs::create_directories(hdr / "headers", ec);
+  CHECK(write_text(hdr / "VMakeSet.vmake",
+                   "exe(\"hi\", sources=[\"main.vx\"])\n"));
+  CHECK(write_text(hdr / "main.vx",
+                   "@imp(math)\n"
+                   "extern out_int(v: int)\n"
+                   "func main() -> int:\n"
+                   "    out_int(math.add(3, 4))\n"
+                   "    return 0\n"));
+  CHECK(write_text(hdr / "headers" / "math.vxh",
+                   "extern func add(a: int, b: int) -> int\n"));
+  CHECK(write_text(hdr / "headers" / "math.c",
+                   "#include <stdint.h>\n"
+                   "int32_t _vx_math_add(int32_t a, int32_t b) { return a + b; }\n"));
+  RunResult hdr_first =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, hdr, tool_env());
+  CHECK(hdr_first.code == 0);
+  if (hdr_first.code != 0)
+    std::fprintf(stderr, "%s\n", hdr_first.output.c_str());
+  RunResult hdr_second =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, hdr, tool_env());
+  CHECK(hdr_second.code == 0);
+  CHECK(!contains(hdr_second.output, "vxc"));
+
+  CHECK(write_text(hdr / "headers" / "math.c",
+                   "#include <stdint.h>\n"
+                   "/* changed */\n"
+                   "int32_t _vx_math_add(int32_t a, int32_t b) { return a + b; }\n"));
+  RunResult hdr_third =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, hdr, tool_env());
+  CHECK(hdr_third.code == 0);
+  CHECK(contains(hdr_third.output, "vxc"));
+  CHECK(contains(hdr_third.output, "vlnk"));
+  if (fs::is_regular_file(hdr / "bdir" / "hi", ec) && !ec) {
+    RunResult run = run_in_dir((hdr / "bdir" / "hi").string(), {}, hdr);
+    CHECK(run.code == 0);
+    CHECK(run.output == "7");
+  }
 
   // ---- 语法错误：失败诊断应包含 Cargo 风格错误行 ----
   CHECK(write_text(root / "main.vx", "func main(:\n    return 0\n"));

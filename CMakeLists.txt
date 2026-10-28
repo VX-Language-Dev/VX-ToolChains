@@ -3,7 +3,9 @@ cmake_minimum_required(VERSION 3.23)
 # VX-ToolKit C++ 重写工程：Util / Compiler / Backend 三层 + vxc002 / vlnk 二进制
 # 构建由 CMake + Ninja 驱动（见 Makefile），同时导出 compile_commands.json 供 clangd 使用
 project(vx-toolkit LANGUAGES CXX C)
-
+if (CMAKE_GENERATOR MATCHES "FASTBuild")
+    add_compile_options(-Wno-gnu-line-marker)
+endif()
 # C++23
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,6 +65,12 @@ add_library(vx_runtime STATIC src/runtime/vxrt.c)
 target_include_directories(vx_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime)
 set_target_properties(vx_runtime PROPERTIES OUTPUT_NAME vxrt)
 
+# 内嵌运行时源码：找不到 libvxrt.a 时由 link_driver 现编。
+# 由 src/runtime/vxrt.c 生成，保证「预编译库」与「内嵌源码」始终同源。
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/vxrt.c VXRT_CONTENT)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/vxrt_source.h.in
+               ${CMAKE_CURRENT_BINARY_DIR}/generated/vxrt_source.h @ONLY)
+
 # ==================== Backend 层 ====================
 # 后端 vlnk：VXOBJ reader（字节流 → ModuleIR）+ LLVM emitter（ModuleIR → .ll 文本）。
 add_library(vx_backend
@@ -71,7 +79,9 @@ add_library(vx_backend
     src/backend/link_driver.cpp
 )
 target_link_libraries(vx_backend PUBLIC vx_compiler)
-target_include_directories(vx_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(vx_backend PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_compile_options(vx_backend PRIVATE -Wall -Wextra -Wpedantic)
 
 # ==================== 后端二进制 ====================

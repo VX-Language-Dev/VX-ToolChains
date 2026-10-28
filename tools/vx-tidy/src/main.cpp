@@ -18,17 +18,20 @@
 
 namespace {
 
+constexpr std::string_view VERSION = "0.1.0";
+
 void print_usage() {
-  std::fputs(
-      "vx-tidy — VX 静态分析引擎\n"
+  std::fprintf(stdout,
+      "vx-tidy %s — VX static analysis engine\n"
       "Usage: vx-tidy [options] <file.vx>...\n"
       "Options:\n"
-      "  --format=text|json  输出格式（默认 text）\n"
-      "  --no-syntax         不透传词法/语法错误\n"
-      "  --list-rules        列出全部检查规则\n"
-      "  -h, --help          显示本帮助\n"
+      "  --format=text|json  Output format (default: text)\n"
+      "  --no-syntax        Skip lexer/parser errors, semantic rules only\n"
+      "  --list-rules       List all check rules\n"
+      "  -V, --version      Print version\n"
+      "  -h, --help         Show this help\n"
       "Exit code: 0 = clean, 1 = errors found, 2 = usage error\n",
-      stderr);
+      VERSION.data());
 }
 
 } // namespace
@@ -45,6 +48,10 @@ int main(int argc, char **argv) {
       print_usage();
       return 0;
     }
+    if (a == "-V" || a == "--version") {
+      std::printf("vx-tidy %s\n", VERSION.data());
+      return 0;
+    }
     if (a == "--list-rules") {
       list_rules = true;
     } else if (a == "--no-syntax") {
@@ -57,14 +64,14 @@ int main(int argc, char **argv) {
         }
         format = argv[++i];
       } else {
-        format = std::string(a.substr(9)); // "--format=" 长度
+        format = std::string(a.substr(9));
       }
       if (format != "text" && format != "json") {
         std::fputs("error: invalid --format value (text|json)\n", stderr);
         return 2;
       }
     } else if (a.starts_with("-")) {
-      std::fprintf(stderr, "error: unknown option: %s\n", argv[i]);
+      std::fprintf(stderr, "error: unknown option: %s (try --help)\n", argv[i]);
       return 2;
     } else {
       files.emplace_back(a);
@@ -72,7 +79,7 @@ int main(int argc, char **argv) {
   }
 
   if (list_rules) {
-    std::puts("VX-Tidy 规则列表:");
+    std::puts("VX-Tidy rules:");
     for (const auto &r : vxtidy::all_rules()) {
       std::printf("  [%s] %-18s %s  — %s\n", r.rule.c_str(), r.name.c_str(),
                   r.severity == 1 ? "error" : "warning", r.desc.c_str());
@@ -110,9 +117,8 @@ int main(int argc, char **argv) {
       if (f.severity == 1) any_error = true;
     }
     if (format == "json") {
-      // 逐文件数组拼接
       std::string arr = vxtidy::format_json(findings, file);
-      if (!arr.empty() && arr.size() > 2) { // 非空数组
+      if (!arr.empty() && arr.size() > 2) {
         if (!first_json) std::fputs(",", stdout);
         std::fputs(arr.substr(1, arr.size() - 2).c_str(), stdout);
         first_json = false;

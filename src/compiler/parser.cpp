@@ -97,14 +97,12 @@ public:
 
   std::optional<Program> run() {
     std::vector<const Stmt *> stmts;
-    bool any_error = false;
     while (true) {
       skip_nls();
       // 顶层语句不应以 Indent 开头；此处出现 Indent 说明上一条（块）语句
       // 解析失败并遗留了孤儿缩进块。静默丢弃该块，避免级联出更多诊断。
       if (at(Tok::Indent)) {
         skip_indented_block();
-        any_error = true;
         continue;
       }
       if (at(Tok::Eof)) {
@@ -115,7 +113,6 @@ public:
       if (!s) {
         // 错误恢复：跳到下一语句边界，继续解析后续语句，
         // 尽量一次性暴露多个语法错误而非仅首个。
-        any_error = true;
         skip_to_stmt_boundary();
         // 保证前进：若解析与重同步都未消费任何 token（例如停在 Semi/Dedent
         // 边界上，而 skip_nls 不会消费它们），强制跨过该 token，避免死循环。
@@ -127,14 +124,13 @@ public:
       }
       stmts.push_back(s);
       if (!end_stmt()) {
-        any_error = true;
         skip_to_stmt_boundary();
         continue;
       }
     }
-    if (any_error) {
-      return std::nullopt;
-    }
+    // fail-soft：出错时仍返回已解析的部分 AST，
+    // 由调用方通过 bag.has_error() 决定是否终止后续阶段
+    // （LSP 借此在编辑中间态提供符号/悬停/补全）。
     return Program{arena_span(arena_, stmts)};
   }
 
@@ -656,11 +652,21 @@ private:
           if (!parse_name(fname)) {
             return nullptr;
           }
-          if (!expect(Tok::Colon, "':' 或方法定义")) {
-            return nullptr;
+          if (at(Tok::Assign)) {
+            // 类常量字段：NAME = expr（无类型注解，不占实例布局）
+            advance();
+            const Expr *init = parse_expr(0);
+            if (!init) {
+              return nullptr;
+            }
+            fields.push_back(ClassField{fname, "", init});
+          } else {
+            if (!expect(Tok::Colon, "':' 或方法定义")) {
+              return nullptr;
+            }
+            std::string_view ftype = parse_type_opt();
+            fields.push_back(ClassField{fname, ftype});
           }
-          std::string_view ftype = parse_type_opt();
-          fields.push_back(ClassField{fname, ftype});
           if (!end_stmt()) {
             return nullptr;
           }
@@ -716,6 +722,7 @@ private:
   // 块：INDENT 多语句，或 ':' 后同行语句列表（Semi 分隔）
   bool parse_block(std::vector<const Stmt *> &out) {
     if (at(Tok::Nl)) {
+      const std::size_t save = pos_;
       skip_nls();
       if (at(Tok::Indent)) {
         advance();
@@ -738,7 +745,9 @@ private:
         }
         return true;
       }
-      // 缩进块缺失（如空体）：合法，返回空块
+      // 缩进块缺失（如仅含注释的空体）：合法，返回空块。
+      // 恢复首个 Nl 不消费，留给调用方 end_stmt 作语句边界。
+      pos_ = save;
       return true;
     }
     // 同行体：if cond: a(); b()

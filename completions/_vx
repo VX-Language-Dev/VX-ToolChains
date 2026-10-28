@@ -1,0 +1,22 @@
+#compdef vx
+# Zsh completion for vx meta-command
+
+_vx() {
+    local -a commands
+    commands=(
+        'compile:Compile .vx source to .vxobj (vxc)'
+        'c:Compile .vx source to .vxobj (vxc)'
+        'link:Link .vxobj to native executable (vlnk)'
+        'l:Link .vxobj to native executable (vlnk)'
+        'build:Build project (vmake)'
+        'b:Build project (vmake)'
+        'tidy:Static analysis (vx-tidy)'
+        't:Static analysis (vx-tidy)'
+        'lsp:Start VX language server (vxls)'
+        'vmake-lsp:Start VMake language server'
+        'clean:Clean build directory'
+    )
+    _describe 'command' commands
+}
+
+_vx "$@"

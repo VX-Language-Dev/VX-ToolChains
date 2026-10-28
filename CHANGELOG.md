@@ -1,5 +1,52 @@
 # CHANGELOG
 
+## v1.13.0 — 系统能力内置函数、Parser 容错与标准库定位澄清 (2026-10-26)
+
+### 内置系统能力（`vxrt` + 后端）
+
+- **新内置函数**（无需 `extern` 声明）：`sys_argv_count()` / `sys_argv_get(i)`（命令行参数）、`file_read(path)` / `file_write(path, content)` / `file_exists(path)`（文件 I/O）、`system(cmd)`；实现位于 `src/runtime/vxrt.c`，由后端 builtin 表发射
+- **`file_read` / `sys_argv_get` 返回值按字符串参与类型传播**（内容比较走 `STR_EQ`，不再退化为地址比较）
+- **运行时源码单一来源**：`vlnk` 内嵌的运行时源码改为 CMake 构建期从 `src/runtime/vxrt.c` 生成（`vxrt_source.h`），消除预编译库与内嵌回退两条路径的实现漂移风险
+- 修复 builtin 表「VX 可见名 ≠ 链接符号名」时 `declare` 丢失的潜在缺陷（按符号回查表）
+
+### 编译器前端（`vxc`）
+
+- **Parser fail-soft**：语法错误后语句级恢复并返回部分 AST（多错误一次暴露）；消费方以 `bag.has_error()` 把关——`vxc` 有错不进 codegen、vx-tidy 有语法错误时不跑语义规则、vxls 借部分 AST 在编辑中间态提供符号/悬停/补全
+
+### 工程与工具
+
+- `install.zsh`：安装 `headers/` 导入库与 `libvxrt.a`（修复安装后 `@imp` 开箱即坏）
+- 删除 `cpp_lsp/`（已被 tools/vxls 取代的早期原型）
+- `vx` 元命令版本号 1.11.0 → 1.12.0（工具链版本随本 CHANGELOG 对齐）
+
+### 标准库定位澄清
+
+- `std/` 明确为**设计参考/前瞻规范**（v1.0 为已废弃的 VM 路线编写，不可编译执行）；`std/README.md` 重写：当前可用能力对照（内置运行时 + `headers/`）、11 个文件的解析缺口清单（enum/泛型/macro 等，作为编译器 roadmap）、原生化演进路径
+- 删除 `std/tests/vxsetting.toml`（旧构建系统残留配置）
+
+## v1.12.0 — VMake 构建提速与 vxls 上下文感知补全 (2026-10-25)
+
+### VMake（`tools/vmake`）构建速度
+
+- **内容哈希增量**：增量判定由 mtime 改为内容哈希签名。对象签名 = 工具身份 + 依赖签名 + 源文件内容哈希；链接签名 = vlnk 身份 + 全部对象内容哈希，写入产物旁 `<产物>.sig`。内容未变的 `touch` 不再触发重编与重链；vxc/vlnk 自身重建后签名自动失效
+- **依赖签名纳入导入库**：`headers/` 根目录整树与项目内 `*.vxh` 的内容哈希计入签名，修复 `@imp` / `@cppimp` 头文件或实现文件变更不触发重建的漏编
+- **并行执行器**：以固定 worker + 原子任务队列替换「每任务一线程 + 分批屏障」；`-j` 参数真正生效（默认 CPU 核数，`-j0` = 自动）
+- **链接加速**：`vlnk` 探测到 `ld.lld` 时本机链接追加 `-fuse-ld=lld`（`VX_NO_LLD=1` 可回退）；`libvxrt.a` 查找扩展到 vlnk 可执行文件同级/上级/`lib/`，任意项目目录不再每次现编 `vxrt.c`
+
+### LSP 语言服务器（`vxls` 0.3.0）
+
+- **上下文感知补全**（`textDocument/completion` 重写）：
+  - **作用域补全**：当前函数可见的局部变量、参数、循环变量、`self`，以及顶层 func/extern/class/struct/全局变量、内置运行时与关键字；按输入前缀过滤，`sortText` 分档（局部 → 顶层 → 内置 → 关键字）
+  - **成员补全**：`变量.` / `self.` 给出对应类型的字段与方法；`@imp` 导入库前缀（`math.`）给出库内符号（含 VX ABI 与 .vxh 来源）
+  - **类型补全**：`var x:`、形参注解、`->` 之后给出基础类型与 class/struct 名
+  - **snippet**：客户端声明 `completionItem.snippetSupport` 时，可调用项插入 `name(${1:a}, ${2:b})` 形式占位
+  - **容错**：源码解析失败时按「原文 → 光标处补占位标识符 → 删除当前行 → token 兜底」逐级降级，输入中的残缺代码仍可补全
+- **移除**：旧的静态补全列表（`Analysis::completions`）由 `completion_at()` 取代，避免两套补全逻辑并存
+
+### 文档
+
+- README：vxls 功能表补全能力描述更新、模块表同步
+
 ## v1.11.0 — vxc 更名、数组/字典后端与 VMakeSet.vmake (2026-10-24)
 
 ### 编译器前端（`vxc` 0.3.0）

@@ -122,3 +122,91 @@ int64_t vx_map_get(void *m0, int64_t key, int64_t is_str, const char *keystr) {
   }
   return 0;
 }
+
+/* ---- 系统能力：命令行参数 ----
+ * 进程启动时由构造函数捕获 argc/argv；vxrt 全部符号位于同一编译单元，
+ * 链接器只要拉入其中任意一个符号即会带入本文件，构造函数必然执行。 */
+static int vx_argc = 0;
+static char **vx_argv = 0;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define VX_CTOR __attribute__((constructor))
+#else
+#define VX_CTOR
+#endif
+
+VX_CTOR static void vx_rt_capture_argv(int argc, char **argv) {
+  vx_argc = argc;
+  vx_argv = argv;
+}
+
+/* 参数个数（含 argv[0] 可执行文件名） */
+int32_t vx_argv_count(void) { return (int32_t)vx_argc; }
+
+/* 第 i 个参数；越界返回空串（不返回 NULL，避免调用方空指针） */
+const char *vx_argv_get(int32_t i) {
+  if (!vx_argv || i < 0 || i >= vx_argc) return "";
+  return vx_argv[i] ? vx_argv[i] : "";
+}
+
+/* ---- 系统能力：文件 I/O ---- */
+
+/* 读取整个文件为以 '\0' 结尾的字符串（调用方不释放）。
+ * 失败（不存在/权限/内存不足）返回空串；是否可用请配合 vx_file_exists。 */
+const char *vx_file_read(const char *path) {
+  if (!path) return "";
+  FILE *f = fopen(path, "rb");
+  if (!f) return "";
+  size_t cap = 4096, len = 0;
+  char *buf = (char *)malloc(cap);
+  if (!buf) {
+    fclose(f);
+    return "";
+  }
+  for (;;) {
+    if (len + 1 >= cap) { /* 预留终止符位置 */
+      size_t ncap = cap * 2;
+      char *nb = (char *)realloc(buf, ncap);
+      if (!nb) {
+        free(buf);
+        fclose(f);
+        return "";
+      }
+      buf = nb;
+      cap = ncap;
+    }
+    size_t n = fread(buf + len, 1, cap - len - 1, f);
+    if (n == 0) break;
+    len += n;
+  }
+  fclose(f);
+  buf[len] = '\0';
+  return buf;
+}
+
+/* 覆写写入文件，返回写入字节数；失败返回 -1 */
+int32_t vx_file_write(const char *path, const char *content) {
+  if (!path) return -1;
+  FILE *f = fopen(path, "wb");
+  if (!f) return -1;
+  size_t len = content ? strlen(content) : 0;
+  size_t written = len ? fwrite(content, 1, len, f) : 0;
+  fclose(f);
+  if (written != len) return -1;
+  return (int32_t)written;
+}
+
+/* 文件是否存在（可读） */
+int32_t vx_file_exists(const char *path) {
+  if (!path) return 0;
+  FILE *f = fopen(path, "rb");
+  if (!f) return 0;
+  fclose(f);
+  return 1;
+}
+
+/* 执行 shell 命令，返回 libc system() 的退出码 */
+int32_t vx_system(const char *cmd) {
+  if (!cmd) return -1;
+  return (int32_t)system(cmd);
+}

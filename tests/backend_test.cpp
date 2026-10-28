@@ -309,6 +309,29 @@ void test_emitter_unsupported_opcode() {
   CHECK(r.error.find("OP_STRUCT_NEW") != std::string::npos);
 }
 
+void test_emitter_system_builtins() {
+  // 系统能力 builtin：声明与调用发射（符号名与 VX 可见名不同）
+  auto m = gen_src(
+      "func main() -> int:\n"
+      "    var s = file_read(\"a.txt\")\n"
+      "    var n = file_write(\"b.txt\", s)\n"
+      "    out_int(sys_argv_count())\n"
+      "    return 0\n");
+  CHECK(m);
+  auto r = backend::emit_llvm_ir(*m, kTriple);
+  CHECK(r.ok);
+  if (!r.ok) {
+    std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
+    return;
+  }
+  const std::string &ir = r.ir;
+  CHECK(ir.find("declare ptr @vx_file_read(ptr)") != std::string::npos);
+  CHECK(ir.find("call ptr @vx_file_read(ptr") != std::string::npos);
+  CHECK(ir.find("declare i32 @vx_file_write(ptr, ptr)") != std::string::npos);
+  CHECK(ir.find("declare i32 @vx_argv_count()") != std::string::npos);
+  CHECK(ir.find("call i32 @vx_argv_count()") != std::string::npos);
+}
+
 void test_emitter_unknown_call() {
   ir::ModuleIR mod;
   ir::FuncIR f;
@@ -345,6 +368,7 @@ int main() {
   test_emitter_float_type_mismatch();
   test_emitter_unsupported_opcode();
   test_emitter_unknown_call();
+  test_emitter_system_builtins();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "backend tests: all passed\n");

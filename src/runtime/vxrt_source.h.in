@@ -1,0 +1,7 @@
+// vxrt_source.h — 自动生成，勿手工编辑。
+// 由 CMake 从 src/runtime/vxrt.c 读取内容生成（configure_file @ONLY），
+// 供 link_driver 在找不到预编译 libvxrt.a 时内嵌运行时源码现编，
+// 保证「预编译库」与「内嵌源码」两条路径始终来自同一份实现。
+#pragma once
+
+inline constexpr const char *kVxrtSource = R"VXRT(@VXRT_CONTENT@)VXRT";

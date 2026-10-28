@@ -80,7 +80,7 @@ bool locate(const char *env_name, const std::vector<std::string> &names,
             std::string &out, std::string &error) {
   if (const char *env = std::getenv(env_name); env && env[0] != '\0') {
     if (!is_executable(env)) {
-      error = std::string(env_name) + " 指向的文件不可执行: " + env;
+      error = std::string(env_name) + " points to a non-executable file: " + env;
       return false;
     }
     out = env;
@@ -88,8 +88,8 @@ bool locate(const char *env_name, const std::vector<std::string> &names,
   }
   out = find_in_dirs(names, dirs);
   if (out.empty()) {
-    error = std::string("未找到 ") + label + "（可用环境变量 " + env_name +
-            " 指定）";
+    error = std::string("not found: ") + label + " (set environment variable " + env_name +
+            " to specify)";
     return false;
   }
   return true;

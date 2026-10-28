@@ -417,6 +417,38 @@ void test_short_circuit() {
 }
 
 // 字符串相等比较 → OP_STR_EQ（内容比较，!= 由 BOOL_NOT 取反）
+void test_system_builtins() {
+  // 内置系统能力：file_read 返回字符串 → 变量类型传播 → 内容比较走 STR_EQ
+  auto m = gen_src("func s() -> int:\n"
+                   "    var content = file_read(\"a.txt\")\n"
+                   "    if content == \"x\":\n"
+                   "        return 1\n"
+                   "    return 0\n");
+  CHECK(m);
+  if (!m) return;
+  bool has_call = false;
+  bool has_str_eq = false;
+  for (const auto &inst : m->funcs[0].instructions) {
+    if (inst.op == ir::OP_CALL && inst.args == "f;file_read") has_call = true;
+    if (inst.op == ir::OP_STR_EQ) has_str_eq = true;
+  }
+  CHECK(has_call);
+  CHECK(has_str_eq);
+
+  // argv 取值同样是字符串
+  auto m2 = gen_src("func s2() -> int:\n"
+                    "    var a = sys_argv_get(1)\n"
+                    "    return 0\n");
+  CHECK(m2);
+  if (!m2) return;
+  bool has_argv = false;
+  for (const auto &inst : m2->funcs[0].instructions) {
+    if (inst.op == ir::OP_CALL && inst.args == "f;sys_argv_get") has_argv = true;
+  }
+  CHECK(has_argv);
+}
+
+// 字符串相等比较 → OP_STR_EQ（内容比较，!= 由 BOOL_NOT 取反）
 void test_string_compare() {
   auto m = gen_src("func s() -> int:\n"
                    "    return \"ab\" == \"ab\"\n");
@@ -525,6 +557,7 @@ int main() {
   test_errors();
   test_short_circuit();
   test_string_compare();
+  test_system_builtins();
   test_power();
   test_float_var_propagation();
 

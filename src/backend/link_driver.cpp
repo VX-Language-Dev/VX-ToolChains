@@ -1,12 +1,17 @@
 // link_driver.cpp — 后端链接驱动实现（fork/execvp 调用 host clang）。
-// 内置 vxrt 运行时以字符串常量随链接注入；out/out_int/out_bool/out_float/
-// vx_str_concat 由此提供，malloc/free/puts/exit 解析到 libc。
+// 内置 vxrt 运行时优先以预编译 libvxrt.a 链接；找不到时改为内嵌源码现编
+// （内嵌源码由 CMake 从 src/runtime/vxrt.c 生成，二者始终同源）。
+// out/out_int/out_bool/out_float/vx_str_concat/系统能力（argv、文件 I/O）
+// 由此提供，malloc/free/puts/exit 解析到 libc。
 #include "vx/backend/link_driver.hpp"
+
+#include "vxrt_source.h"
 
 #include "vx/compiler/vxabi.hpp"
 #include "vx/util/platform.hpp"
 
 #include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -17,137 +22,15 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace vx::backend {
 namespace {
 
-// 内置运行时（VX 运行时符号契约：out/out_int/out_bool/out_float/vx_str_concat）
-constexpr const char *kRuntimeSource = R"VXRT(/* vxrt — VX 后端内置最小运行时 */
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-
-void out(const char *s) { fputs(s, stdout); }
-void out_int(int v) { printf("%d", v); }
-void out_bool(int v) { fputs(v ? "true" : "false", stdout); }
-void out_float(double v) { printf("%g", v); }
-
-const char *vx_str_concat(const char *a, const char *b) {
-  size_t la = strlen(a), lb = strlen(b);
-  char *r = (char *)malloc(la + lb + 1);
-  if (!r) return a;
-  memcpy(r, a, la);
-  memcpy(r + la, b, lb);
-  r[la + lb] = '\0';
-  return r;
-}
-
-/* 整数快速幂（VX ^ 运算符）：负指数按 0 处理 */
-int32_t vx_pow_i32(int32_t base, int32_t exp) {
-  if (exp < 0) return 0;
-  int32_t r = 1;
-  while (exp > 0) {
-    if (exp & 1) r *= base;
-    base *= base;
-    exp >>= 1;
-  }
-  return r;
-}
-
-/* P4: 动态数组（元素统一为 8 字节槽） */
-void *vx_array_new(int64_t n) {
-  if (n < 0) n = 0;
-  int64_t *p = (int64_t *)malloc((n + 1) * 8);
-  if (!p) return 0;
-  p[0] = n;
-  for (int64_t i = 1; i <= n; i++) p[i] = 0;
-  return (void *)p;
-}
-int64_t vx_array_len(void *a) {
-  if (!a) return 0;
-  return ((int64_t *)a)[0];
-}
-int64_t vx_array_get(void *a, int64_t i) {
-  if (!a) return 0;
-  int64_t *p = (int64_t *)a;
-  int64_t n = p[0];
-  if (i < 0 || i >= n) return 0;
-  return p[i + 1];
-}
-void vx_array_set(void *a, int64_t i, int64_t v) {
-  if (!a) return;
-  int64_t *p = (int64_t *)a;
-  int64_t n = p[0];
-  if (i < 0 || i >= n) return;
-  p[i + 1] = v;
-}
-
-/* P4: 简单字符串/整数键值映射（开放寻址，容量 2n+1，n>=1） */
-typedef struct { int64_t key; int64_t is_str; char *keystr; int64_t val; int used; } VXMapEntry;
-typedef struct { int64_t cap; int64_t size; VXMapEntry *entries; } VXMap;
-void *vx_map_new(int64_t n) {
-  if (n < 1) n = 1;
-  int64_t cap = n * 2 + 1;
-  VXMap *m = (VXMap *)malloc(sizeof(VXMap));
-  if (!m) return 0;
-  m->cap = cap;
-  m->size = 0;
-  m->entries = (VXMapEntry *)calloc((size_t)cap, sizeof(VXMapEntry));
-  if (!m->entries) { free(m); return 0; }
-  return (void *)m;
-}
-static int64_t vx_map_hash(int64_t key, const char *ks, int64_t is_str) {
-  uint64_t h;
-  if (is_str && ks) {
-    h = 5381;
-    for (const char *p = ks; *p; p++) h = h * 33 + (unsigned char)*p;
-  } else {
-    h = (uint64_t)key * 0x9e3779b97f4a7c15ULL;
-  }
-  return (int64_t)h;
-}
-void vx_map_set(void *m0, int64_t key, int64_t is_str, const char *keystr, int64_t val) {
-  if (!m0) return;
-  VXMap *m = (VXMap *)m0;
-  int64_t idx = vx_map_hash(key, keystr, is_str) % m->cap;
-  if (idx < 0) idx += m->cap;
-  for (int64_t i = 0; i < m->cap; i++) {
-    int64_t j = (idx + i) % m->cap;
-    VXMapEntry *e = &m->entries[j];
-    if (!e->used) {
-      e->used = 1; e->key = key; e->is_str = is_str; e->keystr = keystr ? strdup(keystr) : 0; e->val = val; m->size++; return;
-    }
-    int match = 0;
-    if (e->is_str && is_str) {
-      match = (e->keystr && keystr && strcmp(e->keystr, keystr) == 0);
-    } else if (!e->is_str && !is_str) {
-      match = (e->key == key);
-    }
-    if (match) { e->val = val; return; }
-  }
-}
-int64_t vx_map_get(void *m0, int64_t key, int64_t is_str, const char *keystr) {
-  if (!m0) return 0;
-  VXMap *m = (VXMap *)m0;
-  int64_t idx = vx_map_hash(key, keystr, is_str) % m->cap;
-  if (idx < 0) idx += m->cap;
-  for (int64_t i = 0; i < m->cap; i++) {
-    int64_t j = (idx + i) % m->cap;
-    VXMapEntry *e = &m->entries[j];
-    if (!e->used) return 0;
-    int match = 0;
-    if (e->is_str && is_str) {
-      match = (e->keystr && keystr && strcmp(e->keystr, keystr) == 0);
-    } else if (!e->is_str && !is_str) {
-      match = (e->key == key);
-    }
-    if (match) return e->val;
-  }
-  return 0;
-}
-)VXRT";
 
 std::string read_text(const fs::path &p) {
   std::ifstream in(p, std::ios::binary);
@@ -162,18 +45,73 @@ struct MemorySource {
   std::string content;
 };
 
+// 当前进程可执行文件所在目录（用于查找与安装位置同级的 libvxrt.a）
+fs::path executable_dir() {
+#if defined(__APPLE__)
+  std::uint32_t size = 0;
+  ::_NSGetExecutablePath(nullptr, &size);
+  if (size == 0)
+    return {};
+  std::string buf(size, '\0');
+  if (::_NSGetExecutablePath(buf.data(), &size) != 0)
+    return {};
+  buf.resize(size > 0 ? size - 1 : 0);
+  return fs::path(buf).parent_path();
+#elif defined(__linux__)
+  std::vector<char> buf(4096);
+  const ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
+  if (n <= 0)
+    return {};
+  buf[static_cast<std::size_t>(n)] = '\0';
+  return fs::path(buf.data()).parent_path();
+#else
+  return {};
+#endif
+}
+
 // 查找预编译的 vxrt 运行时库（.a），避免每次重新编译 C 源。
+// 查找顺序：VX_VXRT > vlnk 可执行文件同级/上级/../lib > 当前目录。
 static std::string find_vxrt_lib() {
   if (const char *env = std::getenv("VX_VXRT")) {
-    if (env[0] != '\\0' && ::access(env, R_OK) == 0) return env;
+    if (env[0] != '\0' && ::access(env, R_OK) == 0) return env;
   }
   std::vector<fs::path> cands;
+  const fs::path exe_dir = executable_dir();
+  if (!exe_dir.empty()) {
+    cands.push_back(exe_dir / "libvxrt.a");
+    cands.push_back(exe_dir.parent_path() / "libvxrt.a");
+    cands.push_back(exe_dir.parent_path() / "lib" / "libvxrt.a");
+  }
   cands.push_back(fs::current_path() / "libvxrt.a");
   cands.push_back(fs::current_path() / "libvx_runtime.a");
   cands.push_back(fs::current_path() / "build" / "libvxrt.a");
   for (const fs::path &p : cands) {
     std::error_code ec;
     if (fs::is_regular_file(p, ec) && !ec) return p.string();
+  }
+  return {};
+}
+
+// 查找 PATH 中的 ld.lld。可用时优先用 lld 链接（实测约快 20%）。
+// 设置 VX_NO_LLD=1 可强制回退到平台默认链接器。
+std::string find_lld() {
+  if (const char *off = std::getenv("VX_NO_LLD"); off && off[0] != '\0')
+    return {};
+  const char *path = std::getenv("PATH");
+  if (!path)
+    return {};
+  const std::string dirs(path);
+  std::size_t start = 0;
+  while (start <= dirs.size()) {
+    const std::size_t end = dirs.find(':', start);
+    const std::string dir =
+        end == std::string::npos ? dirs.substr(start) : dirs.substr(start, end - start);
+    if (!dir.empty()) {
+      const std::string cand = dir + "/ld.lld";
+      if (::access(cand.c_str(), X_OK) == 0) return cand;
+    }
+    if (end == std::string::npos) break;
+    start = end + 1;
   }
   return {};
 }
@@ -210,7 +148,7 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
     std::ofstream(ll_file, std::ios::binary) << std::string(ll_ir);
     if (vxrt_lib.empty()) {
       const fs::path rt_file = tmp / "vxrt.c";
-      std::ofstream(rt_file, std::ios::binary) << kRuntimeSource;
+      std::ofstream(rt_file, std::ios::binary) << kVxrtSource;
     }
   }
 
@@ -239,6 +177,11 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
   }
   args.push_back("-Wno-override-module");
   r.command += " -Wno-override-module";
+  // 本机链接且存在 ld.lld 时优先 lld；交叉编译（显式 -target）保持默认链接器。
+  if (target.empty() && !find_lld().empty()) {
+    args.push_back("-fuse-ld=lld");
+    r.command += " -fuse-ld=lld";
+  }
   // 动态库：位置无关代码 + 共享链接（macOS .dylib / Linux .so）
   if (shared) {
     args.push_back("-shared");

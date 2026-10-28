@@ -27,7 +27,10 @@ namespace {
 // 内置运行时符号（llvm_emitter Builtin 表 + 常见 libc）
 const std::set<std::string> kBuiltins = {
     "out", "out_int", "out_bool", "out_float", "puts", "exit",
-    "malloc", "free", "vx_str_concat"};
+    "malloc", "free", "vx_str_concat",
+    // 系统能力：命令行参数 / 文件 I/O / 执行 shell 命令
+    "sys_argv_count", "sys_argv_get", "file_read", "file_write",
+    "file_exists", "system"};
 
 // ---- 作用域符号表 ----
 struct LocalInfo {
@@ -359,7 +362,9 @@ std::vector<Finding> check(std::string_view text, std::string_view filename) {
                      d.message + (d.code.empty() ? "" : " [" + d.code + "]")});
     }
   }
-  if (!prog) return out;
+  // 前端有语法错误时不跑语义规则（部分 AST 会产生误导性发现），
+  // 仅透传 VXTIDY900
+  if (!prog || bag.has_error()) return out;
 
   Checker c(out);
   c.run(*prog);

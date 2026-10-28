@@ -27,6 +27,7 @@ struct CliOptions {
   std::vector<std::string> targets;
   std::string color = "auto";
   bool verbose = false;
+  int jobs = 0; // 0 = 自动（CPU 核数）
   bool help = false;
   bool version = false;
 };
@@ -36,25 +37,26 @@ static void print_help() {
                "VX Make %s\n"
                "Usage: vmake [build] -B <dir> [options] [target...]\n"
                "\n"
-               "读取当前目录的 VMakeSet.vmake，按依赖顺序在后台调用工具链：\n"
+               "Reads VMakeSet.vmake from the current directory and orchestrates the toolchain in dependency order:\n"
                "  vxc <source> -o <obj>   （每个源文件）\n"
                "  vlnk <obj...> -o <out>  （合并链接；dylib 目标加 --shared）\n"
-               "VMake 自身不编译任何代码，只负责编排参数与顺序。\n"
+               "VMake itself compiles no code; it only arranges arguments and order.\n"
                "\n"
                "Options:\n"
-               "  -B <dir>        构建目录（必填；不存在会自动创建）\n"
-               "  --color <when>  诊断颜色：auto|always|never（默认 auto）\n"
-               "  -v, --verbose   打印实际执行的命令与中间阶段\n"
-               "  -V, --version   打印版本\n"
-               "  -h, --help      显示本帮助\n"
+               "  -B <dir>        Build directory (required; auto-created if missing)\n"
+               "  --color <when>  Diagnostic color: auto|always|never (default auto)\n"
+               "  -j <n>          Parallel compile jobs (default: CPU cores; -j0 = auto)\n"
+               "  -v, --verbose   Print executed commands and intermediate stages\n"
+               "  -V, --version   Print version\n"
+               "  -h, --help      Show this help\n"
                "\n"
-               "VMakeSet.vmake（当前仅支持 exe / dylib 两类目标）：\n"
+               "VMakeSet.vmake (currently supports exe / dylib targets only):\n"
                "  exe(\"hello\", sources=[\"src/main.vx\", \"src/util.vx\"])\n"
                "  dylib(\"mylib\", sources=[\"src/lib.vx\"], output=\"libmylib.dylib\")\n"
-               "  # output 可选，相对 -B 构建目录\n"
+               "  # output is optional, relative to the -B build directory\n"
                "\n"
-               "环境变量：VX_VXC / VX_VLNK 指定工具链路径；VX_HEADERS "
-               "指定导入库根目录。\n",
+               "Environment: VX_VXC / VX_VLNK override toolchain paths; VX_HEADERS "
+               "overrides the import library root.\n",
                VERSION.data());
 }
 
@@ -72,10 +74,21 @@ static int parse_args(int argc, char **argv, CliOptions &opts) {
       opts.version = true;
     } else if (a == "-v" || a == "--verbose") {
       opts.verbose = true;
+    } else if (a == "-j" || a.starts_with("-j")) {
+      if (a == "-j") {
+        if (i + 1 >= argc) {
+          std::fprintf(stderr, "error: -j requires a number\n");
+          return 2;
+        }
+        opts.jobs = std::stoi(argv[++i]);
+      } else {
+        opts.jobs = std::stoi(std::string(a.substr(2)));
+      }
+      if (opts.jobs < 0) opts.jobs = 0;
     } else if (a == "-B" || a.starts_with("-B")) {
       if (a == "-B") {
         if (i + 1 >= argc) {
-          std::fprintf(stderr, "error: -B 需要一个目录参数\n");
+          std::fprintf(stderr, "error: -B requires a directory argument\n");
           return 2;
         }
         opts.build_dir = argv[++i];
@@ -86,7 +99,7 @@ static int parse_args(int argc, char **argv, CliOptions &opts) {
     } else if (a == "--color" || a.starts_with("--color=")) {
       if (a == "--color") {
         if (i + 1 >= argc) {
-          std::fprintf(stderr, "error: --color 需要一个参数\n");
+          std::fprintf(stderr, "error: --color requires an argument\n");
           return 2;
         }
         opts.color = argv[++i];
@@ -95,12 +108,12 @@ static int parse_args(int argc, char **argv, CliOptions &opts) {
       }
       if (opts.color != "auto" && opts.color != "always" &&
           opts.color != "never") {
-        std::fprintf(stderr, "error: 非法的 --color 值: %s\n",
+        std::fprintf(stderr, "error: invalid --color value: %s\n",
                      opts.color.c_str());
         return 2;
       }
     } else if (a.starts_with("-")) {
-      std::fprintf(stderr, "error: 未知选项: %.*s\n",
+      std::fprintf(stderr, "error: unknown option: %.*s (try --help)\n",
                    static_cast<int>(a.size()), a.data());
       return 2;
     } else {
@@ -158,9 +171,27 @@ int main(int argc, char **argv) {
     std::fprintf(stdout, "vmake %s\n", VERSION.data());
     return 0;
   }
+  // Handle 'clean' subcommand
+  bool is_clean = false;
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "clean") { is_clean = true; break; }
+  }
+  if (is_clean) {
+    // Determine build dir from -B or default
+    fs::path bd = cli.has_build_dir ? cli.build_dir : fs::path("build-out");
+    std::error_code ec;
+    fs::remove_all(bd, ec);
+    if (ec) {
+      std::fprintf(stderr, "error: cannot remove %s: %s\n", bd.string().c_str(), ec.message().c_str());
+      return 1;
+    }
+    std::fprintf(stdout, "Removed %s\n", bd.string().c_str());
+    return 0;
+  }
+
   if (!cli.has_build_dir || cli.build_dir.empty()) {
     std::fprintf(stderr,
-                 "error: 缺少 -B <dir> 参数（构建目录必须显式指定）\n\n");
+                 "error: missing -B <dir> argument (build directory must be explicitly specified)\n\n");
     print_help();
     return 2;
   }
@@ -168,14 +199,14 @@ int main(int argc, char **argv) {
   std::error_code ec;
   const fs::path cwd = fs::current_path(ec);
   if (ec) {
-    std::fprintf(stderr, "error: 无法获取当前目录: %s\n", ec.message().c_str());
+    std::fprintf(stderr, "error: cannot get current directory: %s\n", ec.message().c_str());
     return 1;
   }
   const fs::path manifest_path = cwd / "VMakeSet.vmake";
   auto text = vx::util::read_file(manifest_path);
   if (!text) {
     std::fprintf(stderr,
-                 "error: 未找到 VMakeSet.vmake（请在项目根目录运行 vmake）\n");
+                 "error: VMakeSet.vmake not found (run vmake from the project root)\n");
     return 1;
   }
 
@@ -199,7 +230,7 @@ int main(int argc, char **argv) {
       }
     }
     if (!found) {
-      std::fprintf(stderr, "error: 未找到目标 '%s'（可用目标:", name.c_str());
+      std::fprintf(stderr, "error: target not found: '%s' (available targets:", name.c_str());
       for (const vmake::Target &t : manifest->targets) {
         std::fprintf(stderr, " %s", t.name.c_str());
       }
@@ -219,15 +250,19 @@ int main(int argc, char **argv) {
       cli.build_dir.is_absolute() ? cli.build_dir : cwd / cli.build_dir;
   fs::create_directories(build_dir, ec);
   if (ec) {
-    std::fprintf(stderr, "error: 无法创建构建目录 %s: %s\n",
+    std::fprintf(stderr, "error: cannot create build directory %s: %s\n",
                  build_dir.string().c_str(), ec.message().c_str());
     return 1;
   }
 
   // 传递导入库根目录：显式 VX_HEADERS > 项目 headers/ > 编译器旁的 headers/
+  // 同时记录到 opts.headers_root，供增量签名的依赖树哈希使用。
   std::vector<std::pair<std::string, std::string>> child_env;
+  std::optional<fs::path> headers_root;
   const char *inherited_headers = std::getenv("VX_HEADERS");
-  if (inherited_headers == nullptr || inherited_headers[0] == '\0') {
+  if (inherited_headers != nullptr && inherited_headers[0] != '\0') {
+    headers_root = fs::path(inherited_headers);
+  } else {
     std::optional<fs::path> headers;
     if (fs::is_directory(manifest_path.parent_path() / "headers", ec) && !ec) {
       headers = manifest_path.parent_path() / "headers";
@@ -236,6 +271,7 @@ int main(int argc, char **argv) {
     }
     if (headers) {
       child_env.emplace_back("VX_HEADERS", fs::absolute(*headers).string());
+      headers_root = *headers;
     }
   }
 
@@ -243,11 +279,17 @@ int main(int argc, char **argv) {
   opts.build_dir = build_dir;
   opts.manifest_dir = manifest_path.parent_path();
   opts.manifest_path = manifest_path;
+  if (headers_root) {
+    const fs::path abs = fs::absolute(*headers_root, ec);
+    opts.headers_root = ec ? *headers_root : abs;
+    ec.clear();
+  }
   opts.vxc = toolchain->vxc;
   opts.vlnk = toolchain->vlnk;
   opts.selected = cli.targets;
   opts.child_env = std::move(child_env);
   opts.verbose = cli.verbose;
+  opts.jobs = cli.jobs;
   opts.color = color_enabled(cli.color);
   return vmake::build_manifest(*manifest, opts);
 }

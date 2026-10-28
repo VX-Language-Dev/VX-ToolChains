@@ -234,7 +234,7 @@ void test_errors() {
     auto toks = tokenize("var x = \n", "<test>", arena, bag);
     CHECK(!bag.has_error());
     auto prog = parse(toks, "<test>", arena, bag);
-    CHECK(!prog.has_value()); // '=' 后缺表达式
+    CHECK(prog.has_value()); // fail-soft：返回部分 AST（此处 0 条语句）
     CHECK(bag.has_error());
     if (bag.has_error()) {
       const auto &d = bag.items().back();
@@ -248,7 +248,7 @@ void test_errors() {
     auto toks2 = tokenize("if x\n    y = 1\n", "<test>", arena, bag);
     CHECK(!bag.has_error());
     auto prog2 = parse(toks2, "<test>", arena, bag);
-    CHECK(!prog2.has_value()); // 缺 ':'
+    CHECK(prog2.has_value()); // fail-soft：仍返回部分 AST
     CHECK(bag.has_error());
   }
   {
@@ -257,7 +257,7 @@ void test_errors() {
     auto toks3 = tokenize("if foo bar:\n    y = 1\n", "<test>", arena, bag);
     CHECK(!bag.has_error());
     auto prog3 = parse(toks3, "<test>", arena, bag);
-    CHECK(!prog3.has_value()); // 条件后缺 ':'
+    CHECK(prog3.has_value()); // fail-soft：仍返回部分 AST
     CHECK(bag.has_error());
     if (bag.has_error()) {
       const auto &d = bag.items().back();

@@ -65,7 +65,7 @@ run_process(const std::string &program, const std::vector<std::string> &args,
   tmpl_buf.push_back('\0');
   const int fd = ::mkstemp(tmpl_buf.data());
   if (fd < 0) {
-    r.error = "无法创建临时日志文件";
+    r.error = "cannot create temporary log file";
     return r;
   }
   const std::string log_path(tmpl_buf.data());
@@ -84,7 +84,7 @@ run_process(const std::string &program, const std::vector<std::string> &args,
   if (pid < 0) {
     ::close(fd);
     ::unlink(log_path.c_str());
-    r.error = "fork 失败";
+    r.error = "fork failed";
     return r;
   }
   if (pid == 0) {
@@ -104,25 +104,25 @@ run_process(const std::string &program, const std::vector<std::string> &args,
     // 被信号中断则重试
   }
 
-  {
+  const bool exited = WIFEXITED(status);
+  const int code = exited ? WEXITSTATUS(status) : -1;
+  r.exit_code = code;
+  r.ok = exited && code == 0;
+
+  // 成功路径不读取日志（子进程输出仅在失败时展示），省去一次打开+读取。
+  if (!r.ok) {
     std::ifstream in(log_path, std::ios::binary);
     if (in) {
       r.output.assign((std::istreambuf_iterator<char>(in)),
                       std::istreambuf_iterator<char>());
     }
+    if (code == 127 && r.output.empty()) {
+      r.error = "cannot execute " + program;
+    } else if (!exited) {
+      r.error = program + " terminated by signal";
+    }
   }
   ::unlink(log_path.c_str());
-
-  if (WIFEXITED(status)) {
-    r.exit_code = WEXITSTATUS(status);
-    r.ok = r.exit_code == 0;
-    if (r.exit_code == 127 && r.output.empty()) {
-      r.error = "无法执行 " + program;
-    }
-  } else {
-    r.exit_code = -1;
-    r.error = program + " 被信号终止";
-  }
   return r;
 }
 

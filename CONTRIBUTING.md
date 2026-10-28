@@ -53,16 +53,15 @@ bash ci/check.sh             # 本地 CI 全套检查
 | `src/`        | C++ 源码（util / compiler / backend / driver） |
 | `include/`    | 公开头文件                   |
 | `tests/`      | 测试代码（CTest 17 组）      |
-| `std/`        | VX 标准库（.vx 源文件）      |
+| `std/`        | VX 标准库（设计参考/前瞻规范，见 std/README.md） |
 | `compiler/`   | VX 编译器前端源码（.vx 源文件） |
 | `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |
 | `tools/`      | 独立工具子项目（vmake、vmake-lsp、vxls、vx-tidy） |
 | `tree-sitter-vx/` | Tree-sitter 语法（VX 编辑器高亮） |
 | `tree-sitter-vmake/` | Tree-sitter 语法（VMakeSet.vmake 高亮） |
 | `scripts/`    | CMake 交叉编译工具链预设（toolchain-*.cmake） |
-| `cpp_lsp/`    | 早期独立 LSP 原型（已由 tools/vxls 取代） |
 | `docs/`       | 语言与格式文档               |
-| `install.zsh` | 安装脚本（vxls / vx-tidy / vmake → ~/.local/bin） |
+| `install.zsh` | 安装脚本（全部工具 + headers → ~/.local） |
 | `CMakeLists.txt` | CMake 构建配置            |
 | `ci/`         | CI 检查脚本                  |
 

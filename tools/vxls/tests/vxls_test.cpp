@@ -3,7 +3,13 @@
 #include "json.hpp"
 
 #include <cstdio>
+#include <filesystem>
 #include <string>
+
+// 仓库根路径（由 CMake 注入）：用于解析 @imp 导入库
+#ifndef VX_SOURCE_DIR
+#define VX_SOURCE_DIR "."
+#endif
 
 namespace {
 
@@ -70,14 +76,6 @@ void test_analysis_clean() {
   CHECK(a.symbols[1].name == "Point" && a.symbols[1].kind == 5);
   CHECK(a.symbols[2].name == "get" && a.symbols[2].kind == 6);
   CHECK(a.symbols[0].detail == "func add(a: int, b: int) -> int");
-  // 补全含关键字、符号与内置
-  bool has_kw = false, has_add = false, has_out = false;
-  for (const auto &c : a.completions) {
-    if (c.label == "while") has_kw = true;
-    if (c.label == "add") has_add = true;
-    if (c.label == "out_int") has_out = true;
-  }
-  CHECK(has_kw && has_add && has_out);
 }
 
 void test_analysis_diagnostics() {
@@ -147,6 +145,7 @@ void test_hover_rich() {
       "func main() -> int:\n"
       "    var unused = 1\n"
       "    out_int(add(1, 2))\n"
+      "    var content = file_read(\"a.txt\")\n"
       "    return 0\n";
   // 文档注释进入 hover（第 12 行 out_int(add(...)) 的 add，0 起始 L11）
   const std::string h_add = vxls::hover_at(src, 11, 13);
@@ -168,6 +167,10 @@ void test_hover_rich() {
   const std::string h_bi = vxls::hover_at(src, 11, 5); // out_int
   CHECK(h_bi.find("**内置运行时**") != std::string::npos);
   CHECK(h_bi.find("输出整数") != std::string::npos);
+  // 系统能力 builtin：file_read（新增行 12）
+  const std::string h_file = vxls::hover_at(src, 12, 19);
+  CHECK(h_file.find("**内置运行时**") != std::string::npos);
+  CHECK(h_file.find("file_read") != std::string::npos);
   // 空白处仍无结果
   CHECK(vxls::hover_at(src, 2, 0).empty());
 }
@@ -200,6 +203,173 @@ void test_tidy_diagnostics() {
   CHECK(syn.empty());
 }
 
+// 补全：作用域 + 前缀过滤 + 排序
+void test_completion_scope() {
+  const std::string src =
+      "func add(a: int, b: int) -> int:\n"
+      "    return a + b\n"
+      "\n"
+      "func main() -> int:\n"
+      "    var total = 1\n"
+      "    var name = \"x\"\n"
+      "    return add(total, 2)\n";
+  // 第 5 行 "    var total = 1"：光标在 "to" 之后（列 10）
+  auto items = vxls::completion_at(src, 4, 10);
+  CHECK(!items.empty());
+  bool has_total = false;
+  for (const auto &c : items) {
+    if (c.label == "total") {
+      has_total = true;
+      CHECK(c.kind == 6); // Variable
+      CHECK(c.detail.find("var total") != std::string::npos);
+    }
+  }
+  CHECK(has_total);
+  // 前缀过滤：只保留 "to" 开头的项
+  for (const auto &c : items) {
+    CHECK(c.label.rfind("to", 0) == 0);
+  }
+  // 局部变量优先（sortText 分档更靠前）
+  CHECK(items.front().label == "total");
+  // 无前缀时给出顶层函数
+  auto funcs = vxls::completion_at(src, 4, 4);
+  bool has_add = false;
+  for (const auto &c : funcs) {
+    if (c.label == "add") {
+      has_add = true;
+      CHECK(c.kind == 3); // Function
+      CHECK(c.detail == "func add(a: int, b: int) -> int");
+    }
+  }
+  CHECK(has_add);
+  // 参数在函数体内可见
+  auto in_func = vxls::completion_at(src, 1, 12); // "    return a + b" 的 a 之后
+  bool has_param = false;
+  for (const auto &c : in_func) {
+    if (c.label == "a") {
+      has_param = true;
+      CHECK(c.detail.find("参数") != std::string::npos);
+    }
+  }
+  CHECK(has_param);
+  // 内置运行时与关键字
+  auto general = vxls::completion_at(src, 4, 4);
+  bool has_builtin = false, has_kw = false;
+  for (const auto &c : general) {
+    if (c.label == "out_int") has_builtin = true;
+    if (c.label == "return") has_kw = true;
+  }
+  CHECK(has_builtin && has_kw);
+}
+
+// 补全：成员位置（变量. / self.）
+void test_completion_member() {
+  const std::string src =
+      "class Point:\n"
+      "    x: int\n"
+      "    y: int\n"
+      "    func get_x() -> int:\n"
+      "        return self.x\n"
+      "\n"
+      "func main() -> int:\n"
+      "    var p: Point = new Point()\n"
+      "    p.\n";
+  // 第 9 行 "    p."：光标紧跟 '.'（列 6）
+  auto items = vxls::completion_at(src, 8, 6);
+  bool has_x = false, has_get = false, has_unrelated = false;
+  for (const auto &c : items) {
+    if (c.label == "x") {
+      has_x = true;
+      CHECK(c.kind == 5); // Field
+      CHECK(c.detail == "x: int");
+    }
+    if (c.label == "get_x") {
+      has_get = true;
+      CHECK(c.kind == 2); // Method
+      CHECK(c.detail.find("func get_x()") != std::string::npos);
+    }
+    if (c.label == "add" || c.label == "out_int") has_unrelated = true;
+  }
+  CHECK(has_x && has_get);
+  CHECK(!has_unrelated); // 成员位置不混入全局符号
+  // self. 在方法体内给出同类成员
+  auto self_items = vxls::completion_at(src, 4, 20); // "        return self." 末尾
+  bool has_self_x = false;
+  for (const auto &c : self_items) {
+    if (c.label == "x") has_self_x = true;
+  }
+  CHECK(has_self_x);
+}
+
+// 补全：类型位置（var x: / 形参注解 / 返回类型）
+void test_completion_type() {
+  const std::string src =
+      "class Point:\n"
+      "    x: int\n"
+      "\n"
+      "func main() -> int:\n"
+      "    var p: Point = new Point()\n"
+      "    var q: \n";
+  // 第 5 行 "    var q: "：光标在冒号后（列 10）
+  auto items = vxls::completion_at(src, 4, 10);
+  bool has_int = false, has_point = false, has_func = false;
+  for (const auto &c : items) {
+    if (c.label == "int") has_int = true;
+    if (c.label == "Point") has_point = true;
+    if (c.label == "func") has_func = true;
+  }
+  CHECK(has_int && has_point);
+  CHECK(!has_func); // 类型位置不混入语句关键字
+  // 形参注解位置
+  auto param = vxls::completion_at("func f(a: ", 0, 10);
+  bool has_bool = false;
+  for (const auto &c : param) {
+    if (c.label == "bool") has_bool = true;
+  }
+  CHECK(has_bool);
+}
+
+// 补全：导入库成员（@imp(math) → math. 给出库内符号）
+void test_completion_import_lib() {
+  const std::string src =
+      "@imp(math)\n"
+      "extern out_int(v: int)\n"
+      "func main() -> int:\n"
+      "    math.\n";
+  auto items = vxls::completion_at(src, 3, 9, std::filesystem::path(VX_SOURCE_DIR) /
+                                                  "headers");
+  bool has_add = false, has_mul = false;
+  for (const auto &c : items) {
+    if (c.label == "add") {
+      has_add = true;
+      CHECK(c.detail.find("math.add") != std::string::npos);
+    }
+    if (c.label == "mul") has_mul = true;
+  }
+  CHECK(has_add && has_mul);
+}
+
+// 补全：snippet 插入文本（客户端支持 snippet 时）
+void test_completion_snippet() {
+  const std::string src = "func add(a: int, b: int) -> int:\n    return a + b\n";
+  auto items = vxls::completion_at(src, 0, 6, {}, true);
+  bool found = false;
+  for (const auto &c : items) {
+    if (c.label == "add") {
+      found = true;
+      CHECK(c.is_snippet);
+      CHECK(c.insert_text == "add(${1:a}, ${2:b})");
+      CHECK(c.filter_text == "add");
+    }
+  }
+  CHECK(found);
+  // 客户端不支持 snippet 时不给出插入文本
+  auto plain = vxls::completion_at(src, 0, 6, {}, false);
+  for (const auto &c : plain) {
+    if (c.label == "add") CHECK(!c.is_snippet && c.insert_text.empty());
+  }
+}
+
 } // namespace
 
 int main() {
@@ -210,6 +380,11 @@ int main() {
   test_hover_and_definition();
   test_hover_rich();
   test_tidy_diagnostics();
+  test_completion_scope();
+  test_completion_member();
+  test_completion_type();
+  test_completion_import_lib();
+  test_completion_snippet();
 
   if (g_failures == 0) {
     std::fputs("vxls tests: all passed\n", stdout);

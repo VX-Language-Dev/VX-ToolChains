@@ -47,13 +47,17 @@ struct LspCompletion {
   std::string label;
   int kind = 0; // LSP CompletionItemKind
   std::string detail;
+  std::string documentation; // Markdown 文档（空 = 无）
+  std::string insert_text;   // 插入文本（空 = 用 label）
+  std::string filter_text;   // 过滤文本（空 = 用 label）
+  std::string sort_text;     // 排序键（空 = 编辑器自行排序）
+  bool is_snippet = false;   // true 时 insert_text 为 LSP snippet（$1 占位）
 };
 
 // 一次完整分析的结果（字符串均已自有，无 arena 依赖）
 struct Analysis {
   std::vector<vx::compiler::Diagnostic> diags;
   std::vector<LspSymbol> symbols;
-  std::vector<LspCompletion> completions;
   bool parse_ok = false;
   int line_count = 0;
 };
@@ -81,6 +85,20 @@ std::string hover_at(std::string_view text, int line, int character,
 
 // 跳转定义：给定位置，返回目标声明的范围（找不到返回空范围 start.line<0）
 LspRange definition_at(std::string_view text, int line, int character);
+
+// 位置补全：按光标上下文给出候选（0 起始位置）。
+// 上下文判定（基于光标前行文本，parse 失败时自动修补/降级）：
+//   - `库前缀.` 或 `变量.` → 成员补全（导入库符号 / 类字段与方法）；
+//     接收者无法解析时回退为全部类成员
+//   - `var x:` / 参数注解 / `->` 后 → 类型补全（基础类型 + class/struct 名）
+//   - 其余 → 作用域补全：当前函数可见的局部变量/参数/循环变量 + 顶层
+//     函数/extern/类/全局变量 + 内置运行时 + 关键字，按 prefix 过滤并排序
+// snippet_support 为 true 时可调用项给出 `name(${1:a})` 形式的 snippet 插入。
+// headers_root 用于解析 @imp 导入库符号（空 = 跳过）。
+std::vector<LspCompletion> completion_at(std::string_view text, int line,
+                                         int character,
+                                         const std::filesystem::path &headers_root = {},
+                                         bool snippet_support = false);
 
 // vx-tidy 静态检查结果 → LSP 诊断（经 vxtidy 动态库）。
 // VXTIDY900（语法错误透传）会被跳过：该类问题由前端诊断负责，避免重复。

@@ -20,7 +20,9 @@ struct Program {
 };
 
 // 解析整个程序；AST 节点全部在 arena 上分配，生命周期随 arena。
-// fail-fast：首个语法错误即推入 bag 并返回 std::nullopt（不做恢复重同步）。
+// fail-soft：语句级错误恢复（跳到下一语句边界继续解析），
+// 即使有语法错误也返回已解析的部分 AST；调用方须以 bag.has_error() 把关，
+// 决定是否终止后续阶段（编译）或继续利用部分 AST（LSP）。
 std::optional<Program> parse(std::span<const Token> tokens,
                              std::string_view filename, vx::util::Arena &arena,
                              DiagBag &bag);

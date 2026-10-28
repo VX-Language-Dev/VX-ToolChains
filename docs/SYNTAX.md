@@ -90,8 +90,25 @@ extern out(msg: string)            # 无返回
 extern func add(a: int, b: int) -> int   # func 关键字可选
 ```
 
-内置运行时符号：`out` `out_int` `out_bool` `out_float` `puts` `exit`
-`malloc` `free` `vx_str_concat`。
+内置运行时符号（无需 `extern` 声明，直接调用）：
+
+| 符号 | 签名 | 说明 |
+| --- | --- | --- |
+| `out` | `out(msg: string)` | 输出字符串（不追加换行） |
+| `out_int` | `out_int(v: int)` | 输出整数 |
+| `out_bool` | `out_bool(v: bool)` | 输出布尔值 |
+| `out_float` | `out_float(v: float)` | 输出浮点数（`%g`） |
+| `puts` | `puts(s: string) -> int` | libc `puts` |
+| `exit` | `exit(code: int)` | 以退出码结束进程 |
+| `malloc` / `free` | `malloc(size: int) -> ptr` / `free(p: ptr)` | libc 内存管理 |
+| `sys_argv_count` | `sys_argv_count() -> int` | 命令行参数个数（含可执行文件名） |
+| `sys_argv_get` | `sys_argv_get(i: int) -> string` | 取第 i 个命令行参数（越界返回空串） |
+| `file_read` | `file_read(path: string) -> string` | 读取整个文件；失败返回空串 |
+| `file_write` | `file_write(path: string, content: string) -> int` | 覆写写入，返回字节数；失败 `-1` |
+| `file_exists` | `file_exists(path: string) -> bool` | 文件是否存在（可读） |
+| `system` | `system(cmd: string) -> int` | 执行 shell 命令，返回退出码 |
+
+> 文件与参数能力由内置运行时（`vxrt`）提供，链接期并入 `libvxrt.a`。
 
 ### 3.4 类与结构
 
@@ -236,6 +253,8 @@ vlnk hello.vxobj -o hello   # → 可执行文件
 
 - 顶层 `var`/`const` 不生成运行时代码。
 - 浮点幂（`2.0 ^ 3.0`）暂不支持，仅整数 `^`。
+- TypeIR 的 `OP_SYS_ARGV` / `OP_FILE_*` / `OP_SYSTEM` 操作码尚未发射；
+  对应的系统能力通过内置运行时函数提供（见 §3.3 的 `sys_argv_*` / `file_*` / `system`）。
 - 后端已覆盖 ARRAY/MAP/INDEX/FIELD 基础发射（P4 MVP：8 字节统一槽，字符串/整数键映射）；浮点数组精度与复杂布局仍受限。
-- `std/` 标准库部分文件使用暂未支持的语法（如 `macro` 定义），
-  以当前编译器可解析子集为准。
+- `std/` 标准库为设计参考（v1.0 按已废弃的 VM 路线编写，未接入编译器构建），
+  语法缺口清单见 `std/README.md`。

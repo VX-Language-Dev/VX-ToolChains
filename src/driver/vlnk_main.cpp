@@ -128,7 +128,7 @@ static bool merge_inputs(std::vector<vx::backend::VxobjReadResult> &results,
   for (vx::backend::VxobjReadResult &rt : results) {
     for (ir::FuncIR &f : rt.module.funcs) {
       if (!func_names.insert(f.name).second) {
-        error = "重复的函数定义 '" + f.name + "'（多输入合并）";
+        error = "duplicate function definition '" + f.name + "' (multi-input merge)";
         return false;
       }
       out.funcs.push_back(std::move(f));
@@ -206,7 +206,7 @@ int main(int argc, char **argv) {
   const std::string src_target = targets.empty() ? std::string{} : *targets.begin();
   if (targets.size() > 1) {
     std::fprintf(stderr,
-                 "warning: 输入 .vxobj 的平台目标不一致（%zu 种），按首个 '%s' 发射\n",
+                 "warning: input .vxobj targets are inconsistent (%zu kinds), using first '%s'\n",
                  targets.size(), src_target.c_str());
   }
   if (opts.dump) dump_module(module, src_target);
@@ -223,12 +223,12 @@ int main(int argc, char **argv) {
     // 显式目标与 vxobj 内记录的编译目标不一致时提示来源差异
     if (!src_target.empty() && src_target != opts.target) {
       std::fprintf(stderr,
-                   "warning: --target '%s' 与 vxobj 编译目标 '%s' 不一致\n",
+                   "warning: --target '%s' differs from vxobj compile target '%s'\n",
                    opts.target.c_str(), src_target.c_str());
     }
   } else if (!src_target.empty() && src_target != host) {
     std::fprintf(stderr,
-                 "warning: vxobj target '%s' 与 host '%s' 不一致，按 host 发射\n",
+                 "warning: vxobj target '%s' differs from host '%s', emitting for host\n",
                  src_target.c_str(), host.c_str());
   }
 

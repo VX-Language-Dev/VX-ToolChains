@@ -31,14 +31,15 @@ using vxls::json::Value;
 using vxls::Analysis;
 using vxls::LspMessage;
 
-constexpr const char *kVersion = "0.2.0";
+constexpr const char *kVersion = "0.3.0";
 
 // 打开的文档集合（uri → 全文）
 std::map<std::string, std::string> g_docs;
 
 // 全局选项
-bool g_tidy = true;              // 默认启用 vx-tidy 集成（--no-tidy 关闭）
-fs::path g_headers_root;         // @imp 库根（hover 解析导入符号用）
+bool g_tidy = true;              // 默认启用 vx-tidy 静态检查（--no-tidy 关闭）
+bool g_snippet = false;          // 客户端 completionItem.snippetSupport
+fs::path g_headers_root;         // @imp 库根（hover/补全解析导入符号用）
 
 // 对单个文档跑分析
 Analysis analyze_doc(const std::string &uri) {
@@ -89,6 +90,18 @@ void publish_diagnostics(const std::string &uri) {
 }
 
 void handle_initialize(const LspMessage &req) {
+  // 客户端补全能力：snippetSupport 决定是否给出 $1 占位的可调用项插入
+  if (const Value *caps = req.params.find("capabilities")) {
+    if (const Value *tdc = caps->find("textDocument")) {
+      if (const Value *comp = tdc->find("completion")) {
+        if (const Value *ci = comp->find("completionItem")) {
+          if (const Value *sn = ci->find("snippetSupport")) {
+            g_snippet = sn->as_bool();
+          }
+        }
+      }
+    }
+  }
   Value caps = Value::object(
       {{"textDocumentSync",
         Value::number(1)}, // Full：didChange 全量替换
@@ -222,14 +235,40 @@ void handle_completion(const LspMessage &req) {
     vxls::send_response(req, Value::array({}));
     return;
   }
-  Analysis a = analyze_doc(uri);
-  std::vector<Value> items;
-  for (const auto &c : a.completions) {
-    items.push_back(Value::object({{"label", Value::string(c.label)},
-                                   {"kind", Value::number(c.kind)},
-                                   {"detail", Value::string(c.detail)}}));
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    vxls::send_response(req, Value::array({}));
+    return;
   }
-  vxls::send_response(req, Value::array(items));
+  // 按光标上下文（成员/类型/作用域）给出候选，prefix 已过滤、sortText 已分档
+  const std::vector<vxls::LspCompletion> items = vxls::completion_at(
+      it->second, line, character, g_headers_root, g_snippet);
+  std::vector<Value> out;
+  out.reserve(items.size());
+  for (const auto &c : items) {
+    std::vector<std::pair<std::string, Value>> fields;
+    fields.emplace_back("label", Value::string(c.label));
+    fields.emplace_back("kind", Value::number(c.kind));
+    fields.emplace_back("detail", Value::string(c.detail));
+    if (!c.documentation.empty()) {
+      fields.emplace_back(
+          "documentation",
+          Value::object({{"kind", Value::string("markdown")},
+                         {"value", Value::string(c.documentation)}}));
+    }
+    if (c.is_snippet && !c.insert_text.empty()) {
+      fields.emplace_back("insertText", Value::string(c.insert_text));
+      fields.emplace_back("insertTextFormat", Value::number(2)); // Snippet
+    }
+    if (!c.filter_text.empty()) {
+      fields.emplace_back("filterText", Value::string(c.filter_text));
+    }
+    if (!c.sort_text.empty()) {
+      fields.emplace_back("sortText", Value::string(c.sort_text));
+    }
+    out.push_back(Value::object(std::move(fields)));
+  }
+  vxls::send_response(req, Value::array(out));
 }
 
 void print_help() {

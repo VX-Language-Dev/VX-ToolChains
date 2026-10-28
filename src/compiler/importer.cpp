@@ -66,7 +66,7 @@ bool collect_symbols(const fs::path &decl, std::string_view lib,
   DiagBag bag;
   auto toks = tokenize(*src, decl.string(), arena, bag);
   auto prog = parse(toks, decl.string(), arena, bag);
-  if (!prog) {
+  if (!prog || bag.has_error()) {
     err = "库声明文件语法错误 " + decl.string() + ":\n" +
           render_all(bag, *src, false);
     return false;

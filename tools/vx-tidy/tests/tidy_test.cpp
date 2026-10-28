@@ -189,6 +189,20 @@ void test_syntax_error_passthrough() {
   if (f) CHECK(f->severity == 1);
 }
 
+void test_system_builtins_exempt() {
+  // 内置系统能力（file_read / sys_argv_count 等）无需声明，不应报 VXTIDY001
+  const auto fs = vxtidy::check(
+      "func main() -> int:\n"
+      "    var content = file_read(\"a.txt\")\n"
+      "    var n = file_write(\"b.txt\", content)\n"
+      "    out_int(sys_argv_count())\n"
+      "    out(sys_argv_get(1))\n"
+      "    return 0\n",
+      "sys.vx");
+  CHECK(count_rule(fs, "VXTIDY001") == 0);
+  CHECK(count_rule(fs, "VXTIDY900") == 0);
+}
+
 void test_format() {
   const Finding f{"VXTIDY001", 1, 3, 5, "调用了未声明的函数 'foo'"};
   const std::string line = vxtidy::format_text(f, "a.vx");
@@ -223,6 +237,7 @@ int main() {
   test_missing_return();
   test_import_prefix();
   test_syntax_error_passthrough();
+  test_system_builtins_exempt();
   test_format();
   test_rules_registry();
 

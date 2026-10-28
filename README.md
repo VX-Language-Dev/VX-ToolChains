@@ -1,7 +1,7 @@
 # VX-ToolKit
 
 ![Language](https://img.shields.io/badge/language-C++-green)
-![Version](https://img.shields.io/badge/version-v1.11.0-blue)
+![Version](https://img.shields.io/badge/version-v1.12.0-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
 ![Platform](<https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey>)
 
@@ -46,7 +46,7 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **C++23** 实现（CMa
 | 格式化工具 (vfmt)     | C++      | VX 源码格式化                     | 🚧 开发中 |
 | 项目构建器 (vmake)    | C++      | VMakeSet.vmake 驱动，编排 vxc/vlnk  | ✅ 基础可用 |
 | VMake LSP (vmake-lsp) | C++      | VMakeSet.vmake 诊断、补全、跳转、格式化 | ✅ 基础可用 |
-| LSP 语言服务器 (vxls)  | C++      | 代码补全、悬停、跳转定义等        | ✅ 基础可用 |
+| LSP 语言服务器 (vxls)  | C++      | 上下文感知代码补全、悬停、跳转定义等        | ✅ 基础可用 |
 | 静态分析 (vx-tidy)     | C++      | AST 级规则检查（VXTIDYxxx）       | ✅ 基础可用 |
 | Util 基础库           | C++      | 内存分配器、字符串、文件系统      | ✅ 稳定   |
 
@@ -230,6 +230,35 @@ func main():
 
 > PE（Windows）可执行文件生成尚未支持；`--embed-vxobj` 反链接嵌入待实现。
 
+### 2.1 系统能力（命令行参数 / 文件 I/O）
+
+内置运行时提供一组**无需 `extern` 声明**的系统函数：
+
+```vx
+func main() -> int:
+    # 命令行参数
+    out_int(sys_argv_count())     # 含可执行文件名
+    out(sys_argv_get(1))          # 第 1 个参数（越界返回空串）
+    # 文件 I/O
+    file_write("out.txt", "hello")     # 覆写写入，返回字节数
+    var content = file_read("out.txt") # 读取全文（失败返回空串）
+    if file_exists("out.txt"):
+        out(content)
+    return 0
+```
+
+| 符号 | 说明 |
+| --- | --- |
+| `sys_argv_count() -> int` | 命令行参数个数 |
+| `sys_argv_get(i: int) -> string` | 取第 i 个参数 |
+| `file_read(path: string) -> string` | 读取整个文件 |
+| `file_write(path: string, content: string) -> int` | 覆写写入，返回字节数（失败 `-1`） |
+| `file_exists(path: string) -> bool` | 文件是否存在 |
+| `system(cmd: string) -> int` | 执行 shell 命令，返回退出码 |
+
+实现位于内置运行时 `vxrt`（链接期并入 `libvxrt.a`），完整列表见
+[docs/SYNTAX.md](docs/SYNTAX.md)。
+
 ### 3. 库导入与 VX ABI (@imp / @cppimp)
 
 通过 `@imp` 导入 VX 库，通过 `@cppimp` 引用 C++ 头文件（链接期自动生成 shim）。
@@ -345,7 +374,7 @@ vxls 位于 `tools/vxls/`，C++ 实现的 LSP 服务器（stdio 传输），
 | -------- | ---------------------------------------------------------- | ---- |
 | 诊断     | 前端诊断 + vx-tidy 规则合并发布（`--no-tidy` 可关闭）      | ✅   |
 | 悬停信息 | 签名+参数表+返回类型+#文档注释；类成员；局部变量/参数；内置运行时文档；导入库符号（VX ABI/来源 .vxh） | ✅   |
-| 代码补全 | 关键字、文档符号、内置运行时                               | ✅   |
+| 代码补全 | 上下文感知：作用域（局部/参数/顶层/内置/关键字）、成员（`obj.`/`self.`/导入库 `lib.`）、类型（`var x:`/形参注解/`->`）；按前缀过滤并分档排序；客户端支持时给出 `$1` 占位 snippet | ✅   |
 | 跳转定义 | 函数/extern/类/结构/局部变量/参数声明定位                   | ✅   |
 | 符号导航 | textDocument/documentSymbol 文档符号                       | ✅   |
 | 内嵌提示 | 类型推断、参数名提示                                       | 🚧 开发中 |
@@ -516,13 +545,12 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 ├── tree-sitter-vx/           # Tree-sitter 语法（编辑器高亮、语法导航）
 ├── tree-sitter-vmake/        # Tree-sitter 语法（VMakeSet.vmake 高亮）
 ├── scripts/toolchains/       # CMake 交叉编译工具链预设（toolchain-*.cmake）
-├── cpp_lsp/                  # 早期独立 LSP 原型（已由 tools/vxls 取代，保留参考）
-├── std/                      # VX 标准库源码（.vx 源文件）
+├── std/                      # VX 标准库（设计参考/前瞻规范，尚未接入编译器构建；可用能力见 headers/）
 ├── compiler/                 # VX 编译器前端源码（.vx 源文件，自举参考）
 ├── docs/                     # 语言与格式文档（SYNTAX.md 等）
 ├── ci/                       # CI 配置
 ├── CMakeLists.txt            # CMake 构建配置（CMake + Ninja）
-├── install.zsh               # 安装脚本（vxls / vx-tidy / vmake → ~/.local/bin）
+├── install.zsh               # 安装脚本（vxc/vlnk/vx/vxls/vx-tidy/vmake/vmake-lsp + headers → ~/.local）
 ├── CHANGELOG.md              # 变更日志
 ├── CONTRIBUTING.md           # 贡献指南
 ├── LICENSE                   # AGPL-3.0 协议

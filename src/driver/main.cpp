@@ -77,8 +77,8 @@ static int parse_args(int argc, char **argv, Options &opts) {
           return 2;
         }
         opts.color = argv[++i];
-      } else { // --color=<when>
-        opts.color = std::string(a.substr(8)); // sizeof("--color=") == 9
+      } else {
+        opts.color = std::string(a.substr(8));
       }
       if (opts.color != "auto" && opts.color != "always" &&
           opts.color != "never") {
@@ -97,7 +97,7 @@ static int parse_args(int argc, char **argv, Options &opts) {
       }
       opts.output = argv[++i];
     } else if (a.starts_with("-")) {
-      std::fprintf(stderr, "error: unknown option: %s\n", argv[i]);
+      std::fprintf(stderr, "error: unknown option: %s (try --help)\n", argv[i]);
       return 2;
     } else {
       if (!opts.source.empty()) {
@@ -176,8 +176,9 @@ int main(int argc, char **argv) {
   }
 
   // --- 阶段 3: 语法分析 ---
+  // fail-soft：解析器错误恢复后仍返回部分 AST；有错误即终止，不进入 codegen
   auto prog = parse(toks, opts.source, arena, bag);
-  if (!prog) {
+  if (!prog || bag.has_error()) {
     std::fputs(render_all(bag, *src_res, color).c_str(), stderr);
     return 1;
   }

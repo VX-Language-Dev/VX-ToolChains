@@ -21,6 +21,12 @@ namespace {
 using ir::Inst;
 using ir::ModuleIR;
 
+// 返回字符串的内置运行时函数（与后端 llvm_emitter 的 builtin 表对齐）。
+// 用于类型传播：var s = file_read("a.txt") 之后 s 参与字符串运算/比较。
+bool builtin_returns_str(std::string_view name) {
+  return name == "file_read" || name == "sys_argv_get";
+}
+
 class CodeGen {
 public:
   CodeGen(std::string_view filename, DiagBag &bag, const ImportTable *imports)
@@ -29,21 +35,22 @@ public:
   std::optional<ModuleIR> run(const Program &prog) {
     ModuleIR mod;
 
-    // 第一遍：注册 class/struct 字段（字段表供后续按索引访问，当前用名字）
+    // 第一遍：注册 class/struct 字段（字段表供后续按索引访问，当前用名字）。
+    // 类常量字段（init 非空）不进实例布局，仅登记供「类名.常量」内联访问。
     for (const Stmt *s : prog.stmts) {
       if (s->kind == NodeKind::ClassDecl) {
         register_struct(static_cast<const ClassDecl *>(s));
         ir::StructLayout sl;
         const auto *c = static_cast<const ClassDecl *>(s);
         sl.name = std::string(c->name);
-        for (const ClassField &f : c->fields) sl.fields.push_back({std::string(f.name), std::string(f.type)});
+        for (const ClassField &f : c->fields) if (!f.init) sl.fields.push_back({std::string(f.name), std::string(f.type)});
         mod.structs.push_back(std::move(sl));
       } else if (s->kind == NodeKind::StructDecl) {
         register_struct(static_cast<const StructDecl *>(s));
         ir::StructLayout sl;
         const auto *st = static_cast<const StructDecl *>(s);
         sl.name = std::string(st->name);
-        for (const ClassField &f : st->fields) sl.fields.push_back({std::string(f.name), std::string(f.type)});
+        for (const ClassField &f : st->fields) if (!f.init) sl.fields.push_back({std::string(f.name), std::string(f.type)});
         mod.structs.push_back(std::move(sl));
       }
     }
@@ -245,6 +252,18 @@ private:
       }
       case NodeKind::Property: {
         const auto *p = static_cast<const Property *>(e);
+        // 类常量访问：TypeNames.NIL → 内联其初始化表达式
+        if (p->obj && p->obj->kind == NodeKind::Ident) {
+          const auto *id = static_cast<const Ident *>(p->obj);
+          auto c_it = class_consts_.find(std::string(id->name));
+          if (c_it != class_consts_.end()) {
+            auto f_it = c_it->second.find(std::string(p->name));
+            if (f_it != c_it->second.end()) {
+              gen_expr(f_it->second);
+              break;
+            }
+          }
+        }
         gen_expr(p->obj);
         emit(ir::OP_FIELD_LOAD, std::string(p->name));
         break;
@@ -320,13 +339,33 @@ private:
     }
     return false;
   }
-  // 字符串表达式：StrLit、字符串拼接结果、字符串变量（var_kind_ 传播）
+  // 字符串表达式：StrLit、字符串拼接结果、字符串变量（var_kind_ 传播）、
+  // 返回字符串的内置运行时调用（file_read / sys_argv_get）
   bool is_str_expr(const Expr *e) {
     if (!e) return false;
     if (e->kind == NodeKind::StrLit) return true;
     if (e->kind == NodeKind::Ident) {
       auto it = var_kind_.find(std::string(static_cast<const Ident *>(e)->name));
       return it != var_kind_.end() && it->second == kVarStr;
+    }
+    if (e->kind == NodeKind::Call) {
+      const auto *c = static_cast<const Call *>(e);
+      return c->callee != nullptr &&
+             c->callee->kind == NodeKind::Ident &&
+             builtin_returns_str(static_cast<const Ident *>(c->callee)->name);
+    }
+    if (e->kind == NodeKind::Property) {
+      // 类常量：按初始化表达式递归判定（C.NAME = "x" → 字符串）
+      const auto *p = static_cast<const Property *>(e);
+      if (p->obj && p->obj->kind == NodeKind::Ident) {
+        auto c_it = class_consts_.find(
+            std::string(static_cast<const Ident *>(p->obj)->name));
+        if (c_it != class_consts_.end()) {
+          auto f_it = c_it->second.find(std::string(p->name));
+          if (f_it != c_it->second.end()) return is_str_expr(f_it->second);
+        }
+      }
+      return false;
     }
     if (e->kind == NodeKind::Binary) {
       const auto *b = static_cast<const Binary *>(e);
@@ -853,8 +892,15 @@ private:
   }
 
   template <class Decl> void register_struct(const Decl *d) {
-    struct_fields_[std::string(d->name)] = {d->fields.begin(),
-                                            d->fields.end()};
+    std::vector<ClassField> inst;
+    for (const ClassField &f : d->fields) {
+      if (f.init) {
+        class_consts_[std::string(d->name)][std::string(f.name)] = f.init;
+      } else {
+        inst.push_back(f);
+      }
+    }
+    struct_fields_[std::string(d->name)] = std::move(inst);
   }
 
   // ---- 状态 ----
@@ -863,6 +909,9 @@ private:
   const ImportTable *imports_ = nullptr; // 导入表（可空）
   bool failed_ = false;
   std::unordered_map<std::string, std::vector<ClassField>> struct_fields_;
+  // 类常量表：类名 → 常量名 → 初始化表达式（「类名.常量」访问时内联展开）
+  std::unordered_map<std::string, std::unordered_map<std::string, const Expr *>>
+      class_consts_;
 
   ir::FuncIR cur_; // 当前函数
   std::unordered_map<std::string, std::uint32_t> local_ids_;
