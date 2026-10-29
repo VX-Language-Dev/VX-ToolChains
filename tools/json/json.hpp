@@ -1,5 +1,5 @@
-// json.hpp — vmake-lsp 极简 JSON 值与编解码（LSP 消息收发专用）。
-// 对象成员保留插入顺序，便于构造响应时字段次序稳定。
+// json.hpp — 极简 JSON 值类型与编解码（vx 工具链 LSP 消息收发共享实现）。
+// 覆盖 LSP 所需的 null/bool/number/string/array/object；对象保留插入序。
 #pragma once
 
 #include <optional>
@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace vmake_lsp::json {
+namespace vx::json {
 
 class Value {
 public:
@@ -34,8 +34,7 @@ public:
   const Value *find(std::string_view key) const;
 
   // 取字符串成员（不存在或非字符串返回 fallback）
-  std::string_view str_or(std::string_view key,
-                          std::string_view fallback = {}) const;
+  std::string_view str_or(std::string_view key, std::string_view fallback = {}) const;
   // 取整数成员（number 截断为 int）
   int int_or(std::string_view key, int fallback = 0) const;
 
@@ -59,4 +58,4 @@ std::optional<Value> parse(std::string_view text);
 // JSON 字符串字面量转义（含引号），供 dump 与测试使用
 std::string escape_string(std::string_view s);
 
-} // namespace vmake_lsp::json
+} // namespace vx::json

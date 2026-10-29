@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 // 仓库根路径（由 CMake 注入）：用于解析 @imp 导入库
@@ -23,7 +24,7 @@ int g_failures = 0;
     }                                                                          \
   } while (0)
 
-namespace json = vxls::json;
+namespace json = vx::json;
 
 void test_json_roundtrip() {
   // 基本类型解析
@@ -349,10 +350,39 @@ void test_completion_import_lib() {
   CHECK(has_add && has_mul);
 }
 
+// 补全：-I 搜索目录中的自定义库（@imp(mylib) → mylib. 给出库内符号）
+void test_completion_include_dirs() {
+  std::error_code ec;
+  const std::filesystem::path inc =
+      std::filesystem::temp_directory_path(ec) / "vxls_test_inc";
+  if (ec) return;
+  std::filesystem::remove_all(inc, ec);
+  std::filesystem::create_directories(inc, ec);
+  {
+    std::ofstream f(inc / "mylib.vxh");
+    f << "extern func triple(x: int) -> int\n";
+  }
+  const std::string src =
+      "@imp(mylib)\n"
+      "func main() -> int:\n"
+      "    mylib.\n";
+  auto items = vxls::completion_at(
+      src, 2, 10, std::filesystem::path(VX_SOURCE_DIR) / "headers", {inc});
+  bool has_triple = false;
+  for (const auto &c : items) {
+    if (c.label == "triple") {
+      has_triple = true;
+      CHECK(c.detail.find("mylib.triple") != std::string::npos);
+    }
+  }
+  CHECK(has_triple);
+  std::filesystem::remove_all(inc, ec);
+}
+
 // 补全：snippet 插入文本（客户端支持 snippet 时）
 void test_completion_snippet() {
   const std::string src = "func add(a: int, b: int) -> int:\n    return a + b\n";
-  auto items = vxls::completion_at(src, 0, 6, {}, true);
+  auto items = vxls::completion_at(src, 0, 6, {}, {}, true);
   bool found = false;
   for (const auto &c : items) {
     if (c.label == "add") {
@@ -364,7 +394,7 @@ void test_completion_snippet() {
   }
   CHECK(found);
   // 客户端不支持 snippet 时不给出插入文本
-  auto plain = vxls::completion_at(src, 0, 6, {}, false);
+  auto plain = vxls::completion_at(src, 0, 6, {}, {}, false);
   for (const auto &c : plain) {
     if (c.label == "add") CHECK(!c.is_snippet && c.insert_text.empty());
   }
@@ -384,6 +414,7 @@ int main() {
   test_completion_member();
   test_completion_type();
   test_completion_import_lib();
+  test_completion_include_dirs();
   test_completion_snippet();
 
   if (g_failures == 0) {

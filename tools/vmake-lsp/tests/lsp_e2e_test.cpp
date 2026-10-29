@@ -31,7 +31,7 @@ int g_failures = 0;
     }                                                                          \
   } while (0)
 
-namespace json = vmake_lsp::json;
+namespace json = vx::json;
 
 // ---- LSP 客户端（子进程 + Content-Length 帧） ----
 class Client {

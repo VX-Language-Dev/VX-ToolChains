@@ -24,7 +24,7 @@
 
 namespace fs = std::filesystem;
 
-static constexpr const char *kVersion = "1.12.0";
+static constexpr const char *kVersion = "1.15.0";
 
 static std::string find_sibling(const std::string &name) {
     // Try next to this executable, searching up to 3 parent directories

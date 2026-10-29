@@ -7,6 +7,7 @@
 //   --no-tidy       不启用 vx-tidy 静态检查（默认启用，诊断合并发布）
 //   --only-tidy     仅运行 vx-tidy 后退出，不启动 LSP；参数为待检文件
 //   --format=text|json  配合 --only-tidy 的输出格式（默认 text）
+//   -I <dir>      @imp/@cppimp 头文件搜索目录（可多次；与 vxc 相同查找规则）
 //   -V, --version   版本信息
 //   -h, --help      帮助
 #include "analysis.hpp"
@@ -31,7 +32,7 @@ using vxls::json::Value;
 using vxls::Analysis;
 using vxls::LspMessage;
 
-constexpr const char *kVersion = "0.3.0";
+constexpr const char *kVersion = "0.4.0";
 
 // 打开的文档集合（uri → 全文）
 std::map<std::string, std::string> g_docs;
@@ -40,6 +41,8 @@ std::map<std::string, std::string> g_docs;
 bool g_tidy = true;              // 默认启用 vx-tidy 静态检查（--no-tidy 关闭）
 bool g_snippet = false;          // 客户端 completionItem.snippetSupport
 fs::path g_headers_root;         // @imp 库根（hover/补全解析导入符号用）
+// -I 头文件搜索目录（优先于 g_headers_root；与 vxc 查找规则一致）
+std::vector<fs::path> g_include_dirs;
 
 // 对单个文档跑分析
 Analysis analyze_doc(const std::string &uri) {
@@ -194,7 +197,8 @@ void handle_hover(const LspMessage &req) {
   }
   // hover_at 返回富化 Markdown（参数表/成员/文档注释/内置/导入库 ABI）
   const std::string md =
-      vxls::hover_at(it->second, line, character, g_headers_root);
+      vxls::hover_at(it->second, line, character, g_headers_root,
+                     g_include_dirs);
   if (md.empty()) {
     vxls::send_response(req, Value{});
     return;
@@ -242,7 +246,7 @@ void handle_completion(const LspMessage &req) {
   }
   // 按光标上下文（成员/类型/作用域）给出候选，prefix 已过滤、sortText 已分档
   const std::vector<vxls::LspCompletion> items = vxls::completion_at(
-      it->second, line, character, g_headers_root, g_snippet);
+      it->second, line, character, g_headers_root, g_include_dirs, g_snippet);
   std::vector<Value> out;
   out.reserve(items.size());
   for (const auto &c : items) {
@@ -280,6 +284,8 @@ void print_help() {
       "  --no-tidy        不启用 vx-tidy 静态检查（默认启用并合并发布诊断）\n"
       "  --only-tidy      仅运行 vx-tidy 静态检查后退出，不启动 LSP\n"
       "  --format=text|json  --only-tidy 的输出格式（默认 text）\n"
+      "  -I <dir>         @imp/@cppimp 头文件搜索目录（可多次，优先于 headers 根；\n"
+      "                   亦接受 -I<dir>；查找规则与 vxc 一致）\n"
       "  -V, --version    打印版本\n"
       "  -h, --help       显示本帮助\n",
       stdout);
@@ -366,6 +372,17 @@ int main(int argc, char **argv) {
         std::fputs("error: invalid --format value (text|json)\n", stderr);
         return 2;
       }
+      continue;
+    }
+    if (a == "-I" || (a.size() > 2 && a.starts_with("-I"))) {
+      if (a == "-I" && i + 1 >= argc) {
+        std::fputs("error: -I requires a directory argument\n", stderr);
+        return 2;
+      }
+      const std::string dir = (a == "-I") ? argv[++i] : std::string(a.substr(2));
+      std::error_code ec;
+      fs::path p = fs::absolute(dir, ec);
+      g_include_dirs.push_back(ec ? fs::path(dir) : p.lexically_normal());
       continue;
     }
     if (a.starts_with("-")) {

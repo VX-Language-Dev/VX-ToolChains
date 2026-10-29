@@ -419,9 +419,18 @@ private:
       }
       return;
     }
-    // 整数幂：a ^ b → 运行时 vx_pow_i32（两操作数已在栈上）
+    // 幂：两侧皆浮点 → 运行时 vx_pow_f64；两侧整数 → vx_pow_i32；
+    // int/float 混合直接诊断（否则产出参数类型不符的非法 IR）
     if (op == "^") {
-      emit(ir::OP_CALL, "f;vx_pow_i32");
+      const bool lf = is_float_expr(left);
+      const bool rf = is_float_expr(right);
+      if (lf && rf) {
+        emit(ir::OP_CALL, "f;vx_pow_f64");
+      } else if (!lf && !rf) {
+        emit(ir::OP_CALL, "f;vx_pow_i32");
+      } else {
+        fail("unsupported mixed-type power (int/float): ^", line);
+      }
       return;
     }
     // 浮点运算：两边皆浮点表达式 → F64 族；否则退化为 I32 族
@@ -556,10 +565,13 @@ private:
         if (r->value != nullptr) {
           gen_expr(r->value);
           emit(ir::OP_RETURN);
-        } else {
+        } else if (cur_.ret_type.empty() || cur_.ret_type == "void") {
           emit(ir::OP_RETURN_VOID);
+        } else {
+          // 非 void 函数的裸 return：按返回类型发默认值。
+          // 直接发 OP_RETURN_VOID 会产出 ret void 与返回类型不符的非法 IR。
+          emit_default_return();
         }
-        has_return_ = true;
         break;
       }
       case NodeKind::Break: {
@@ -805,14 +817,50 @@ private:
     loop_stack_.clear();
     for (const Param &p : cur_.params) {
       alloc_local(p.name);
+      // 参数声明类型参与变量类型传播：
+      // float 参数参与算术选 F64 族，string 参数比较走内容相等
+      if (p.type == "float") {
+        var_kind_[std::string(p.name)] = kVarFloat;
+      } else if (p.type == "string") {
+        var_kind_[std::string(p.name)] = kVarStr;
+      }
     }
   }
 
-  void end_func(ModuleIR &mod) {
-    // 无显式 return 的非 void 函数补 i0 返回（对齐自举）
-    if (!has_return_ && !cur_.ret_type.empty() && cur_.ret_type != "void") {
+  // 按当前函数返回类型发射默认返回值（非 void 函数缺返回时的兜底）。
+  // 统一走此函数保证裸 return 与末尾补返回行为一致，且类型与返回声明相符。
+  void emit_default_return() {
+    if (cur_.ret_type == "float") {
+      emit(ir::OP_CONST_FLOAT, "f0.0");
+    } else if (cur_.ret_type == "string") {
+      emit(ir::OP_CONST_STRING, "s"); // 空串
+    } else {
       emit(ir::OP_CONST_INT, "i0");
-      emit(ir::OP_RETURN);
+    }
+    emit(ir::OP_RETURN);
+  }
+
+  void end_func(ModuleIR &mod) {
+    // 无显式 return 的非 void 函数补默认返回（对齐自举；类型须与声明相符）。
+    // 依据末尾指令是否为终止指令判断，避免条件分支中的裸 return
+    // 抑制末尾兜底返回（ReturnVoid bug）。
+    if (!cur_.ret_type.empty() && cur_.ret_type != "void") {
+      const bool ends_with_return =
+          !insts_.empty() &&
+          (insts_.back().op == ir::OP_RETURN ||
+           insts_.back().op == ir::OP_RETURN_VOID ||
+           insts_.back().op == ir::OP_HALT);
+      if (!ends_with_return) {
+        // 若末尾是终止跳转，先开新基本块再补返回，避免在跳转后
+        // 直接追加指令形成非法 IR。
+        if (!insts_.empty() &&
+            (insts_.back().op == ir::OP_JUMP ||
+             insts_.back().op == ir::OP_JUMP_IF_FALSE ||
+             insts_.back().op == ir::OP_JUMP_IF_TRUE)) {
+          emit_label(new_label());
+        }
+        emit_default_return();
+      }
     }
     cur_.instructions = std::move(insts_);
     cur_.local_count = local_counter_;

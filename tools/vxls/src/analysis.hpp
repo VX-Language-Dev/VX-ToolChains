@@ -80,8 +80,10 @@ LspDiagnostic to_lsp_diagnostic(const vx::compiler::Diagnostic &d,
 //   - 内置运行时符号：固定说明文档
 //   - 导入库符号（vec.sum_to 形态）：ABI 符号与 .vxh 来源
 // headers_root 为空时跳过导入库符号解析（其余 hover 不受影响）。
+// include_dirs 为 -I 头文件搜索目录（优先于 headers_root，查找规则同 vxc）。
 std::string hover_at(std::string_view text, int line, int character,
-                     const std::filesystem::path &headers_root = {});
+                     const std::filesystem::path &headers_root = {},
+                     const std::vector<std::filesystem::path> &include_dirs = {});
 
 // 跳转定义：给定位置，返回目标声明的范围（找不到返回空范围 start.line<0）
 LspRange definition_at(std::string_view text, int line, int character);
@@ -95,9 +97,11 @@ LspRange definition_at(std::string_view text, int line, int character);
 //     函数/extern/类/全局变量 + 内置运行时 + 关键字，按 prefix 过滤并排序
 // snippet_support 为 true 时可调用项给出 `name(${1:a})` 形式的 snippet 插入。
 // headers_root 用于解析 @imp 导入库符号（空 = 跳过）。
+// include_dirs 为 -I 头文件搜索目录（优先于 headers_root，查找规则同 vxc）。
 std::vector<LspCompletion> completion_at(std::string_view text, int line,
                                          int character,
                                          const std::filesystem::path &headers_root = {},
+                                         const std::vector<std::filesystem::path> &include_dirs = {},
                                          bool snippet_support = false);
 
 // vx-tidy 静态检查结果 → LSP 诊断（经 vxtidy 动态库）。

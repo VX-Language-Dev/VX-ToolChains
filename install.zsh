@@ -15,8 +15,9 @@ cp ./build/tools/vx-tidy/vx-tidy ~/.local/bin/vx-tidy
 cp ./build/tools/vmake/vmake ~/.local/bin/vmake
 cp ./build/tools/vmake-lsp/vmake-lsp ~/.local/bin/vmake-lsp
 cp ./build/tools/vx/vx ~/.local/bin/vx
-# Install import-library headers next to vxc (toolchain resolves @imp
-# libraries from <executable_dir>/headers unless VX_HEADERS overrides)
+# Install import-library headers next to the binaries: vxc / vxls resolve
+# @imp/@cppimp libraries from <executable_dir>/headers by default
+# (extra search dirs via -I; library root overridden via VX_HEADERS)
 if [ -d headers ]; then
     rm -rf ~/.local/bin/headers
     cp -R headers ~/.local/bin/headers

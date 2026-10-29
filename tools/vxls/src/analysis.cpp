@@ -1049,7 +1049,7 @@ std::vector<LspCompletion> collect_fallback(std::string_view text,
 std::vector<LspCompletion> collect_from_prog(
     std::string_view text, const CursorContext &ctx,
     const vx::compiler::Program &prog, const std::filesystem::path &headers_root,
-    bool snippet) {
+    const std::vector<std::filesystem::path> &include_dirs, bool snippet) {
   using namespace vx::compiler;
 
   struct Method {
@@ -1266,7 +1266,7 @@ std::vector<LspCompletion> collect_from_prog(
   if (ctx.kind == CompCtx::Member) {
     if (!headers_root.empty()) {
       DiagBag ibag;
-      ImportContext ictx{headers_root, headers_root};
+      ImportContext ictx{headers_root, headers_root, include_dirs};
       if (auto table = build_import_table(prog, ictx, "<document>", ibag)) {
         if (const ImportedLib *lib = table->lib_by_prefix(ctx.receiver)) {
           for (const ImportedSymbol &sym : lib->symbols) {
@@ -1391,6 +1391,7 @@ std::vector<LspCompletion> collect_from_prog(
 std::vector<LspCompletion> completion_at(std::string_view text, int line,
                                          int character,
                                          const std::filesystem::path &headers_root,
+                                         const std::vector<std::filesystem::path> &include_dirs,
                                          bool snippet_support) {
   const CursorContext ctx = detect_context(text, line, character);
   std::vector<LspCompletion> raw;
@@ -1403,7 +1404,8 @@ std::vector<LspCompletion> completion_at(std::string_view text, int line,
     auto toks = vx::compiler::tokenize(src, "<document>", arena, bag);
     auto prog = vx::compiler::parse(toks, "<document>", arena, bag);
     if (!prog) return false;
-    raw = collect_from_prog(text, ctx, *prog, headers_root, snippet_support);
+    raw = collect_from_prog(text, ctx, *prog, headers_root, include_dirs,
+                            snippet_support);
     return true;
   };
   {
@@ -1449,7 +1451,8 @@ std::vector<LspCompletion> completion_at(std::string_view text, int line,
 // 导入库符号 hover：光标在 `库前缀.符号` 的符号上时返回库信息 markdown。
 // 需要 headers_root 定位 @imp 库；失败/未命中返回空。
 std::string lib_symbol_hover(std::string_view text, int line, int character,
-                             const std::filesystem::path &headers_root) {
+                             const std::filesystem::path &headers_root,
+                             const std::vector<std::filesystem::path> &include_dirs) {
   if (headers_root.empty()) return {};
   vx::util::Arena arena;
   vx::compiler::DiagBag bag;
@@ -1480,7 +1483,7 @@ std::string lib_symbol_hover(std::string_view text, int line, int character,
   const std::string prefix(toks[idx - 2].text);
   auto prog = vx::compiler::parse(toks, "<document>", arena, bag);
   if (!prog) return {};
-  vx::compiler::ImportContext ctx{headers_root, headers_root};
+  vx::compiler::ImportContext ctx{headers_root, headers_root, include_dirs};
   auto table = vx::compiler::build_import_table(*prog, ctx, "<document>", bag);
   if (!table) return {};
   const vx::compiler::ImportedLib *lib = table->lib_by_prefix(prefix);
@@ -1508,13 +1511,15 @@ std::string lib_symbol_hover(std::string_view text, int line, int character,
 }
 
 std::string hover_at(std::string_view text, int line, int character,
-                     const std::filesystem::path &headers_root) {
+                     const std::filesystem::path &headers_root,
+                     const std::vector<std::filesystem::path> &include_dirs) {
   std::string name;
   int tl = 0, tc = 0;
   if (!ident_token_at(text, line, character, name, tl, tc)) return {};
 
   // 优先：导入库符号（库前缀.成员 形态，需 headers_root）
-  const std::string lib_md = lib_symbol_hover(text, line, character, headers_root);
+  const std::string lib_md =
+      lib_symbol_hover(text, line, character, headers_root, include_dirs);
   if (!lib_md.empty()) return lib_md;
 
   // 内置运行时符号

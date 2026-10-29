@@ -72,6 +72,7 @@ static const std::map<std::string_view, Builtin> kBuiltinTable = {
     {"vx_str_concat", {"vx_str_concat", {VT::PTR, VT::PTR}, true, VT::PTR}},
     {"strcmp", {"strcmp", {VT::PTR, VT::PTR}, true, VT::I32}},
     {"vx_pow_i32", {"vx_pow_i32", {VT::I32, VT::I32}, true, VT::I32}},
+    {"vx_pow_f64", {"vx_pow_f64", {VT::F64, VT::F64}, true, VT::F64}},
     // 系统能力：命令行参数 / 文件 I/O / 执行 shell 命令（实现见 vxrt.c）
     {"sys_argv_count", {"vx_argv_count", {}, true, VT::I32}},
     {"sys_argv_get", {"vx_argv_get", {VT::I32}, true, VT::PTR}},

@@ -177,6 +177,9 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
   }
   args.push_back("-Wno-override-module");
   r.command += " -Wno-override-module";
+  // libm：vx_pow_f64 依赖 pow()；Linux 必须显式 -lm，macOS 该选项无害
+  args.push_back("-lm");
+  r.command += " -lm";
   // 本机链接且存在 ld.lld 时优先 lld；交叉编译（显式 -target）保持默认链接器。
   if (target.empty() && !find_lld().empty()) {
     args.push_back("-fuse-ld=lld");

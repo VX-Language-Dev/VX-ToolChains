@@ -67,6 +67,9 @@ set_target_properties(vx_runtime PROPERTIES OUTPUT_NAME vxrt)
 
 # 内嵌运行时源码：找不到 libvxrt.a 时由 link_driver 现编。
 # 由 src/runtime/vxrt.c 生成，保证「预编译库」与「内嵌源码」始终同源。
+# 追踪 vxrt.c：其内容被 file(READ) 消费，变更时需触发重新 configure。
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/vxrt.c)
 file(READ ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/vxrt.c VXRT_CONTENT)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/vxrt_source.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/generated/vxrt_source.h @ONLY)

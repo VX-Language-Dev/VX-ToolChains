@@ -1,4 +1,5 @@
-// json.cpp — vmake-lsp 极简 JSON 值与编解码实现。
+// json.cpp — 极简 JSON 值与编解码实现（vx 工具链共享）。
+// 对象成员保留插入顺序，便于构造响应时字段次序稳定。
 #include "json.hpp"
 
 #include <cctype>
@@ -6,7 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace vmake_lsp::json {
+namespace vx::json {
 
 Value Value::boolean(bool b) {
   Value v;
@@ -375,4 +376,4 @@ std::optional<Value> parse(std::string_view text) {
   return JsonParser(text).run();
 }
 
-} // namespace vmake_lsp::json
+} // namespace vx::json

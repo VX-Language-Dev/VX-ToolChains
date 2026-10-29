@@ -15,14 +15,19 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     endif()
 endif()
 
-# 核心库：JSON 编解码 / 传输层 / 解析器（供主程序与单元测试复用）
-# 无外部依赖：JSON/传输/解析器均自包含
+# 共享 JSON 库（主构建已纳入；独立配置时补引入）
+if(NOT TARGET vxjson)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../json"
+                     "${CMAKE_CURRENT_BINARY_DIR}/json")
+endif()
+
+# 核心库：传输层 / 解析器（供主程序与单元测试复用）；JSON 来自共享 vxjson
 add_library(vmake_lsp_core STATIC
-    src/json.cpp
     src/transport.cpp
     src/parser.cpp
 )
 target_include_directories(vmake_lsp_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(vmake_lsp_core PUBLIC vxjson)
 target_compile_options(vmake_lsp_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(vmake-lsp src/main.cpp)

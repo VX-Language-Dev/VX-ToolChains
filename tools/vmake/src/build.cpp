@@ -189,10 +189,13 @@ void collect_files(const fs::path &root, const fs::path &skip, bool only_vxh,
   }
 }
 
-// 导入依赖签名：headers 根目录全部文件 + 项目内 .vxh（排除 build 目录）
+// 导入依赖签名：headers 根目录全部文件 + -I 目录全部文件 +
+// 项目内 .vxh（排除 build 目录）
 std::string dependency_signature(const BuildOptions &opts) {
   std::vector<fs::path> files;
   collect_files(opts.headers_root, {}, false, files);
+  for (const std::string &inc : opts.include_dirs)
+    collect_files(fs::path(inc), {}, false, files);
   collect_files(opts.manifest_dir, opts.build_dir, true, files);
   std::sort(files.begin(), files.end());
   files.erase(std::unique(files.begin(), files.end()), files.end());
@@ -200,6 +203,8 @@ std::string dependency_signature(const BuildOptions &opts) {
   std::string sig;
   add_field(sig, "vmake-deps-v1");
   add_field(sig, opts.headers_root.string());
+  for (const std::string &inc : opts.include_dirs)
+    add_field(sig, inc);
   for (const fs::path &f : files) {
     std::string d;
     if (!file_digest(f, d))
@@ -482,6 +487,10 @@ int build_manifest(const Manifest &manifest, const BuildOptions &opts) {
       job.sig = osig;
       job.args = {source.string(), "-o", object.string(), "--color",
                   opts.color ? "always" : "never"};
+      for (const std::string &inc : opts.include_dirs) {
+        job.args.push_back("-I");
+        job.args.push_back(inc);
+      }
       if (opts.verbose)
         job.args.push_back("-v");
       jobs.push_back(std::move(job));

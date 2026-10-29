@@ -19,12 +19,13 @@
 
 namespace fs = std::filesystem;
 
-static constexpr std::string_view VERSION = "0.1.0";
+static constexpr std::string_view VERSION = "0.2.0";
 
 struct CliOptions {
   fs::path build_dir;
   bool has_build_dir = false;
   std::vector<std::string> targets;
+  std::vector<std::string> include_dirs; // -I 头文件搜索目录（透传给 vxc）
   std::string color = "auto";
   bool verbose = false;
   int jobs = 0; // 0 = 自动（CPU 核数）
@@ -44,6 +45,8 @@ static void print_help() {
                "\n"
                "Options:\n"
                "  -B <dir>        Build directory (required; auto-created if missing)\n"
+               "  -I <dir>        Header search dir for @imp/@cppimp (repeatable,\n"
+               "                  forwarded to every vxc call; also accepts -I<dir>)\n"
                "  --color <when>  Diagnostic color: auto|always|never (default auto)\n"
                "  -j <n>          Parallel compile jobs (default: CPU cores; -j0 = auto)\n"
                "  -v, --verbose   Print executed commands and intermediate stages\n"
@@ -96,6 +99,16 @@ static int parse_args(int argc, char **argv, CliOptions &opts) {
         opts.build_dir = std::string(a.substr(2));
       }
       opts.has_build_dir = true;
+    } else if (a == "-I" || (a.size() > 2 && a.starts_with("-I"))) {
+      if (a == "-I") {
+        if (i + 1 >= argc) {
+          std::fprintf(stderr, "error: -I requires a directory argument\n");
+          return 2;
+        }
+        opts.include_dirs.emplace_back(argv[++i]);
+      } else {
+        opts.include_dirs.emplace_back(std::string(a.substr(2)));
+      }
     } else if (a == "--color" || a.starts_with("--color=")) {
       if (a == "--color") {
         if (i + 1 >= argc) {
@@ -286,6 +299,7 @@ int main(int argc, char **argv) {
   }
   opts.vxc = toolchain->vxc;
   opts.vlnk = toolchain->vlnk;
+  opts.include_dirs = cli.include_dirs;
   opts.selected = cli.targets;
   opts.child_env = std::move(child_env);
   opts.verbose = cli.verbose;

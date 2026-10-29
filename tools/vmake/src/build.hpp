@@ -17,6 +17,7 @@ struct BuildOptions {
   std::filesystem::path manifest_dir; // VMakeSet.vmake 所在目录
   std::filesystem::path manifest_path;
   std::filesystem::path headers_root; // 导入库根（空 = 无），参与增量依赖签名
+  std::vector<std::string> include_dirs; // -I 头文件搜索目录，透传给 vxc 并参与签名
   std::string vxc;
   std::string vlnk;
   std::vector<std::string> selected; // 空 = 全部

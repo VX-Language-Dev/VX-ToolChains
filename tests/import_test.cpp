@@ -8,6 +8,7 @@
 #include "vx/compiler/lexer.hpp"
 #include "vx/compiler/parser.hpp"
 #include "vx/compiler/vxabi.hpp"
+#include "vx/util/fs.hpp"
 #include "vx/util/util.hpp"
 
 #include <cstdio>
@@ -336,6 +337,117 @@ void test_emitter_declares_import_symbols() {
   CHECK(has_cpp);
 }
 
+// ==================== -I 搜索目录 ====================
+
+// include_dirs 优先于 headers_root；@cppimp 伴生文件支持跨目录回退
+void test_include_dirs() {
+  static Arena arena;
+  std::error_code ec;
+  const fs::path base = fs::temp_directory_path(ec);
+  if (ec) return;
+  const fs::path inc = base / "vx_import_test_inc";
+  const fs::path inc2 = base / "vx_import_test_inc2";
+  fs::remove_all(inc, ec);
+  fs::remove_all(inc2, ec);
+  fs::create_directories(inc / "sub", ec);
+  fs::create_directories(inc2, ec);
+  CHECK(vx::util::write_file(inc / "mylib.vxh",
+                             "extern func triple(x: int) -> int\n")
+            .has_value());
+  // 遮蔽 headers_root 的 math：-I 命中即不再查根
+  CHECK(vx::util::write_file(inc / "math.vxh",
+                             "extern func quad(x: int) -> int\n")
+            .has_value());
+  CHECK(vx::util::write_file(inc / "sub" / "tool.hpp",
+                             "#pragma once\nint tool(int x);\n")
+            .has_value());
+  CHECK(vx::util::write_file(inc / "sub" / "tool.vxh",
+                             "extern func tool(x: int) -> int\n")
+            .has_value());
+  // 模拟系统头：头文件在 inc2，伴生 .vxh 在 inc（跨目录回退查找）
+  CHECK(vx::util::write_file(inc2 / "syslike.hpp", "#pragma once\n")
+            .has_value());
+  CHECK(vx::util::write_file(inc / "syslike.vxh",
+                             "extern func f(x: int) -> int\n")
+            .has_value());
+
+  const std::string src =
+      "@imp(mylib)\n@imp(math)\n@cppimp(sub/tool.hpp)\n@cppimp(syslike.hpp)\n";
+  DiagBag bag;
+  auto toks = tokenize(src, "<test>", arena, bag);
+  auto prog = parse(toks, "<test>", arena, bag);
+  CHECK(prog.has_value());
+  if (!prog) return;
+  ImportContext ctx{headers_root(), headers_root(), {inc, inc2}};
+  auto imports = build_import_table(*prog, ctx, "<test>", bag);
+  CHECK(imports.has_value());
+  if (!imports) return;
+  CHECK(imports->libs.size() == 4);
+
+  // 1) 自定义库经 -I 命中
+  const ImportedLib *my = imports->lib_by_prefix("mylib");
+  CHECK(my != nullptr);
+  if (my) CHECK(ends_with(my->decl_file, "vx_import_test_inc/mylib.vxh"));
+
+  // 2) -I 遮蔽 headers_root 同名库（quad 而非 add）
+  const ImportedLib *math = imports->lib_by_prefix("math");
+  CHECK(math != nullptr);
+  if (math) {
+    CHECK(ends_with(math->decl_file, "vx_import_test_inc/math.vxh"));
+    CHECK(ImportTable::find_symbol(*math, "quad") != nullptr);
+    CHECK(ImportTable::find_symbol(*math, "add") == nullptr);
+  }
+
+  // 3) @cppimp：头与伴生文件同在 -I 目录
+  const ImportedLib *tool = imports->lib_by_prefix("tool");
+  CHECK(tool != nullptr);
+  if (tool) {
+    CHECK(tool->from_cpp);
+    CHECK(ends_with(tool->cpp_header, "vx_import_test_inc/sub/tool.hpp"));
+    CHECK(ends_with(tool->decl_file, "vx_import_test_inc/sub/tool.vxh"));
+  }
+
+  // 4) @cppimp 伴生回退：头在 inc2，.vxh 在 inc
+  const ImportedLib *sys = imports->lib_by_prefix("syslike");
+  CHECK(sys != nullptr);
+  if (sys) {
+    CHECK(ends_with(sys->cpp_header, "vx_import_test_inc2/syslike.hpp"));
+    CHECK(ends_with(sys->decl_file, "vx_import_test_inc/syslike.vxh"));
+  }
+
+  fs::remove_all(inc, ec);
+  fs::remove_all(inc2, ec);
+}
+
+// 相对引用只查源文件目录（不受 -I 影响）
+void test_relative_ref_ignores_include_dirs() {
+  static Arena arena;
+  std::error_code ec;
+  const fs::path base = fs::temp_directory_path(ec);
+  if (ec) return;
+  const fs::path src_dir = base / "vx_import_test_rel";
+  const fs::path inc = base / "vx_import_test_rel_inc";
+  fs::remove_all(src_dir, ec);
+  fs::remove_all(inc, ec);
+  fs::create_directories(src_dir, ec);
+  fs::create_directories(inc, ec);
+  // 库放在 inc 中，但引用写成 ./rel —— 相对引用不应命中 -I
+  CHECK(vx::util::write_file(inc / "rel.vxh", "extern func g() -> int\n")
+            .has_value());
+
+  const std::string src = "@imp(./rel)\n";
+  DiagBag bag;
+  auto toks = tokenize(src, "<test>", arena, bag);
+  auto prog = parse(toks, "<test>", arena, bag);
+  CHECK(prog.has_value());
+  if (!prog) return;
+  ImportContext ctx{headers_root(), src_dir, {inc}};
+  auto imports = build_import_table(*prog, ctx, "<test>", bag);
+  CHECK(!imports.has_value()); // 相对引用只查源文件目录 → 未命中
+  fs::remove_all(src_dir, ec);
+  fs::remove_all(inc, ec);
+}
+
 } // namespace
 
 int main() {
@@ -343,6 +455,8 @@ int main() {
   test_build_import_table();
   test_full_lib_set();
   test_missing_lib_diagnostic();
+  test_include_dirs();
+  test_relative_ref_ignores_include_dirs();
   test_codegen_abi_call();
   test_codegen_unknown_symbol();
   test_emitter_declares_import_symbols();

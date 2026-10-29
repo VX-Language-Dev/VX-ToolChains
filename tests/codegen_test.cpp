@@ -501,6 +501,50 @@ void test_power() {
   }
   CHECK(has_pow2);
   CHECK(has_add);
+  // 浮点幂：两侧浮点 → vx_pow_f64
+  auto m3 = gen_src("func pf() -> float:\n    return 2.0 ^ 3.0\n");
+  CHECK(m3);
+  bool has_fpow = false;
+  for (const auto &inst : m3->funcs[0].instructions) {
+    if (inst.op == ir::OP_CALL && inst.args == "f;vx_pow_f64") has_fpow = true;
+  }
+  CHECK(has_fpow);
+  // int/float 混合幂 → codegen 诊断（不再产出参数类型不符的非法 IR）
+  std::string err =
+      gen_expect_error("func pm() -> float:\n    return 2 ^ 3.0\n");
+  CHECK(err.find("mixed-type power") != std::string::npos);
+}
+
+// 非 void 函数的裸 return：按返回类型补默认值
+// （直接发 OP_RETURN_VOID 会产出 ret void 类型不符的非法 IR）
+void test_bare_return() {
+  auto m = gen_src("func bi() -> int:\n    return\n"
+                   "func bf() -> float:\n    return\n"
+                   "func bs() -> string:\n    return\n"
+                   "func bv():\n    return\n");
+  CHECK(m);
+  CHECK(m->funcs.size() == 4);
+  // int → i0 + RETURN
+  CHECK(op_at(*m, 0, 0) == ir::OP_CONST_INT);
+  CHECK(args_at(*m, 0, 0) == "i0");
+  CHECK(op_at(*m, 0, 1) == ir::OP_RETURN);
+  // float → 0.0 + RETURN
+  CHECK(op_at(*m, 1, 0) == ir::OP_CONST_FLOAT);
+  CHECK(args_at(*m, 1, 0) == "f0.0");
+  CHECK(op_at(*m, 1, 1) == ir::OP_RETURN);
+  // string → 空串 + RETURN
+  CHECK(op_at(*m, 2, 0) == ir::OP_CONST_STRING);
+  CHECK(args_at(*m, 2, 0) == "s");
+  CHECK(op_at(*m, 2, 1) == ir::OP_RETURN);
+  // void → RETURN_VOID
+  CHECK(op_at(*m, 3, 0) == ir::OP_RETURN_VOID);
+  // 无任何 return 的字符串函数，末尾兜底同样按返回类型（旧版 i0 → 类型不符）
+  auto m2 = gen_src("func ns() -> string:\n    var x = 1\n");
+  CHECK(m2);
+  const auto &f = m2->funcs[0];
+  CHECK(f.instructions.size() >= 2);
+  CHECK(f.instructions[f.instructions.size() - 1].op == ir::OP_RETURN);
+  CHECK(f.instructions[f.instructions.size() - 2].op == ir::OP_CONST_STRING);
 }
 
 // 变量类型传播：浮点变量参与 F64 运算（旧版退化为 I32 → 后端类型诊断）
@@ -537,6 +581,24 @@ void test_float_var_propagation() {
     if (inst.op == ir::OP_I32_MUL) has_i32_mul3 = true;
   }
   CHECK(has_i32_mul3);
+  // 参数声明类型参与传播：float 参数参与算术选 F64 族（旧版退化 I32 → 后端诊断）
+  auto m4 = gen_src("func fp(x: float) -> float:\n    return x * 2.0\n");
+  CHECK(m4);
+  bool has_f64_mul4 = false, has_i32_mul4 = false;
+  for (const auto &inst : m4->funcs[0].instructions) {
+    if (inst.op == ir::OP_F64_MUL) has_f64_mul4 = true;
+    if (inst.op == ir::OP_I32_MUL) has_i32_mul4 = true;
+  }
+  CHECK(has_f64_mul4);
+  CHECK(!has_i32_mul4);
+  // string 参数比较走内容相等（OP_STR_EQ，而非地址比较的 I32_EQ）
+  auto m5 = gen_src("func sp(a: string, b: string) -> int:\n    return a == b\n");
+  CHECK(m5);
+  bool has_str_eq = false;
+  for (const auto &inst : m5->funcs[0].instructions) {
+    if (inst.op == ir::OP_STR_EQ) has_str_eq = true;
+  }
+  CHECK(has_str_eq);
 }
 
 } // namespace
@@ -560,6 +622,7 @@ int main() {
   test_system_builtins();
   test_power();
   test_float_var_propagation();
+  test_bare_return();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "codegen tests: all passed\n");

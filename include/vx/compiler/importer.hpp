@@ -2,15 +2,19 @@
 // 符号签名与链接期依赖。
 //
 // 库查找规则（@imp）：
-//   - 库默认位于 vxc 可执行文件同级的 headers/ 目录及其子目录下；
+//   - 自定义库用相对路径（以 './' 或 '../' 起始），相对被编译源文件所在目录；
+//   - 非相对引用按搜索目录顺序查找：include_dirs（-I 指定，按序）→
+//     headers_root（默认 vxc 可执行文件同级 headers/，VX_HEADERS 可覆盖）；
 //   - headers 根目录的库直接用文件名引用，如 @imp(math) → headers/math.vxh；
 //   - 子目录下的库在库名前加 '/' + 子目录路径，如 @imp(/collections/vec)
-//     → headers/collections/vec.vxh（前导 '/' 可省略，两者等价）；
-//   - 自定义库用相对路径（以 './' 或 '../' 起始），相对被编译源文件所在目录。
+//     → headers/collections/vec.vxh（前导 '/' 可省略，两者等价）。
 //
-// @cppimp 引用 C++ 头文件；VX 侧签名取自与该头文件同目录、同主名的
-// .vxh 伴生声明文件（如 greet.hpp ↔ greet.vxh），链接期由后端生成
-// extern "C" shim 把 C++ ABI 转换为 VX ABI。
+// @cppimp 引用 C++ 头文件；非相对引用的查找顺序在 @imp 基础上追加系统
+// C/C++ 编译器头文件目录（system_include_dirs 探测）。VX 侧签名优先取与该
+// 头文件同目录、同主名的 .vxh 伴生声明文件（如 greet.hpp ↔ greet.vxh）；
+// 头文件命中系统目录而伴生文件缺失时，回退到 include_dirs / headers_root
+// 中查找同主名 .vxh（为系统头提供 VX 签名）。链接期由后端生成 extern "C"
+// shim 把 C++ ABI 转换为 VX ABI。
 #pragma once
 
 #include "vx/compiler/ast.hpp"
@@ -66,13 +70,24 @@ struct ImportTable {
 struct ImportContext {
   std::filesystem::path headers_root; // <exe_dir>/headers
   std::filesystem::path source_dir;   // 被编译源文件所在目录
+  // -I 指定的额外头文件搜索目录（按序，优先于 headers_root）
+  std::vector<std::filesystem::path> include_dirs;
+  // 系统 C/C++ 编译器头文件目录；空 = 首次需要时自动探测（仅 @cppimp）
+  std::vector<std::filesystem::path> sys_dirs;
 };
+
+// 探测系统 C/C++ 编译器的头文件搜索目录（进程内缓存）。
+// 依次尝试 c++/clang++/g++ 等，解析 `-E -x c++ -v` 输出的
+// "#include <...> search starts here:" 段；全部失败时返回空表。
+const std::vector<std::filesystem::path> &system_include_dirs();
 
 // 由可执行文件路径推导其所在目录（用于定位同级 headers/）。
 std::filesystem::path executable_dir(std::string_view argv0);
 
 // 解析库引用 → 该库的基准路径（未加扩展名）。
-// 以 '.' 起始 → 相对 source_dir；否则相对 headers_root（允许前导 '/'）。
+// 以 '.' 起始 → 相对 source_dir；否则按 include_dirs → headers_root
+// （→ 系统 C/C++ 头目录）顺序查找首个命中项；均未命中时返回按
+// headers_root 计算的默认路径（允许前导 '/'）。
 std::filesystem::path resolve_ref_path(const ImportContext &ctx,
                                        std::string_view ref);
 

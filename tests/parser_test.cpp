@@ -1,7 +1,6 @@
 // parser_test — Compiler 层语法分析器测试（自带断言宏，不依赖第三方框架）。
 #include "vx/compiler/parser.hpp"
-
-#include "vx/util/util.hpp"
+#include "vx/util/fs.hpp"
 
 #include <cstdio>
 #include <filesystem>

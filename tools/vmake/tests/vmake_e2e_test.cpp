@@ -254,6 +254,41 @@ int main() {
     CHECK(run.output == "7");
   }
 
+  // ---- -I 搜索目录：vmake -I 透传给 vxc；同参数二次构建 Fresh ----
+  const fs::path incproj = root / "incproj";
+  fs::create_directories(incproj / "mylibs", ec);
+  CHECK(write_text(incproj / "VMakeSet.vmake", "exe(\"hi\", sources=[\"main.vx\"])\n"));
+  CHECK(write_text(incproj / "main.vx",
+                   "@imp(triplib)\n"
+                   "extern out_int(v: int)\n"
+                   "func main() -> int:\n"
+                   "    out_int(triplib.triple(5))\n"
+                   "    return 0\n"));
+  CHECK(write_text(incproj / "mylibs" / "triplib.vxh",
+                   "extern func triple(x: int) -> int\n"));
+  CHECK(write_text(incproj / "mylibs" / "triplib.c",
+                   "#include <stdint.h>\n"
+                   "int32_t _vx_triplib_triple(int32_t x) { return x * 3; }\n"));
+  RunResult inc_first = run_in_dir(vmake, {"build", "-B", "bdir", "-I", "mylibs"},
+                                   incproj, tool_env());
+  CHECK(inc_first.code == 0);
+  if (inc_first.code != 0)
+    std::fprintf(stderr, "%s\n", inc_first.output.c_str());
+  if (fs::is_regular_file(incproj / "bdir" / "hi", ec) && !ec) {
+    RunResult run = run_in_dir((incproj / "bdir" / "hi").string(), {}, incproj);
+    CHECK(run.code == 0);
+    CHECK(run.output == "15");
+  }
+  RunResult inc_second = run_in_dir(vmake, {"build", "-B", "bdir", "-I", "mylibs"},
+                                    incproj, tool_env());
+  CHECK(inc_second.code == 0);
+  CHECK(!contains(inc_second.output, "vxc"));
+  // 不带 -I：库不可见 → 编译失败
+  RunResult inc_none =
+      run_in_dir(vmake, {"build", "-B", "bdir2"}, incproj, tool_env());
+  CHECK(inc_none.code != 0);
+  CHECK(contains(inc_none.output, "triplib"));
+
   // ---- 语法错误：失败诊断应包含 Cargo 风格错误行 ----
   CHECK(write_text(root / "main.vx", "func main(:\n    return 0\n"));
   RunResult bad = run_in_dir(vmake, {"build", "-B", "bdir"}, root, tool_env());

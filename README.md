@@ -1,7 +1,7 @@
 # VX-ToolKit
 
 ![Language](https://img.shields.io/badge/language-C++-green)
-![Version](https://img.shields.io/badge/version-v1.12.0-blue)
+![Version](https://img.shields.io/badge/version-v1.15.0-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
 ![Platform](<https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey>)
 
@@ -9,7 +9,7 @@
 
 > 语言版本: v1.7.0
 > 协议: [AGPL-3.0](LICENSE)
-> 当前实现: **C++ 工具链核心可用**（编译前端 vxc 0.3.0、后端 vlnk、构建编排 vmake、
+> 当前实现: **C++ 工具链核心可用**（编译前端 vxc 0.4.0、后端 vlnk、构建编排 vmake、
 > vxls / vx-tidy；所有权检查、PE 输出等特性开发中，见 [CHANGELOG](CHANGELOG.md)）
 
 ---
@@ -114,7 +114,7 @@ cmake --build build --config MinSizeRel
 
 | 产物                          | 说明                                    |
 | ----------------------------- | --------------------------------------- |
-| `vxc`                         | 编译器前端 CLI（CMake 目标 `vxc002`；`--version` 显示 0.3.0：lex → parse → codegen → .vxobj，支持 `--check` / `--dump`） |
+| `vxc`                         | 编译器前端 CLI（CMake 目标 `vxc002`；`--version` 显示 0.4.0：lex → parse → codegen → .vxobj，支持 `--check` / `--dump` / `-I`） |
 | `vlnk`                        | 原生链接器 CLI（.vxobj → LLVM IR → clang 链接） |
 | `tools/vxls/vxls`             | LSP 语言服务器                          |
 | `tools/vx-tidy/vx-tidy`       | 静态分析 CLI                            |
@@ -129,14 +129,44 @@ cmake --build build --config MinSizeRel
 
 ### 安装到系统
 
+**方式一：源码安装**（构建并安装到 `~/.local`）
+
 ```bash
-# 使用安装脚本安装到 ~/.local/bin
 zsh install.zsh
 ```
 
-> 注：CMake 暂未定义 `install()` 规则；`install.zsh` 会构建工具链并将 `vxls`、
-> `vx-tidy`、`vmake`、`vmake-lsp` 复制到 `~/.local/bin`（`vxc` / `vlnk` 暂未纳入安装脚本），
-> 请确保该目录在 PATH 中。
+`install.zsh` 构建工具链后安装到 `~/.local/bin`：`vxc`、`vlnk`、`vxls`、`vx-tidy`、
+`vmake`、`vmake-lsp`、`vx` 元命令；导入库 `headers/` 与二进制**同目录**（vxc / vxls
+的默认查找根，可用 `-I` 追加搜索目录或 `VX_HEADERS` 覆盖库根）；预编译运行时
+`libvxrt.a` 安装到 `~/.local/lib`（vlnk 优先直接链接）；shell 补全安装到
+`~/.local/share` / `~/.zsh/completions`。请确保 `~/.local/bin` 在 PATH 中。
+
+**方式二：发布包安装**（多平台 Zip，免构建）
+
+```bash
+./scripts/build-release.sh                 # 产出 dist/vx-toolkit-<平台>-<配置>.zip
+# 解压后：
+chmod +x install.sh && ./install.sh        # 默认安装到 ~/.local；PREFIX=/opt ./install.sh 可定制
+```
+
+发布包内含全部可执行文件、静态库、`headers/`、`std/`、`completions/` 与
+`install.sh`；`install.sh` 将 `headers/` 装到 `$PREFIX/bin/headers`（与二进制同目录，
+满足默认查找规则），`libvxrt.a` 装到 `$PREFIX/lib`（vlnk 经 `bin/../lib` 自动定位）。
+
+**方式三：uv 安装**（Python 包装，`uv tool install`）
+
+```bash
+python3 python/scripts/stage.py -B build   # 先把 CMake 产物 + headers 装进包内 _bin/
+uv tool install ./python                   # 装齐 vxc / vlnk / vmake / vxls / vx-tidy / vx / vmake-lsp
+```
+
+`python/` 是只做转发的 uv 包：console script 按命令名分派到包内 `_bin/` 的原生二进制
+（查找顺序 `VX_TOOLKIT_BIN` → 包内 `_bin/` → `PATH`，找不到时打印修复指引）。
+`_bin/headers` 即 vxc / vxls 的默认导入库根；`libvxtidy` 等动态库经
+`DYLD_LIBRARY_PATH` / `LD_LIBRARY_PATH` 补齐，因此脱离构建目录后仍可用。
+卸载：`uv tool uninstall vx-toolkit`。
+
+> 注：CMake 暂未定义 `install()` 规则，安装以上三种脚本为准。
 
 ### 运行测试
 
@@ -182,6 +212,9 @@ func main():
 
 # 仅做检查，不写输出文件
 ./build/vxc hello.vx --check
+
+# 指定 @imp/@cppimp 头文件搜索目录（可多次；优先于默认 headers/，亦支持 -I<dir>）
+./build/vxc hello.vx -I ./mylibs -I /opt/vx/include
 
 # 打印模块摘要（funcs/insts/externs/globals）
 ./build/vxc hello.vx --dump
@@ -278,8 +311,11 @@ func main():
     out(greet.greet("VX"))    # greet 库 → shim 包装 C++ 符号
 ```
 
-**库查找规则**：库默认位于 vxc 可执行文件同级的 `headers/` 目录及其子目录下
-（可用环境变量 `VX_HEADERS` 覆盖）。
+**库查找规则**：`-I <dir>` 指定的搜索目录（可多次，按序）优先；随后是库根
+——默认 vxc 可执行文件同级的 `headers/` 目录及其子目录（可用环境变量
+`VX_HEADERS` 覆盖）。`@cppimp` 的 C/C++ 头文件在未命中上述目录时，会继续
+探测系统 C/C++ 编译器（`c++`/`clang++`/`g++` 等）的头文件搜索目录；此时
+VX 签名的 `.vxh` 伴生文件可在 `-I` / 库根中按同主名提供。
 
 **库文件形态**：VX 声明头 `.vxh`（VX 语法的 `extern` 签名声明），
 同目录同名的 `.c` / `.a` / `.dylib` / `.cpp` 由 `vlnk` 在链接期并入。
@@ -331,13 +367,15 @@ cmake -G Ninja -B build -S . && ninja -C build vmake
 #     Finished build in 0.35s
 
 ./build/tools/vmake/vmake build -B build-out hello   # 只构建指定目标
+./build/tools/vmake/vmake build -B build-out -I libs # 头文件搜索目录透传给每个 vxc 调用
 ./build/tools/vmake/vmake build -B build-out -v      # 打印实际 vxc/vlnk 命令
 ./build/tools/vmake/vmake build -B build-out --color=never
 ```
 
 - **增量构建**：产物比配置与全部源文件新时跳过，仅打印 `Finished`（`-v` 显示 `Fresh`）。
 - **工具链定位**：`VX_VXC` / `VX_VLNK` 可显式指定；否则在 vmake 可执行文件附近与 `PATH` 中查找。
-- **导入库**：未设置 `VX_HEADERS` 时，自动尝试项目 `headers/` 与编译器旁的 `headers/`。
+- **导入库**：未设置 `VX_HEADERS` 时，自动尝试项目 `headers/` 与编译器旁的 `headers/`；
+  `-I <dir>`（可多次）把头文件搜索目录透传给每个 `vxc` 调用并参与增量签名。
 - 中间产物位于 `<构建目录>/obj/<目标>/`，最终产物默认：exe → `<name>`，
   dylib → `lib<name>.dylib`（macOS）/ `lib<name>.so`（Linux）。
 
@@ -387,6 +425,7 @@ cmake -G Ninja -B build -S . && ninja -C build vxls
 ./build/tools/vxls/vxls --stdio            # 显式声明 stdio（编辑器配置兼容）
 ./build/tools/vxls/vxls --only-tidy a.vx   # 仅运行 vx-tidy 后退出（不启 LSP）
 ./build/tools/vxls/vxls --only-tidy --format=json a.vx   # JSON 输出（CI 用）
+./build/tools/vxls/vxls -I ./mylibs        # @imp/@cppimp 头文件搜索目录（查找规则同 vxc）
 ./build/tools/vxls/vxls --help / --version # 帮助 / 版本
 ```
 
@@ -538,6 +577,7 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 │   ├── *_test.cpp            # util/diag/lexer/parser/codegen/vxobj/e2e/backend/import 测试
 │   └── test_*.vx             # e2e 样例（simple/void/return/math/prime）
 ├── tools/                    # 独立工具子项目（主构建自动检测 tools/*/CMakeLists.txt）
+│   ├── json/                 # 极简 JSON 编解码静态库（vxls / vmake-lsp 共享，vx::json）
 │   ├── vmake/                # 项目构建编排器（VMakeSet.vmake → vxc/vlnk）
 │   ├── vmake-lsp/            # VMakeSet.vmake 语言服务器（诊断/补全/悬停/跳转/格式化）
 │   ├── vxls/                 # VX 语言服务器（LSP over stdio，集成 vx-tidy）

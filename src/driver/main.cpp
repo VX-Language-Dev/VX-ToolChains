@@ -17,18 +17,21 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
+
 #include <unistd.h>
 
 namespace fs = std::filesystem;
 using namespace vx::compiler;
 using vx::util::Arena;
 
-static constexpr std::string_view VERSION = "0.3.0";
+static constexpr std::string_view VERSION = "0.4.0";
 
 struct Options {
   std::string source;
   std::string output;
   std::string color = "auto"; // auto | always | never
+  std::vector<std::string> includes; // -I 头文件搜索目录（按序，可多次）
   bool verbose = false;
   bool help = false;
   bool version = false;
@@ -51,6 +54,9 @@ static void print_help() {
       "Stages: read → lex → parse → codegen → vxobj\n"
       "Options:\n"
       "  -o <file>       Output VXOBJ file (default: <source>.vxobj)\n"
+      "  -I <dir>        Add header search directory for @imp/@cppimp\n"
+      "                  (repeatable; searched before the default headers/;\n"
+      "                  also accepts -I<dir>)\n"
       "  --check         Type-check only; do not write output\n"
       "  --dump          Print module summary to stdout\n"
       "  -v, --verbose   Verbose output\n"
@@ -96,6 +102,16 @@ static int parse_args(int argc, char **argv, Options &opts) {
         return 2;
       }
       opts.output = argv[++i];
+    } else if (a == "-I" || a.starts_with("-I")) {
+      if (a == "-I") {
+        if (i + 1 >= argc) {
+          std::fprintf(stderr, "error: -I requires a directory argument\n");
+          return 2;
+        }
+        opts.includes.emplace_back(argv[++i]);
+      } else {
+        opts.includes.emplace_back(std::string(a.substr(2)));
+      }
     } else if (a.starts_with("-")) {
       std::fprintf(stderr, "error: unknown option: %s (try --help)\n", argv[i]);
       return 2;
@@ -193,7 +209,8 @@ int main(int argc, char **argv) {
   }
 
   // --- 阶段 3.5: 库导入解析（@imp / @cppimp）---
-  // 库默认位于 vxc 可执行文件同级的 headers/ 目录（可用环境变量 VX_HEADERS 覆盖）。
+  // 搜索顺序：-I 目录（按序）→ headers 根（VX_HEADERS 或 vxc 同级 headers/）
+  // → @cppimp 追加系统 C/C++ 编译器头目录；相对引用只查源文件目录。
   fs::path headers_root;
   if (const char *env = std::getenv("VX_HEADERS")) {
     headers_root = env;
@@ -201,8 +218,15 @@ int main(int argc, char **argv) {
     const fs::path exe_dir = executable_dir(argv[0]);
     headers_root = exe_dir.empty() ? fs::path("headers") : exe_dir / "headers";
   }
-  ImportContext imp_ctx{headers_root,
-                        fs::path(opts.source).parent_path()};
+  ImportContext imp_ctx;
+  imp_ctx.headers_root = headers_root;
+  imp_ctx.source_dir = fs::path(opts.source).parent_path();
+  std::error_code ec;
+  for (const std::string &inc : opts.includes) {
+    fs::path p = fs::absolute(inc, ec);
+    imp_ctx.include_dirs.push_back(ec ? fs::path(inc) : p.lexically_normal());
+    ec.clear();
+  }
   std::optional<ImportTable> imports =
       build_import_table(*prog, imp_ctx, opts.source, bag);
   if (!imports) {
@@ -210,8 +234,12 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (opts.verbose) {
-    std::fprintf(stderr, "  imports: %zu libs (headers root: %s)\n",
+    std::fprintf(stderr, "  imports: %zu libs (headers root: %s",
                  imports->libs.size(), headers_root.string().c_str());
+    for (const fs::path &d : imp_ctx.include_dirs) {
+      std::fprintf(stderr, ", -I %s", d.string().c_str());
+    }
+    std::fprintf(stderr, ")\n");
   }
 
   // --- 阶段 4: TypeIR 代码生成 ---

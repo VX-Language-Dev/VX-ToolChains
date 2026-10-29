@@ -166,6 +166,36 @@ int main() {
            "    return 0\n",
            "10241", "pow");
 
+  // 浮点幂：2.0^3.0=8、0.5^2.0=0.25（out_float 按 %g 输出）
+  run_case("extern out_float(v: float)\n"
+           "func main() -> int:\n"
+           "    out_float(2.0 ^ 3.0)\n"
+           "    out_float(0.5 ^ 2.0)\n"
+           "    return 0\n",
+           "80.25", "fpow");
+
+  // 非 void 函数裸 return → 返回类型默认值（int → 0，float → 0.0）
+  run_case("extern out_int(v: int)\n"
+           "extern out_float(v: float)\n"
+           "func fi() -> int:\n"
+           "    return\n"
+           "func ff() -> float:\n"
+           "    return\n"
+           "func main() -> int:\n"
+           "    out_int(fi())\n"
+           "    out_float(ff())\n"
+           "    return 0\n",
+           "00", "bareret");
+
+  // float 参数参与 F64 运算（参数类型传播；旧版退化 I32 → 后端类型诊断）
+  run_case("extern out_float(v: float)\n"
+           "func square(x: float) -> float:\n"
+           "    return x * x\n"
+           "func main() -> int:\n"
+           "    out_float(square(1.5))\n"
+           "    return 0\n",
+           "2.25", "fparam");
+
   // 变量类型传播：浮点变量参与 F64 运算（旧版误发 I32 → 后端诊断）
   run_case("extern out_float(v: float)\n"
            "func main() -> int:\n"

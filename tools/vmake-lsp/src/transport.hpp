@@ -8,6 +8,9 @@
 
 namespace vmake_lsp {
 
+// 共享 JSON 实现位于 tools/json（vx::json），在本工具命名空间内以 json 引用
+namespace json = ::vx::json;
+
 // 一条解码后的 LSP 消息
 struct LspMessage {
   bool has_id = false;      // 请求/响应带 id；通知无 id

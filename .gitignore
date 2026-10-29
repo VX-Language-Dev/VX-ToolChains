@@ -84,3 +84,6 @@ scripts/toolchains/zig-ranlib
 .qwen/
 .continue/
 .workbuddy
+
+# uv 包内 stage 的工具链二进制与 headers（由 python/scripts/stage.py 生成）
+python/src/vx_toolkit/_bin/

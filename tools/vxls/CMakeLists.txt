@@ -24,24 +24,28 @@ if(NOT TARGET vxtidy)
                      "${CMAKE_CURRENT_BINARY_DIR}/vx-tidy")
 endif()
 
+# 共享 JSON 库（主构建已纳入；独立配置时补引入）
+if(NOT TARGET vxjson)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../json"
+                     "${CMAKE_CURRENT_BINARY_DIR}/json")
+endif()
+
 add_executable(vxls
     src/main.cpp
     src/analysis.cpp
     src/transport.cpp
-    src/json.cpp
 )
 target_include_directories(vxls PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(vxls PRIVATE vx_compiler vxtidy)
+target_link_libraries(vxls PRIVATE vx_compiler vxtidy vxjson)
 target_compile_options(vxls PRIVATE -Wall -Wextra -Wpedantic)
 
 # 单元测试（注册到所属构建的 CTest）
 add_executable(vxls_tests
     tests/vxls_test.cpp
     src/analysis.cpp
-    src/json.cpp
 )
 target_include_directories(vxls_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(vxls_tests PRIVATE vx_compiler vxtidy)
+target_link_libraries(vxls_tests PRIVATE vx_compiler vxtidy vxjson)
 target_compile_options(vxls_tests PRIVATE -Wall -Wextra -Wpedantic)
 # 仓库根路径：供补全测试解析 @imp 导入库（headers/ 目录）
 target_compile_definitions(vxls_tests PRIVATE

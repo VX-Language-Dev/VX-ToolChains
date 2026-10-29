@@ -1,5 +1,49 @@
 # CHANGELOG
 
+## v1.15.0 — `-I` 头文件搜索路径（vxc / VMake / vxls）(2026-10-28)
+
+### 编译器（`vxc`）
+
+- **`-I <dir>` / `-I<dir>` 参数**（可多次）：为 `@imp` / `@cppimp` 增加头文件搜索目录；非相对引用按 `-I` 目录（按序）→ 库根（vxc 同级 `headers/`，`VX_HEADERS` 可覆盖）顺序查找，`-I` 命中即遮蔽库根同名库；`./` 起始的自定义库引用仍只查源文件目录
+- **系统 C/C++ 头目录探测**：`@cppimp` 的 C/C++ 头文件在搜索目录未命中时，探测系统编译器（`c++`/`clang++`/`g++` 等，`-E -x c++ -v` 输出解析）的头文件搜索目录；头文件命中系统目录而伴生 `.vxh` 缺失时，回退到 `-I` / 库根按同主名查找 VX 签名文件（进程内缓存探测结果）
+
+### VMake 与语言服务器
+
+- `vmake build -B <dir> -I <dir>`：搜索目录原样透传给每次 `vxc` 调用，并纳入增量依赖签名（目录内容或列表变化触发重编）
+- `vxls -I <dir>`：hover / 补全的导入库解析应用与 vxc 相同的查找规则；`ImportContext` 扩展 `include_dirs` / `sys_dirs` 字段（聚合初始化兼容既有调用）
+
+### 安装方式
+
+- **发布包 `install.sh` 对齐现状与 `-I` 查找规则**：修正遗留的 `vxc002` 旧名（包内实际为 `vxc`）；`headers/` 改装 `$PREFIX/bin/headers`（与 vxc/vxls 二进制同目录，满足默认查找根，此前装 `$PREFIX/headers` 仅 vmake 上探可达）；新增安装 `vx` 元命令、`libvxrt.a`（vlnk 经 `bin/../lib` 定位）与 shell 补全；使用提示改为 `VMakeSet.vmake` 并说明 `-I` / `VX_HEADERS`
+- **`build-release.sh` 打包扩充**：构建与打包目标加入 `vx`；Zip 内容新增 `libvxrt.a` 与 `completions/`
+- `install.zsh` 注释同步 `-I` 规则；bash 补全 `vxc.bash` 选项列表补 `-I`；README 安装章节重写为「源码安装 / 发布包安装 / uv 安装」三种途径
+
+### uv 安装包（`python/`）
+
+- 新增 uv 包：`uv tool install ./python` 一次装齐 `vxc` / `vlnk` / `vmake` / `vxls` / `vx-tidy` / `vx` / `vmake-lsp`；`pyproject.toml` 用 hatchling 打包，`artifacts`/`include` 强制携带被 `.gitignore` 排除的二进制
+- 单一转发入口 `vx_toolkit._dispatch:main`：按 console script 名分派；二进制查找顺序 `VX_TOOLKIT_BIN` → 包内 `_bin/` → `PATH`，全部未命中时打印 stage / PATH 修复指引（退出码 127）
+- `python/scripts/stage.py`：把 CMake 产物、`libvxrt.a`、`libvxtidy` 动态库与 `headers/` 复制进 `_bin/`（`_bin/headers` 即 vxc/vxls 默认导入库根）；核心产物 `vxc`/`vlnk` 缺失即失败，可选工具缺失仅警告
+- 入口在 exec 前把二进制同目录注入 `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH`：构建期 rpath 是绝对路径，安装到别处后 `libvxtidy` 会加载失败（已验证删掉构建目录的动态库后，经 uv 入口 `vxls` 仍正常启动）
+
+### 版本对齐
+
+- README 徽章与 `vx` 元命令 1.14.0 → 1.15.0（与本 CHANGELOG 一致）；`vxc` 0.3.0 → 0.4.0、`vxls` 0.3.0 → 0.4.0、`vmake` 0.1.0 → 0.2.0（`--version` / 帮助 / README 用法示例同步 `-I`）
+
+## v1.14.0 — 浮点幂、裸 return 默认值与工具链 JSON 去重 (2026-10-28)
+
+### 编译器（`vxc`）与后端（`vlnk`）
+
+- **浮点幂 `2.0 ^ 3.0`**：两侧皆浮点时 codegen 分派到新内置 `vx_pow_f64`（`vxrt` 内 libc `pow`，支持负指数与分数指数）；int/float 混合操作数改为 codegen 直接诊断（此前产出参数类型不符的非法 IR）。链接命令补 `-lm`（Linux 必需，macOS 无害）
+- **非 void 函数裸 `return` 修复**：此前发 `OP_RETURN_VOID` → `ret void` 与返回类型不符导致 clang 链接失败；现按返回类型返回默认值（int/bool→0、float→0.0、string→空串），末尾兜底返回（无任何 `return` 的函数）统一走同一逻辑
+- **参数类型参与变量类型传播**：`float`/`string` 形参进入 `var_kind_`（`func f(x: float): x * 2.0` 发 F64 族；`a == b` 字符串参数走内容比较 `STR_EQ`，此前退化为 I32/地址比较 → 后端类型诊断）
+
+### 工具链工程
+
+- **JSON 去重**：`vxls` 与 `vmake-lsp` 逐字相同的两份 `json.{hpp,cpp}`（各 379 行）抽取为共享静态库 `tools/json`（命名空间 `vx::json`，目标 `vxjson`）；两工具经 `transport.hpp` 内命名空间别名复用，主构建与独立配置（`cmake -S tools/xxx`）均可引入
+- **内嵌运行时源码追踪**：`vxrt.c` 加入 `CMAKE_CONFIGURE_DEPENDS`，其变更会触发重新 configure，避免 `file(READ)` 消费的内嵌回退源码（`vxrt_source.h`）与真实文件漂移
+- **文档同步**：`docs/VMAKE_SYNTAX.md` 增量构建章节由过时的「mtime 比较」改为实际的内容哈希签名机制；`docs/SYNTAX.md` 更新幂运算与裸 `return` 语义、移除浮点幂已知限制；删除 `scripts/build-release.sh.bak` 残留
+- **版本对齐**：README 徽章与 `vx` 元命令版本 1.12.0 → 1.14.0（与本 CHANGELOG 一致）
+
 ## v1.13.0 — 系统能力内置函数、Parser 容错与标准库定位澄清 (2026-10-26)
 
 ### 内置系统能力（`vxrt` + 后端）

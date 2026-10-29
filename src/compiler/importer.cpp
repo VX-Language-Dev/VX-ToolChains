@@ -10,6 +10,8 @@
 #include <initializer_list>
 #include <utility>
 
+#include <cstdio>
+
 namespace fs = std::filesystem;
 
 namespace vx::compiler {
@@ -40,10 +42,52 @@ fs::path normalize(const fs::path &p) {
   return a.lexically_normal();
 }
 
-// 库引用 → 基准路径（未加扩展名）
+// 去掉引用末段的主名扩展（"cpp/greet.hpp" → "cpp/greet"）
+std::string_view strip_ext(std::string_view r) {
+  const auto dot = r.find_last_of('.');
+  const auto sep = r.find_last_of("/\\");
+  if (dot == std::string_view::npos || (sep != std::string_view::npos && dot < sep))
+    return r;
+  return r.substr(0, dot);
+}
+
+// 库引用是否相对路径（去掉前导 '/' 后以 '.' 起始）
+bool is_relative_ref(std::string_view ref) {
+  std::string_view r = ref;
+  while (!r.empty() && r.front() == '/') r.remove_prefix(1);
+  return !r.empty() && r.front() == '.';
+}
+
+// 在搜索目录中查找第一个使 stem+ext 存在的基准路径；未命中返回空。
+// 相对引用只查 source_dir；非相对引用按 include_dirs → headers_root 顺序，
+// with_sys 时再追加系统 C/C++ 头目录（仅 @cppimp 使用）。
+fs::path find_ref_base(const ImportContext &ctx, std::string_view ref,
+                       std::string_view ext, bool with_sys) {
+  std::string_view r = ref;
+  while (!r.empty() && r.front() == '/') r.remove_prefix(1);
+  const auto try_root = [&](const fs::path &root) -> fs::path {
+    fs::path p = normalize(root / fs::path(r));
+    fs::path probe = p;
+    probe += ext;
+    return path_exists(probe) ? p : fs::path();
+  };
+  if (is_relative_ref(ref)) return try_root(ctx.source_dir);
+  for (const fs::path &d : ctx.include_dirs) {
+    if (fs::path p = try_root(d); !p.empty()) return p;
+  }
+  if (fs::path p = try_root(ctx.headers_root); !p.empty()) return p;
+  if (with_sys) {
+    const auto &sys = ctx.sys_dirs.empty() ? system_include_dirs() : ctx.sys_dirs;
+    for (const fs::path &d : sys) {
+      if (fs::path p = try_root(d); !p.empty()) return p;
+    }
+  }
+  return {};
+}
+
+// 未命中时用于诊断的默认基准路径（保持旧「相对 headers 根」语义）
 fs::path ref_base(const ImportContext &ctx, std::string_view ref) {
   std::string_view r = ref;
-  // 前导 '/' 视为「相对 headers 根」的显式标记，去掉后拼接
   while (!r.empty() && r.front() == '/') r.remove_prefix(1);
   const bool relative = !r.empty() && r.front() == '.';
   const fs::path base = relative ? ctx.source_dir : ctx.headers_root;
@@ -88,6 +132,50 @@ bool collect_symbols(const fs::path &decl, std::string_view lib,
 
 } // namespace
 
+// 探测系统 C/C++ 编译器的头文件搜索目录（进程内缓存）。
+// 依次尝试常见编译器驱动，运行 `-E -x c++ -v /dev/null`，解析
+// "#include <...> search starts here:" 与 "End of search list." 之间的
+// 目录列表；跳过框架目录与不存在的项。全部失败时返回空表。
+const std::vector<fs::path> &system_include_dirs() {
+  static const std::vector<fs::path> dirs = [] {
+    std::vector<fs::path> out;
+    const char *cands[] = {"c++", "clang++", "g++", "clang", "gcc"};
+    for (const char *cc : cands) {
+      const std::string cmd = std::string(cc) + " -E -x c++ -v /dev/null 2>&1";
+      FILE *pipe = ::popen(cmd.c_str(), "r");
+      if (!pipe) continue;
+      bool in = false;
+      char buf[4096];
+      while (std::fgets(buf, sizeof(buf), pipe) != nullptr) {
+        std::string_view line(buf);
+        if (!in) {
+          if (line.find("#include <...> search starts here:") !=
+              std::string_view::npos)
+            in = true;
+          continue;
+        }
+        if (line.find("End of search list.") != std::string_view::npos) break;
+        const std::size_t b = line.find_first_not_of(" \t");
+        if (b == std::string_view::npos) continue;
+        std::string_view p = line.substr(b);
+        if (const std::size_t e = p.find_last_not_of(" \t\r\n");
+            e != std::string_view::npos)
+          p = p.substr(0, e + 1);
+        // 框架目录不参与 #include "name" 式探测；clang 行尾带说明文字
+        if (p.empty() ||
+            p.find("(framework directory)") != std::string_view::npos)
+          continue;
+        std::error_code ec;
+        if (fs::is_directory(p, ec)) out.emplace_back(p);
+      }
+      ::pclose(pipe);
+      if (!out.empty()) break;
+    }
+    return out;
+  }();
+  return dirs;
+}
+
 const ImportedLib *ImportTable::lib_by_prefix(std::string_view prefix) const {
   for (const ImportedLib &l : libs) {
     if (l.alias == prefix || l.name == prefix) return &l;
@@ -120,6 +208,8 @@ fs::path executable_dir(std::string_view argv0) {
 }
 
 fs::path resolve_ref_path(const ImportContext &ctx, std::string_view ref) {
+  if (fs::path base = find_ref_base(ctx, ref, "", true); !base.empty())
+    return base;
   return ref_base(ctx, ref);
 }
 
@@ -152,12 +242,14 @@ std::optional<ImportTable> build_import_table(const Program &prog,
         continue;
       }
 
-      fs::path base = ref_base(ctx, d->lib);
+      fs::path base = find_ref_base(ctx, d->lib, ".vxh", false);
+      if (base.empty()) base = ref_base(ctx, d->lib); // 未命中：用默认路径报错
       fs::path decl = base;
       decl += ".vxh";
       if (!path_exists(decl)) {
         fail("找不到库 '" + ref + "'（期望声明文件 " + decl.string() +
-                 "；根目录库直接引用文件名，子目录库用 /子目录/库名）",
+                 "；根目录库直接引用文件名，子目录库用 /子目录/库名，"
+                 "自定义库用 ./ 相对路径，-I 目录同样参与查找）",
              d->line);
         return std::nullopt;
       }
@@ -189,16 +281,29 @@ std::optional<ImportTable> build_import_table(const Program &prog,
         }
         continue;
       }
-      fs::path header = ref_base(ctx, d->header);
-      // 伴生声明文件：同目录、同主名、扩展名 .vxh
-      fs::path decl = header.parent_path() / (header.stem().string() + ".vxh");
-      if (!path_exists(header)) {
-        fail("@cppimp 头文件不存在: " + header.string(), d->line);
+      // 头文件：相对引用只查源文件目录；否则查 include_dirs → headers_root
+      // → 系统 C/C++ 编译器头目录（探测）
+      fs::path header = find_ref_base(ctx, d->header, "", true);
+      if (header.empty()) {
+        fail("@cppimp 头文件不存在: " + ref_base(ctx, d->header).string() +
+                 "（已搜索 -I 目录、headers 根与系统 C/C++ 头目录）",
+             d->line);
         return std::nullopt;
+      }
+      // 伴生声明文件：同目录、同主名、扩展名 .vxh；若头文件命中系统目录而
+      // 伴生文件缺失，回退到 -I / headers 根中查找同主名 .vxh
+      fs::path decl = header.parent_path() / (header.stem().string() + ".vxh");
+      if (!path_exists(decl)) {
+        const fs::path alt = find_ref_base(ctx, strip_ext(d->header), ".vxh", false);
+        if (!alt.empty()) {
+          decl = alt;
+          decl += ".vxh";
+        }
       }
       if (!path_exists(decl)) {
         fail("@cppimp 缺少伴生声明文件 " + decl.string() +
-                 "（与 C++ 头文件同目录、同主名、扩展名 .vxh）",
+                 "（与 C++ 头文件同目录、同主名、扩展名 .vxh；"
+                 "系统头可在 -I / headers 根提供同主名 .vxh 签名）",
              d->line);
         return std::nullopt;
       }

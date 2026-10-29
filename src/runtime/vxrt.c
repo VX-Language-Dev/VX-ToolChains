@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 void out(const char *s) { fputs(s, stdout); }
 void out_int(int v) { printf("%d", v); }
@@ -30,6 +31,9 @@ int32_t vx_pow_i32(int32_t base, int32_t exp) {
   }
   return r;
 }
+
+/* 浮点幂（VX ^ 运算符）：libc pow，支持负指数与分数指数 */
+double vx_pow_f64(double base, double exp) { return pow(base, exp); }
 
 /* P4: 动态数组（元素统一为 8 字节槽） */
 void *vx_array_new(int64_t n) {
