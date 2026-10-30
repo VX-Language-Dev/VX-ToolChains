@@ -38,6 +38,16 @@ add_executable(vxls
 target_include_directories(vxls PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(vxls PRIVATE vx_compiler vxtidy vxjson)
 target_compile_options(vxls PRIVATE -Wall -Wextra -Wpedantic)
+# 安装后定位 ../lib 下的 libvxtidy，避免依赖 DYLD_LIBRARY_PATH/LD_LIBRARY_PATH
+# （构建树 RPATH 由 CMake 自动注入，不覆盖，以免破坏开发期运行）
+if(APPLE)
+  set(_vxls_rpath "@loader_path/../lib")
+else()
+  set(_vxls_rpath "$ORIGIN/../lib")
+endif()
+set_target_properties(vxls PROPERTIES INSTALL_RPATH "${_vxls_rpath}")
+
+install(TARGETS vxls RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # 单元测试（注册到所属构建的 CTest）
 add_executable(vxls_tests

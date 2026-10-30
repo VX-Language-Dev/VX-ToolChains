@@ -107,9 +107,10 @@ extern func add(a: int, b: int) -> int   # func 关键字可选
 | `file_read` | `file_read(path: string) -> string` | 读取整个文件；失败返回空串 |
 | `file_write` | `file_write(path: string, content: string) -> int` | 覆写写入，返回字节数；失败 `-1` |
 | `file_exists` | `file_exists(path: string) -> bool` | 文件是否存在（可读） |
-| `system` | `system(cmd: string) -> int` | 执行 shell 命令，返回退出码 |
 
 > 文件与参数能力由内置运行时（`vxrt`）提供，链接期并入 `libvxrt.a`。
+> 执行 shell 命令的 `system` 属于 `sys` 导入库：`@imp(sys)` 后以
+> `sys.system(cmd)` 调用（`headers/sys.vxh` + `headers/sys.c`）。
 
 ### 3.4 类与结构
 
@@ -262,7 +263,8 @@ vlnk hello.vxobj -o hello   # → 可执行文件
 - 顶层 `var`/`const` 不生成运行时代码。
 - `^` 不支持 int/float 混合操作数（两侧类型须一致，codegen 直接诊断）。
 - TypeIR 的 `OP_SYS_ARGV` / `OP_FILE_*` / `OP_SYSTEM` 操作码尚未发射；
-  对应的系统能力通过内置运行时函数提供（见 §3.3 的 `sys_argv_*` / `file_*` / `system`）。
+  对应的参数/文件能力通过内置运行时函数提供（见 §3.3 的 `sys_argv_*` /
+  `file_*`），`system` 经 `@imp(sys)` 提供。
 - 后端已覆盖 ARRAY/MAP/INDEX/FIELD 基础发射（P4 MVP：8 字节统一槽，字符串/整数键映射）；浮点数组精度与复杂布局仍受限。
 - `std/` 标准库为设计参考（v1.0 按已废弃的 VM 路线编写，未接入编译器构建），
   语法缺口清单见 `std/README.md`。

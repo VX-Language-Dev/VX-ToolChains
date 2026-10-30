@@ -12,8 +12,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vx-toolkit"
-version = "1.15.0"
-description = "VX language toolchain (vxc, vlnk, vmake, vxls, vx-tidy) installed through uv"
+version = "1.16.0"
+description = "VX language toolchain (vxc, vlnk, vmake, vxls) installed through uv"
 requires-python = ">=3.9"
 license = "AGPL-3.0-only"
 keywords = ["vx", "compiler", "toolchain", "lsp", "build"]
@@ -29,7 +29,6 @@ vxc = "vx_toolkit._dispatch:main"
 vlnk = "vx_toolkit._dispatch:main"
 vmake = "vx_toolkit._dispatch:main"
 vxls = "vx_toolkit._dispatch:main"
-vx-tidy = "vx_toolkit._dispatch:main"
 vmake-lsp = "vx_toolkit._dispatch:main"
 vx = "vx_toolkit._dispatch:main"
 

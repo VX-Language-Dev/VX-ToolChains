@@ -111,6 +111,66 @@ if(NOT VX_TOOLS_SUBBUILD)
     endforeach()
 endif()
 
+# ==================== 安装规则 ====================
+# 统一产物安装：cmake --install <build> --prefix <dir> 即可完成与 install.zsh 等脚本
+# 等价的安装。各工具子项目在其自身 CMakeLists.txt 中追加各自的 install() 规则。
+include(GNUInstallDirs)
+
+install(TARGETS vxc002 vlnk
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(TARGETS vx_util vx_compiler vx_backend vx_runtime
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+# 导入库：与二进制同目录的 headers/（vxc / vxls 的默认查找根）
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/headers/
+    DESTINATION ${CMAKE_INSTALL_BINDIR}/headers)
+
+# C++ 公开头文件
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# 标准库设计参考（随版本演进）
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/std/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/vx-toolkit/std
+    FILES_MATCHING PATTERN "*.vx")
+
+# shell 补全
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/completions/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/vx-toolkit/completions)
+
+# ==================== 格式化 / 静态检查目标 ====================
+find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
+if(CLANG_FORMAT_EXECUTABLE)
+    file(GLOB_RECURSE VX_FORMAT_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/**/*.hpp ${CMAKE_CURRENT_SOURCE_DIR}/include/**/*.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/*/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tools/*/*.hpp)
+    add_custom_target(format
+        COMMAND ${CLANG_FORMAT_EXECUTABLE} -i ${VX_FORMAT_SOURCES}
+        COMMENT "Running clang-format on sources"
+        VERBATIM)
+    add_custom_target(check-format
+        COMMAND ${CLANG_FORMAT_EXECUTABLE} --dry-run --Werror ${VX_FORMAT_SOURCES}
+        COMMENT "Checking clang-format compliance"
+        VERBATIM)
+endif()
+
+find_program(CPPCHECK_EXECUTABLE NAMES cppcheck)
+if(CPPCHECK_EXECUTABLE)
+    add_custom_target(lint
+        COMMAND ${CPPCHECK_EXECUTABLE}
+            --enable=warning,style,performance,portability
+            --std=c++23
+            --quiet
+            -I ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        COMMENT "Running cppcheck on sources"
+        VERBATIM)
+endif()
+
 add_executable(vx_util_tests tests/util_test.cpp)
 target_link_libraries(vx_util_tests PRIVATE vx_util)
 target_compile_options(vx_util_tests PRIVATE -Wall -Wextra -Wpedantic)

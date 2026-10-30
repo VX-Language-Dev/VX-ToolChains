@@ -10,3 +10,5 @@ endif()
 
 add_executable(vx main.cpp)
 target_compile_options(vx PRIVATE -Wall -Wextra -Wpedantic)
+
+install(TARGETS vx RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

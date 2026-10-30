@@ -1,0 +1,21 @@
+# VX-ToolKit C++ formatting style (LLVM-based, 2-space indent)
+BasedOnStyle: LLVM
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ColumnLimit: 120
+AccessModifierOffset: -2
+AllowShortFunctionsOnASingleLine: Inline
+BreakBeforeBraces: Attach
+PointerAlignment: Left
+ReferenceAlignment: Left
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+SpacesInParentheses: false
+SpaceBeforeParens: ControlStatements
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+IndentCaseLabels: true
+Standard: c++23

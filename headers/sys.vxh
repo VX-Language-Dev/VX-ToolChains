@@ -1,0 +1,3 @@
+# sys 库 — 系统能力的 VX ABI 声明头（.vxh）
+# @imp(sys) 后以 sys.system(cmd) 访问；符号 _vx_sys_system
+extern func system(cmd: string) -> int

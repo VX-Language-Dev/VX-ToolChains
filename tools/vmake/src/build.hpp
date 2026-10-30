@@ -6,6 +6,7 @@
 #include "config.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,6 +19,9 @@ struct BuildOptions {
   std::filesystem::path manifest_path;
   std::filesystem::path headers_root; // 导入库根（空 = 无），参与增量依赖签名
   std::vector<std::string> include_dirs; // -I 头文件搜索目录，透传给 vxc 并参与签名
+  std::vector<std::string> lib_dirs_cli; // --lib-dir CLI：覆盖所有目标的 lib_dirs
+  std::string target;                 // --target <triple>：交叉编译，透传 vxc+vlnk，入签名
+  std::string profile = "debug";      // debug | release：追加链接期 clang 参数，入链接签名
   std::string vxc;
   std::string vlnk;
   std::vector<std::string> selected; // 空 = 全部
@@ -35,6 +39,13 @@ plan_order(const Manifest &manifest, const std::vector<std::string> &selected);
 // <name>.dll
 std::string default_output_name(TargetKind kind, std::string_view name,
                                 std::string_view host_os);
+
+// 由原目标派生测试可执行目标：名字 <name>-test（kind=exe）。
+// staticlib/dylib → 源 = 目标源 + 测试源；exe → 源 = 仅测试源（目标源含
+// main，与测试入口在链接期冲突），经 deps / libs 引用被测代码；
+// 继承 deps / libs / lib_dirs / cflags / defines / ldflags。
+// 目标未声明 tests 时返回 std::nullopt。
+std::optional<Target> test_target_of(const Target &target);
 
 // 产物路径（-B 下）与中间 .vxobj 路径
 std::filesystem::path artifact_path(const std::filesystem::path &build_dir,

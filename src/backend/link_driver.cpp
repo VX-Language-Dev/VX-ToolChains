@@ -121,7 +121,9 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
                      std::string_view target,
                      const std::vector<std::string> &extra_files,
                      const std::vector<MemorySource> &extra_sources,
-                     bool shared = false) {
+                     bool shared = false,
+                     const std::vector<std::string> &cflags = {},
+                     const std::vector<std::string> &ldflags = {}) {
   LinkResult r;
   const std::string clang = find_clang();
   if (clang.empty()) {
@@ -175,6 +177,11 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
     args.push_back(f);
     r.command += " " + f;
   }
+  // 额外 clang 参数（--cflag）：紧随输入文件，作用于 .ll/.c/.cpp 的编译与链接
+  for (const std::string &f : cflags) {
+    args.push_back(f);
+    r.command += " " + f;
+  }
   args.push_back("-Wno-override-module");
   r.command += " -Wno-override-module";
   // libm：vx_pow_f64 依赖 pow()；Linux 必须显式 -lm，macOS 该选项无害
@@ -220,6 +227,11 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path,
   args.push_back("-o");
   args.emplace_back(exe_path);
   r.command += " -o " + std::string(exe_path);
+  // 链接器参数（--ldflag）：置于命令末尾（如 -Wl,... / -static）
+  for (const std::string &f : ldflags) {
+    args.push_back(f);
+    r.command += " " + f;
+  }
 
   std::vector<char *> argv;
   argv.reserve(args.size() + 1);
@@ -347,20 +359,26 @@ std::string generate_cpp_shim(const vx::compiler::ir::ModuleIR &mod) {
 LinkResult link_module(std::string_view ll_ir,
                        const vx::compiler::ir::ModuleIR &mod,
                        std::string_view exe_path, std::string_view target,
-                       bool shared) {
+                       bool shared,
+                       const std::vector<std::string> &native_libs,
+                       const std::vector<std::string> &cflags,
+                       const std::vector<std::string> &ldflags) {
   std::vector<std::string> extra_files;
   for (const vx::compiler::ir::LibDep &d : mod.libs) {
     if (d.impl_file.empty()) continue;
     std::error_code ec;
     if (fs::exists(d.impl_file, ec)) extra_files.push_back(d.impl_file);
   }
+  // 额外原生库（--lib，如其他目标构建的 dylib）：与导入库实现文件一同传给 clang
+  for (const std::string &lib : native_libs) extra_files.push_back(lib);
   std::vector<MemorySource> extra_sources;
   bool any_cpp = false;
   for (const vx::compiler::ir::LibDep &d : mod.libs) {
     if (d.from_cpp && !d.cpp_header.empty()) any_cpp = true;
   }
   if (any_cpp) extra_sources.push_back({"vxshim.cpp", generate_cpp_shim(mod)});
-  return link_impl(ll_ir, exe_path, target, extra_files, extra_sources, shared);
+  return link_impl(ll_ir, exe_path, target, extra_files, extra_sources, shared,
+                   cflags, ldflags);
 }
 
 } // namespace vx::backend

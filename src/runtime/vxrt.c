@@ -208,9 +208,3 @@ int32_t vx_file_exists(const char *path) {
   fclose(f);
   return 1;
 }
-
-/* 执行 shell 命令，返回 libc system() 的退出码 */
-int32_t vx_system(const char *cmd) {
-  if (!cmd) return -1;
-  return (int32_t)system(cmd);
-}

@@ -34,6 +34,8 @@ add_executable(vmake-lsp src/main.cpp)
 target_link_libraries(vmake-lsp PRIVATE vmake_lsp_core)
 target_compile_options(vmake-lsp PRIVATE -Wall -Wextra -Wpedantic)
 
+install(TARGETS vmake-lsp RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # 单元测试：解析器行为（诊断规则、位置、命中测试）
 add_executable(vmake_lsp_tests tests/parser_test.cpp)
 target_link_libraries(vmake_lsp_tests PRIVATE vmake_lsp_core)

@@ -5,7 +5,8 @@
 //   vx compile <source.vx> [options]   → vxc
 //   vx link <input.vxobj>... [opts]   → vlnk
 //   vx build [target...]              → vmake build
-//   vx tidy <file.vx>...             → vx-tidy
+//   vx run [target] [-- args...]      → vmake run
+//   vx test [target...] [-- args...]  → vmake test
 //   vx lsp                           → vxls
 //   vx vmake-lsp                     → vmake-lsp
 //   vx --version                     → show toolchain version
@@ -79,7 +80,8 @@ static void print_help() {
         "  compile, c    Compile .vx source to .vxobj (vxc)\n"
         "  link, l       Link .vxobj to native executable (vlnk)\n"
         "  build, b      Build project (vmake)\n"
-        "  tidy, t       Static analysis (vx-tidy)\n"
+        "  run           Build and run an exe target (vmake run)\n"
+        "  test          Build and run test targets (vmake test)\n"
         "  lsp           Start VX language server (vxls)\n"
         "  vmake-lsp     Start VMake language server (vmake-lsp)\n"
         "  clean         Clean build directory (vmake clean)\n"
@@ -122,11 +124,15 @@ int main(int argc, char **argv) {
     } else if (cmd == "build" || cmd == "b") {
         tool = "vmake";
         extra_args.push_back("build");
+    } else if (cmd == "run") {
+        tool = "vmake";
+        extra_args.push_back("run");
+    } else if (cmd == "test") {
+        tool = "vmake";
+        extra_args.push_back("test");
     } else if (cmd == "clean") {
         tool = "vmake";
         extra_args.push_back("clean");
-    } else if (cmd == "tidy" || cmd == "t") {
-        tool = "vx-tidy";
     } else if (cmd == "lsp") {
         tool = "vxls";
     } else if (cmd == "vmake-lsp") {

@@ -32,6 +32,8 @@ add_executable(vmake src/main.cpp)
 target_link_libraries(vmake PRIVATE vmake_core)
 target_compile_options(vmake PRIVATE -Wall -Wextra -Wpedantic)
 
+install(TARGETS vmake RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # 单元测试：TOML 子集、目标校验、构建顺序、产物命名
 add_executable(vmake_tests tests/vmake_test.cpp)
 target_link_libraries(vmake_tests PRIVATE vmake_core)

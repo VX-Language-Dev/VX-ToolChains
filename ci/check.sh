@@ -14,6 +14,8 @@ fail()   { printf "  ❌ %s\n" "$1"; FAIL=1; }
 step "检查构建工具"
 command -v cmake  >/dev/null || { fail "cmake 未找到 — 请安装 CMake 3.23+"; exit 1; }
 command -v ninja >/dev/null || { fail "ninja 未找到 — 请安装 Ninja"; exit 1; }
+# e2e 测试依赖 clang（vlnk 链接期调用宿主 clang）；缺失则无法验证后端，视为硬失败
+command -v clang >/dev/null || { fail "clang 未找到 — 请安装 clang（vlnk/e2e 测试必需）"; exit 1; }
 cmake --version | head -1 | sed 's/^/  /'
 ninja --version | sed 's/^/  /'
 
@@ -60,6 +62,18 @@ for config in "${CONFIGS[@]}"; do
     fail "构建失败 [$config]"
   fi
 done
+
+# ── 1.5. 代码格式检查 (clang-format，可选) ─────────
+if command -v clang-format >/dev/null 2>&1; then
+  step "clang-format 检查"
+  if cmake --build build --target check-format >/dev/null 2>&1; then
+    ok "clang-format 通过"
+  else
+    printf "  ⚠️  clang-format 存在差异（当前为建议性检查，不阻断）\n"
+  fi
+else
+  printf "  ⏭  clang-format 未安装，跳过格式检查\n"
+fi
 
 # ── 2. 测试 ──────────────────────────────────────────
 # 注意：Ninja Multi-Config 下 ctest 对 tools/ 子项目 CTestTestfile 的

@@ -301,9 +301,166 @@ void test_hit_test() {
   CHECK(hit.part == vmake_lsp::Hit::Part::None);
 }
 
+void test_deps_field() {
+  // 解析 + 位置
+  const std::string text =
+      "exe(\"app\", sources=[\"a.vx\"], deps=[\"calc\", \"util\"])\n";
+  ParseResult r = parse(text);
+  CHECK(r.ok);
+  CHECK(diag_count(r) == 0);
+  CHECK(r.targets.size() == 1);
+  if (r.targets.size() != 1) return;
+  const VTarget &t = r.targets[0];
+  CHECK(t.has_deps);
+  CHECK(t.deps.size() == 2);
+  if (t.deps.size() == 2) {
+    CHECK(t.deps[0] == "calc");
+    CHECK(t.deps[1] == "util");
+    CHECK(t.dep_ranges.size() == 2);
+    // 第一个依赖名 "calc" 的值范围（不含引号）
+    CHECK(t.dep_ranges[0].start.line == 0);
+    CHECK(t.dep_ranges[0].start.character == 36);
+    CHECK(t.dep_ranges[0].end.character == 40);
+  }
+
+  // hit_test：deps 字段名 / 元素 / 数组
+  auto hit = vmake_lsp::hit_test(r.targets, 0, 31); // "deps" 关键字
+  CHECK(hit.part == vmake_lsp::Hit::Part::Deps);
+  hit = vmake_lsp::hit_test(r.targets, 0, 37); // "calc" 值
+  CHECK(hit.part == vmake_lsp::Hit::Part::DepElem);
+
+  // 未声明 deps 的目标：deps 范围不得误命中
+  ParseResult plain = parse("exe(\"app\", sources=[\"a.vx\"])\n");
+  CHECK(plain.ok);
+  if (plain.targets.size() == 1) {
+    CHECK(!plain.targets[0].has_deps);
+    const auto hit0 =
+        vmake_lsp::hit_test(plain.targets, 0, 0);
+    CHECK(hit0.part != vmake_lsp::Hit::Part::Deps);
+  }
+
+  // 诊断：重复 / 非数组 / 未闭合
+  ParseResult dup = parse("exe(\"app\", sources=[\"a.vx\"], deps=[\"b\"], deps=[\"c\"])\n");
+  EXPECT_DIAG(dup, "字段 deps 重复");
+  ParseResult nonarr = parse("exe(\"app\", sources=[\"a.vx\"], deps=\"b\")\n");
+  EXPECT_DIAG(nonarr, "deps 期望字符串数组");
+  ParseResult unclosed = parse("exe(\"app\", sources=[\"a.vx\"], deps=[\n");
+  EXPECT_DIAG(unclosed, "deps 数组未闭合");
+  ParseResult unknown = parse("exe(\"app\", sources=[\"a.vx\"], version=1)\n");
+  EXPECT_DIAG(unknown, "未知字段");
+}
+
 void test_kind_name() {
   CHECK(std::string(vmake_lsp::kind_name(TargetKind::Exe)) == "exe");
   CHECK(std::string(vmake_lsp::kind_name(TargetKind::Dylib)) == "dylib");
+  CHECK(std::string(vmake_lsp::kind_name(TargetKind::StaticLib)) == "staticlib");
+}
+
+void test_flags_and_tests_fields() {
+  // cflags / defines / ldflags / tests：解析 + 位置（列号由 find 计算，稳健）
+  const std::string text =
+      "exe(\"app\", sources=[\"a.vx\"], cflags=[\"-Wall\"],\n"
+      "    defines=[\"NDEBUG\", \"FOO=1\"], ldflags=[\"-s\"],\n"
+      "    tests=[\"tests/app_test.vx\"])\n";
+  ParseResult r = parse(text);
+  CHECK(r.ok);
+  CHECK(diag_count(r) == 0);
+  CHECK(r.targets.size() == 1);
+  if (r.targets.size() != 1) return;
+  const VTarget &t = r.targets[0];
+  CHECK(t.extra_arrays.size() == 4);
+  if (t.extra_arrays.size() != 4) return;
+
+  auto col = [&](std::string_view needle, std::size_t off = 0) {
+    return static_cast<int>(text.find(needle, off));
+  };
+
+  const vmake_lsp::ArrayField &cflags = t.extra_arrays[0];
+  CHECK(cflags.key == "cflags");
+  CHECK(cflags.values.size() == 1);
+  if (cflags.values.size() == 1) CHECK(cflags.values[0] == "-Wall");
+  CHECK(cflags.kw_range.start.character == col("cflags"));
+  CHECK(cflags.value_ranges[0].start.character == col("\"-Wall\"") + 1);
+
+  const vmake_lsp::ArrayField &defines = t.extra_arrays[1];
+  CHECK(defines.key == "defines");
+  CHECK(defines.values.size() == 2);
+  if (defines.values.size() == 2) {
+    CHECK(defines.values[0] == "NDEBUG");
+    CHECK(defines.values[1] == "FOO=1");
+    CHECK(defines.value_ranges[0].start.line == 1);
+    CHECK(defines.value_ranges[1].start.line == 1);
+  }
+
+  const vmake_lsp::ArrayField &ldflags = t.extra_arrays[2];
+  CHECK(ldflags.key == "ldflags");
+  CHECK(ldflags.values.size() == 1);
+  if (ldflags.values.size() == 1) CHECK(ldflags.values[0] == "-s");
+
+  const vmake_lsp::ArrayField &tests = t.extra_arrays[3];
+  CHECK(tests.key == "tests");
+  CHECK(tests.values.size() == 1);
+  if (tests.values.size() == 1) CHECK(tests.values[0] == "tests/app_test.vx");
+
+  // hit_test：字段名 / 元素
+  auto hit = vmake_lsp::hit_test(r.targets, 0, col("cflags") + 1);
+  CHECK(hit.part == vmake_lsp::Hit::Part::ExtraField);
+  CHECK(hit.extra_index == 0);
+  hit = vmake_lsp::hit_test(r.targets, 0, col("\"-Wall\"") + 2);
+  CHECK(hit.part == vmake_lsp::Hit::Part::ExtraElem);
+  CHECK(hit.extra_index == 0);
+  CHECK(hit.elem_index == 0);
+  hit = vmake_lsp::hit_test(r.targets, 2, 5); // 第 2 行 "tests" 关键字
+  CHECK(hit.part == vmake_lsp::Hit::Part::ExtraField);
+  CHECK(hit.extra_index == 3);
+  hit = vmake_lsp::hit_test(r.targets, 2, 12); // 值 "tests/app_test.vx" 内部
+  CHECK(hit.part == vmake_lsp::Hit::Part::ExtraElem);
+  CHECK(hit.extra_index == 3);
+  CHECK(hit.elem_index == 0);
+}
+
+void test_flags_tests_diagnostics() {
+  // 重复字段
+  ParseResult dup = parse(
+      "exe(\"a\", sources=[\"a.vx\"], cflags=[\"-O2\"], cflags=[\"-g\"])\n");
+  EXPECT_DIAG(dup, "字段 cflags 重复");
+  ParseResult dup2 = parse(
+      "exe(\"a\", sources=[\"a.vx\"], tests=[\"t.vx\"], tests=[\"u.vx\"])\n");
+  EXPECT_DIAG(dup2, "字段 tests 重复");
+
+  // 类型错误 / 未闭合
+  ParseResult nonarr = parse("exe(\"a\", sources=[\"a.vx\"], ldflags=\"-s\")\n");
+  EXPECT_DIAG(nonarr, "ldflags 期望字符串数组");
+  ParseResult unclosed = parse("exe(\"a\", sources=[\"a.vx\"], defines=[\n");
+  EXPECT_DIAG(unclosed, "defines 数组未闭合");
+
+  // 空元素
+  ParseResult empty_flag = parse("exe(\"a\", sources=[\"a.vx\"], cflags=[\"\"])\n");
+  EXPECT_DIAG(empty_flag, "含空 cflags 条目");
+  ParseResult empty_def = parse("exe(\"a\", sources=[\"a.vx\"], defines=[\"\"])\n");
+  EXPECT_DIAG(empty_def, "含空 defines 条目");
+  ParseResult empty_ld = parse("exe(\"a\", sources=[\"a.vx\"], ldflags=[\"\"])\n");
+  EXPECT_DIAG(empty_ld, "含空 ldflags 条目");
+
+  // tests 校验：不能为空 / 空路径 / 必须 .vx
+  ParseResult empty_tests = parse("exe(\"a\", sources=[\"a.vx\"], tests=[])\n");
+  EXPECT_DIAG(empty_tests, "tests 不能为空");
+  ParseResult empty_path = parse("exe(\"a\", sources=[\"a.vx\"], tests=[\"\"])\n");
+  EXPECT_DIAG(empty_path, "含空测试文件路径");
+  ParseResult bad_ext = parse("exe(\"a\", sources=[\"a.vx\"], tests=[\"t.txt\"])\n");
+  EXPECT_DIAG(bad_ext, "测试文件必须是 .vx 文件: t.txt");
+
+  // staticlib：禁止 cflags / defines / ldflags，但允许 tests
+  ParseResult sl_flags =
+      parse("staticlib(\"u\", sources=[\"u.vx\"], cflags=[\"-O2\"])\n");
+  EXPECT_DIAG(sl_flags, "staticlib 目标不允许 cflags / defines / ldflags");
+  ParseResult sl_tests =
+      parse("staticlib(\"u\", sources=[\"u.vx\"], tests=[\"t.vx\"])\n");
+  CHECK(sl_tests.ok);
+  CHECK(diag_count(sl_tests) == 0);
+  // 非 staticlib 目标不受限
+  ParseResult exe_flags = parse("exe(\"a\", sources=[\"a.vx\"], cflags=[\"-O2\"])\n");
+  CHECK(diag_count(exe_flags) == 0);
 }
 
 } // namespace
@@ -321,7 +478,10 @@ int main() {
   test_semantic_diagnostics();
   test_error_recovery();
   test_hit_test();
+  test_deps_field();
   test_kind_name();
+  test_flags_and_tests_fields();
+  test_flags_tests_diagnostics();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "vmake-lsp tests: all passed\n");

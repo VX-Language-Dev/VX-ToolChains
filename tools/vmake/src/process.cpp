@@ -56,7 +56,8 @@ std::string format_command(const std::string &program,
 
 ProcessResult
 run_process(const std::string &program, const std::vector<std::string> &args,
-            const std::vector<std::pair<std::string, std::string>> &env) {
+            const std::vector<std::pair<std::string, std::string>> &env,
+            bool always_capture) {
   ProcessResult r;
 
   // 临时日志文件：stdout/stderr 共用，避免管道死锁并保留输出顺序
@@ -109,21 +110,58 @@ run_process(const std::string &program, const std::vector<std::string> &args,
   r.exit_code = code;
   r.ok = exited && code == 0;
 
-  // 成功路径不读取日志（子进程输出仅在失败时展示），省去一次打开+读取。
-  if (!r.ok) {
+  // 成功路径默认不读取日志（子进程输出仅在失败时展示），省去一次打开+读取；
+  // always_capture（如 verbose 测试）时成功也读取。
+  if (!r.ok || always_capture) {
     std::ifstream in(log_path, std::ios::binary);
     if (in) {
       r.output.assign((std::istreambuf_iterator<char>(in)),
                       std::istreambuf_iterator<char>());
     }
-    if (code == 127 && r.output.empty()) {
-      r.error = "cannot execute " + program;
-    } else if (!exited) {
-      r.error = program + " terminated by signal";
+    if (!r.ok) {
+      if (code == 127 && r.output.empty()) {
+        r.error = "cannot execute " + program;
+      } else if (!exited) {
+        r.error = program + " terminated by signal";
+      }
     }
   }
   ::unlink(log_path.c_str());
   return r;
+}
+
+int run_process_direct(const std::string &program,
+                       const std::vector<std::string> &args,
+                       const std::vector<std::pair<std::string, std::string>> &env) {
+  std::vector<std::string> cmd;
+  cmd.reserve(args.size() + 1);
+  cmd.push_back(program);
+  cmd.insert(cmd.end(), args.begin(), args.end());
+  std::vector<char *> argv;
+  argv.reserve(cmd.size() + 1);
+  for (std::string &s : cmd)
+    argv.push_back(s.data());
+  argv.push_back(nullptr);
+
+  const pid_t pid = ::fork();
+  if (pid < 0)
+    return 127;
+  if (pid == 0) {
+    for (const auto &[key, value] : env)
+      ::setenv(key.c_str(), value.c_str(), 1);
+    ::execvp(cmd[0].c_str(), argv.data());
+    ::_exit(127); // exec 失败
+  }
+
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0) {
+    // 被信号中断则重试
+  }
+  if (WIFEXITED(status))
+    return WEXITSTATUS(status);
+  if (WIFSIGNALED(status))
+    return 128 + WTERMSIG(status);
+  return 127;
 }
 
 } // namespace vmake

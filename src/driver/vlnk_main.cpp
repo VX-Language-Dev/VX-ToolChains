@@ -21,6 +21,11 @@ static constexpr std::string_view VERSION = "vlnk 0.2.0";
 
 struct Options {
   std::vector<std::string> inputs;
+  // 原生库输入（.a/.dylib/.so），原样传给 clang 参与链接；不参与模块合并。
+  std::vector<std::string> native_libs;
+  // 额外 clang 参数：--cflag 紧随输入（编译与链接），--ldflag 置于命令末尾。
+  std::vector<std::string> cflags;
+  std::vector<std::string> ldflags;
   std::string output = "a.out";
   std::string target; // 空 = 自动检测 host；非空 = 显式目标平台（交叉编译）
   bool emit_ir = false;
@@ -41,6 +46,13 @@ static void print_help() {
       "  -o <file>         Output file (default: a.out)\n"
       "  --shared          Emit a shared library (clang -shared -fPIC;\n"
       "                    no @main entry wrapper)\n"
+      "  --lib <file>      Link a native library (.a/.dylib/.so), e.g. a dylib\n"
+      "                    built by another target (repeatable; not merged into\n"
+      "                    the module)\n"
+      "  --cflag <arg>     Extra clang argument placed right after the inputs\n"
+      "                    (affects compiling .ll/.c/.cpp; repeatable)\n"
+      "  --ldflag <arg>    Extra clang argument placed at the end of the command\n"
+      "                    (linker flags, e.g. -Wl,-rpath,...; repeatable)\n"
       "  --target <triple> Target platform triple (default: auto-detect host;\n"
       "                    non-host targets are cross-compiled via clang -target)\n"
       "  --emit-ir         Emit LLVM IR to stdout and stop (no link)\n"
@@ -69,6 +81,24 @@ static int parse_args(int argc, char **argv, Options &opts) {
       opts.dump = true;
     } else if (a == "--shared" || a == "-shared") {
       opts.shared = true;
+    } else if (a == "--lib") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "error: --lib requires a file argument\n");
+        return 2;
+      }
+      opts.native_libs.emplace_back(argv[++i]);
+    } else if (a == "--cflag") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "error: --cflag requires an argument\n");
+        return 2;
+      }
+      opts.cflags.emplace_back(argv[++i]);
+    } else if (a == "--ldflag") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "error: --ldflag requires an argument\n");
+        return 2;
+      }
+      opts.ldflags.emplace_back(argv[++i]);
     } else if (a == "--target") {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "error: --target requires an argument\n");
@@ -249,7 +279,7 @@ int main(int argc, char **argv) {
   auto lr = vx::backend::link_module(
       em.ir, module, opts.output,
       target == host ? std::string_view{} : std::string_view(target),
-      opts.shared);
+      opts.shared, opts.native_libs, opts.cflags, opts.ldflags);
   if (!lr.ok) {
     std::fprintf(stderr, "error: %s\n", lr.error.c_str());
     return 1;

@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 # uv 注册的 console script 名称，同时也是二进制文件名
-COMMANDS = ("vxc", "vlnk", "vmake", "vxls", "vx-tidy", "vmake-lsp", "vx")
+COMMANDS = ("vxc", "vlnk", "vmake", "vxls", "vmake-lsp", "vx")
 
 # 包内自带的工具链目录（stage.py 产出）
 PACKAGE_BIN = Path(__file__).resolve().parent / "_bin"

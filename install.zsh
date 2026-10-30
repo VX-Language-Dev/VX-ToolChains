@@ -11,7 +11,6 @@ mkdir -p ~/.local/bin
 cp ./build/vxc ~/.local/bin/vxc
 cp ./build/vlnk ~/.local/bin/vlnk
 cp ./build/tools/vxls/vxls ~/.local/bin/vxls
-cp ./build/tools/vx-tidy/vx-tidy ~/.local/bin/vx-tidy
 cp ./build/tools/vmake/vmake ~/.local/bin/vmake
 cp ./build/tools/vmake-lsp/vmake-lsp ~/.local/bin/vmake-lsp
 cp ./build/tools/vx/vx ~/.local/bin/vx
@@ -28,6 +27,14 @@ if [ -f build/libvxrt.a ]; then
     mkdir -p ~/.local/lib
     cp build/libvxrt.a ~/.local/lib/libvxrt.a
 fi
+# Install vx-tidy engine dylib (pure shared library, no CLI; vxls loads it
+# via @rpath with install RPATH ../lib)
+for dylib in build/tools/vx-tidy/libvxtidy.dylib build/tools/vx-tidy/libvxtidy.so; do
+    if [ -f "$dylib" ]; then
+        mkdir -p ~/.local/lib
+        cp "$dylib" ~/.local/lib/
+    fi
+done
 # Install shell completions (optional)
 if [ -d completions ]; then
     mkdir -p ~/.local/share/bash-completion/completions

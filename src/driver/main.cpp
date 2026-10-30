@@ -25,11 +25,12 @@ namespace fs = std::filesystem;
 using namespace vx::compiler;
 using vx::util::Arena;
 
-static constexpr std::string_view VERSION = "0.4.0";
+static constexpr std::string_view VERSION = "0.5.0";
 
 struct Options {
   std::string source;
   std::string output;
+  std::string target;     // --target <triple>：空则用 host_triple()
   std::string color = "auto"; // auto | always | never
   std::vector<std::string> includes; // -I 头文件搜索目录（按序，可多次）
   bool verbose = false;
@@ -57,6 +58,8 @@ static void print_help() {
       "  -I <dir>        Add header search directory for @imp/@cppimp\n"
       "                  (repeatable; searched before the default headers/;\n"
       "                  also accepts -I<dir>)\n"
+      "  --target <tpl>  Cross-compile target triple (e.g. x86_64-linux-gnu)\n"
+      "                  (default: auto-detect host triple)\n"
       "  --check         Type-check only; do not write output\n"
       "  --dump          Print module summary to stdout\n"
       "  -v, --verbose   Verbose output\n"
@@ -112,6 +115,14 @@ static int parse_args(int argc, char **argv, Options &opts) {
       } else {
         opts.includes.emplace_back(std::string(a.substr(2)));
       }
+    } else if (a == "--target") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "error: --target requires a triple argument\n");
+        return 2;
+      }
+      opts.target = argv[++i];
+    } else if (a.starts_with("--target=")) {
+      opts.target = std::string(a.substr(9));
     } else if (a.starts_with("-")) {
       std::fprintf(stderr, "error: unknown option: %s (try --help)\n", argv[i]);
       return 2;
@@ -284,8 +295,9 @@ int main(int argc, char **argv) {
                  ir_res->linkage.size());
     return 0;
   }
-  // 平台三元组：编译期自动检测宿主（架构 + 操作系统），如 "arm64-apple-macosx"
-  const std::string target = vx::util::host_triple();
+  // 平台三元组：--target <triple> 优先；空则编译期自动检测宿主
+  const std::string target =
+      opts.target.empty() ? vx::util::host_triple() : opts.target;
   if (opts.verbose) {
     std::fprintf(stderr, "  target: %s (%s)\n", target.c_str(),
                  vx::util::host_name().c_str());

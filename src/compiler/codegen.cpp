@@ -812,7 +812,6 @@ private:
     local_counter_ = 0;
     var_kind_.clear();
     insts_.clear();
-    has_return_ = false;
     label_counter_ = 0;
     loop_stack_.clear();
     for (const Param &p : cur_.params) {
@@ -971,7 +970,6 @@ private:
                        kVarMap = 6 };
   std::unordered_map<std::string, int> var_kind_;
   std::vector<Inst> insts_;
-  bool has_return_ = false;
   int label_counter_ = 0;
   std::vector<std::pair<std::string, std::string>> loop_stack_; // start, end
 };

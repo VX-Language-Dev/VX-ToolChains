@@ -29,7 +29,6 @@ TOOLS = (
     ("vlnk", "vlnk", True),
     ("vmake", "tools/vmake/vmake", False),
     ("vxls", "tools/vxls/vxls", False),
-    ("vx-tidy", "tools/vx-tidy/vx-tidy", False),
     ("vmake-lsp", "tools/vmake-lsp/vmake-lsp", False),
     ("vx", "tools/vx/vx", False),
 )

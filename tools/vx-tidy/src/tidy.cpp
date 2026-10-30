@@ -28,9 +28,9 @@ namespace {
 const std::set<std::string> kBuiltins = {
     "out", "out_int", "out_bool", "out_float", "puts", "exit",
     "malloc", "free", "vx_str_concat",
-    // 系统能力：命令行参数 / 文件 I/O / 执行 shell 命令
+    // 系统能力：命令行参数 / 文件 I/O
     "sys_argv_count", "sys_argv_get", "file_read", "file_write",
-    "file_exists", "system"};
+    "file_exists"};
 
 // ---- 作用域符号表 ----
 struct LocalInfo {

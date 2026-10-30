@@ -13,8 +13,8 @@
 
 | 机制 | 内容 | 位置 |
 |------|------|------|
-| 内置运行时（无需声明） | `out` / `out_int` / `out_bool` / `out_float` / `sys_argv_count` / `sys_argv_get` / `file_read` / `file_write` / `file_exists` / `system` / `puts` / `exit` / `malloc` / `free` | `src/runtime/vxrt.c` |
-| 导入库（`@imp` / `@cppimp`） | math / text / fmath / collections/vec / cpp/greet（VX ABI：`_vx_<lib>_<name>`） | `headers/` |
+| 内置运行时（无需声明） | `out` / `out_int` / `out_bool` / `out_float` / `sys_argv_count` / `sys_argv_get` / `file_read` / `file_write` / `file_exists` / `puts` / `exit` / `malloc` / `free` | `src/runtime/vxrt.c` |
+| 导入库（`@imp` / `@cppimp`） | math / text / fmath / collections/vec / cpp/greet / sys（`system(cmd)`）（VX ABI：`_vx_<lib>_<name>`） | `headers/` |
 
 文件 I/O 与命令行参数等本目录中标记 `not implemented` 的能力，
 在上述内置运行时中已有原生实现，可直接使用（见 README §2.1 / docs/SYNTAX.md §3.3）。

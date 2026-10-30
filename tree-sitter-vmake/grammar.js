@@ -11,7 +11,7 @@ module.exports = grammar({
     ),
 
     target_call: $ => seq(
-      field('kind', choice('exe', 'dylib')),
+      field('kind', choice('exe', 'dylib', 'staticlib')),
       '(',
       optional(seq(
         field('name', $.string),

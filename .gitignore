@@ -69,6 +69,14 @@ zig-out/
 
 # C++ (CMake+Ninja) 构建产物
 build/
+# CMake 生成在源码根目录的产物（若误用 -B . / in-source build）
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
+install_manifest.txt
 # 交叉构建产物
 build-*/
 dist/

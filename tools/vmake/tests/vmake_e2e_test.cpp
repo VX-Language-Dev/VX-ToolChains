@@ -289,6 +289,257 @@ int main() {
   CHECK(inc_none.code != 0);
   CHECK(contains(inc_none.output, "triplib"));
 
+  // ---- deps + dylib 链接：exe 依赖 dylib 目标，链接期 --lib 并入 ----
+  const fs::path depproj = root / "depproj";
+  fs::create_directories(depproj, ec);
+  CHECK(write_text(depproj / "VMakeSet.vmake",
+                   "exe(\"app\", sources=[\"main.vx\"], deps=[\"calc\"])\n"
+                   "dylib(\"calc\", sources=[\"calc.vx\"])\n"));
+  // app 通过 extern 声明引用 dylib 内的 VX 函数（符号 = 函数名）
+  CHECK(write_text(depproj / "main.vx",
+                   "extern func triple(x: int) -> int\n"
+                   "extern out_int(v: int)\n"
+                   "func main() -> int:\n"
+                   "    out_int(triple(5))\n"
+                   "    return 0\n"));
+  CHECK(write_text(depproj / "calc.vx",
+                   "func triple(x: int) -> int:\n"
+                   "    return x * 3\n"));
+  RunResult dep_first =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, depproj, tool_env());
+  CHECK(dep_first.code == 0);
+  if (dep_first.code != 0)
+    std::fprintf(stderr, "%s\n", dep_first.output.c_str());
+  // 构建顺序：dylib calc 先于 exe app
+  {
+    const std::size_t p_calc = dep_first.output.find("calc.vx");
+    const std::size_t p_main = dep_first.output.find("main.vx");
+    CHECK(p_calc != std::string::npos && p_main != std::string::npos &&
+          p_calc < p_main);
+  }
+  if (fs::is_regular_file(depproj / "bdir" / "app", ec) && !ec) {
+    RunResult run = run_in_dir((depproj / "bdir" / "app").string(), {}, depproj);
+    CHECK(run.code == 0);
+    CHECK(run.output == "15");
+  }
+
+  // 二次构建：全 Fresh
+  RunResult dep_second =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, depproj, tool_env());
+  CHECK(dep_second.code == 0);
+  CHECK(!contains(dep_second.output, "vxc"));
+  CHECK(!contains(dep_second.output, "vlnk"));
+
+  // dylib 源变更 → calc 重编重链 + app 仅重链（对象 fresh）
+  CHECK(write_text(depproj / "calc.vx",
+                   "func triple(x: int) -> int:\n"
+                   "    return x * 4\n"));
+  RunResult dep_third =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, depproj, tool_env());
+  CHECK(dep_third.code == 0);
+  CHECK(contains(dep_third.output, "vxc calc.vx"));
+  CHECK(contains(dep_third.output, "vlnk app"));
+  CHECK(!contains(dep_third.output, "vxc main.vx")); // app 源未重编
+  if (fs::is_regular_file(depproj / "bdir" / "app", ec) && !ec) {
+    RunResult run = run_in_dir((depproj / "bdir" / "app").string(), {}, depproj);
+    CHECK(run.code == 0);
+    CHECK(run.output == "20");
+  }
+
+  // 只选 app：依赖 calc 被闭包展开自动纳入计划
+  const fs::path dep_bdir2 = depproj / "bdir2";
+  RunResult dep_selected =
+      run_in_dir(vmake, {"build", "-B", "bdir2", "app"}, depproj, tool_env());
+  CHECK(dep_selected.code == 0);
+  CHECK(contains(dep_selected.output, "calc"));
+  CHECK(fs::is_regular_file(dep_bdir2 / "app", ec) && !ec);
+
+  // ---- defines：链接期 -D 透传给 clang（导入库 .c 条件编译） ----
+  const fs::path defproj = root / "defproj";
+  fs::create_directories(defproj / "headers", ec);
+  CHECK(write_text(defproj / "VMakeSet.vmake",
+                   "exe(\"hi\", sources=[\"main.vx\"],"
+                   " defines=[\"VMAKE_E2E_DEFINE\"])\n"));
+  CHECK(write_text(defproj / "main.vx",
+                   "@imp(flag)\n"
+                   "extern out_int(v: int)\n"
+                   "func main() -> int:\n"
+                   "    out_int(flag.flag_value())\n"
+                   "    return 0\n"));
+  CHECK(write_text(defproj / "headers" / "flag.vxh",
+                   "extern func flag_value() -> int\n"));
+  CHECK(write_text(defproj / "headers" / "flag.c",
+                   "#include <stdint.h>\n"
+                   "#ifdef VMAKE_E2E_DEFINE\n"
+                   "int32_t _vx_flag_flag_value(void) { return 7; }\n"
+                   "#endif\n"));
+  RunResult def_first =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, defproj, tool_env());
+  CHECK(def_first.code == 0);
+  if (def_first.code != 0)
+    std::fprintf(stderr, "%s\n", def_first.output.c_str());
+  if (fs::is_regular_file(defproj / "bdir" / "hi", ec) && !ec) {
+    RunResult run = run_in_dir((defproj / "bdir" / "hi").string(), {}, defproj);
+    CHECK(run.code == 0);
+    CHECK(run.output == "7");
+  }
+  // 去掉 define：.c 中符号被 #ifdef 排除 → 链接失败；对象签名不含 flags → 不重编
+  CHECK(write_text(defproj / "VMakeSet.vmake",
+                   "exe(\"hi\", sources=[\"main.vx\"])\n"));
+  RunResult def_off =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, defproj, tool_env());
+  CHECK(def_off.code != 0);
+  CHECK(contains(def_off.output, "vlnk"));
+  CHECK(!contains(def_off.output, "vxc"));
+  // 恢复 define：链接签名变化 → 重链成功，对象保持 fresh
+  CHECK(write_text(defproj / "VMakeSet.vmake",
+                   "exe(\"hi\", sources=[\"main.vx\"],"
+                   " defines=[\"VMAKE_E2E_DEFINE\"])\n"));
+  RunResult def_restored =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, defproj, tool_env());
+  CHECK(def_restored.code == 0);
+  if (fs::is_regular_file(defproj / "bdir" / "hi", ec) && !ec) {
+    RunResult run = run_in_dir((defproj / "bdir" / "hi").string(), {}, defproj);
+    CHECK(run.code == 0);
+    CHECK(run.output == "7");
+  }
+
+  // ---- --release / --debug：profile 变化仅触发重链，相同 profile 全 Fresh ----
+  const fs::path relproj = root / "relproj";
+  fs::create_directories(relproj, ec);
+  CHECK(write_text(relproj / "VMakeSet.vmake",
+                   "exe(\"hi\", sources=[\"main.vx\"])\n"));
+  CHECK(write_text(relproj / "main.vx", "extern out_int(v: int)\n"
+                                        "func main() -> int:\n"
+                                        "    out_int(3)\n"
+                                        "    return 0\n"));
+  RunResult rel_first =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, relproj, tool_env());
+  CHECK(rel_first.code == 0);
+  if (rel_first.code != 0)
+    std::fprintf(stderr, "%s\n", rel_first.output.c_str());
+  RunResult rel_same =
+      run_in_dir(vmake, {"build", "-B", "bdir"}, relproj, tool_env());
+  CHECK(rel_same.code == 0);
+  CHECK(!contains(rel_same.output, "vlnk"));
+  RunResult rel_on = run_in_dir(vmake, {"build", "-B", "bdir", "--release"},
+                                relproj, tool_env());
+  CHECK(rel_on.code == 0);
+  CHECK(contains(rel_on.output, "vlnk"));
+  CHECK(!contains(rel_on.output, "vxc"));
+  RunResult rel_again = run_in_dir(vmake, {"build", "-B", "bdir", "--release"},
+                                   relproj, tool_env());
+  CHECK(rel_again.code == 0);
+  CHECK(!contains(rel_again.output, "vlnk"));
+  RunResult rel_off = run_in_dir(vmake, {"build", "-B", "bdir", "--debug"},
+                                 relproj, tool_env());
+  CHECK(rel_off.code == 0);
+  CHECK(contains(rel_off.output, "vlnk"));
+  CHECK(!contains(rel_off.output, "vxc"));
+
+  // ---- vmake run：构建后直接执行（参数经 -- 转发），二次 run 全 Fresh ----
+  const fs::path runproj = root / "runproj";
+  fs::create_directories(runproj, ec);
+  CHECK(write_text(runproj / "VMakeSet.vmake",
+                   "exe(\"app\", sources=[\"main.vx\"])\n"));
+  CHECK(write_text(runproj / "main.vx", "func main() -> int:\n"
+                                        "    out(sys_argv_get(1))\n"
+                                        "    return 0\n"));
+  RunResult run1 = run_in_dir(vmake, {"run", "-B", "bdir", "--", "arg1"},
+                              runproj, tool_env());
+  CHECK(run1.code == 0);
+  if (run1.code != 0)
+    std::fprintf(stderr, "%s\n", run1.output.c_str());
+  CHECK(run1.output.ends_with("arg1"));
+  RunResult run2 = run_in_dir(vmake, {"run", "-B", "bdir", "--", "arg2"},
+                              runproj, tool_env());
+  CHECK(run2.code == 0);
+  CHECK(!contains(run2.output, "vxc"));
+  CHECK(run2.output.ends_with("arg2"));
+
+  // ---- vmake test：tests 派生测试目标（dylib 并入目标源；exe 仅测试源） ----
+  const fs::path tproj = root / "tproj";
+  fs::create_directories(tproj / "tests", ec);
+  CHECK(write_text(tproj / "VMakeSet.vmake",
+                   "exe(\"app\", sources=[\"app.vx\"], deps=[\"calc\"],\n"
+                   "    tests=[\"tests/app_test.vx\"])\n"
+                   "dylib(\"calc\", sources=[\"calc.vx\"],\n"
+                   "      tests=[\"tests/calc_test.vx\"])\n"
+                   "exe(\"solo\", sources=[\"solo.vx\"])\n"));
+  CHECK(write_text(tproj / "app.vx",
+                   "extern func triple(x: int) -> int\n"
+                   "extern out_int(v: int)\n"
+                   "func main() -> int:\n"
+                   "    out_int(triple(1))\n"
+                   "    return 0\n"));
+  CHECK(write_text(tproj / "solo.vx", "func main() -> int:\n"
+                                      "    return 0\n"));
+  CHECK(write_text(tproj / "calc.vx", "func triple(x: int) -> int:\n"
+                                      "    return x * 3\n"));
+  // dylib calc → calc-test 源 = calc.vx + calc_test.vx（测试文件提供 main）
+  CHECK(write_text(tproj / "tests" / "calc_test.vx",
+                   "extern out_int(v: int)\n"
+                   "func main() -> int:\n"
+                   "    out_int(triple(5))\n"
+                   "    return 0\n"));
+  // exe app → app-test 源 = 仅 app_test.vx，经 deps=calc 引用被测代码
+  CHECK(write_text(tproj / "tests" / "app_test.vx",
+                   "extern func triple(x: int) -> int\n"
+                   "extern out_int(v: int)\n"
+                   "func main() -> int:\n"
+                   "    out_int(triple(7))\n"
+                   "    return 0\n"));
+  RunResult test1 = run_in_dir(vmake, {"test", "-B", "bdir"}, tproj, tool_env());
+  CHECK(test1.code == 0);
+  if (test1.code != 0)
+    std::fprintf(stderr, "%s\n", test1.output.c_str());
+  CHECK(contains(test1.output, "calc-test ... ok"));
+  CHECK(contains(test1.output, "app-test ... ok"));
+  CHECK(contains(test1.output, "2 passed, 0 failed"));
+
+  // 让 calc_test 返回非零 → 失败汇总与退出码 1
+  CHECK(write_text(tproj / "tests" / "calc_test.vx",
+                   "func main() -> int:\n"
+                   "    return 1\n"));
+  RunResult test2 = run_in_dir(vmake, {"test", "-B", "bdir"}, tproj, tool_env());
+  CHECK(test2.code == 1);
+  CHECK(contains(test2.output, "calc-test ... FAILED"));
+  CHECK(contains(test2.output, "app-test ... ok"));
+  CHECK(contains(test2.output, "1 passed, 1 failed"));
+
+  // 显式点名无 tests 的目标 → 用法错误（退出码 2）
+  RunResult test_named = run_in_dir(vmake, {"test", "-B", "bdir", "solo"},
+                                    tproj, tool_env());
+  CHECK(test_named.code == 2);
+  CHECK(contains(test_named.output, "declares no tests"));
+
+  // tproj 有两个 exe：vmake run 未点名 → 退出码 2
+  RunResult run_multi = run_in_dir(vmake, {"run", "-B", "bdir"}, tproj,
+                                   tool_env());
+  CHECK(run_multi.code == 2);
+  CHECK(contains(run_multi.output, "multiple exe targets"));
+  // 点名 exe 目标可运行
+  RunResult run_named = run_in_dir(vmake, {"run", "-B", "bdir", "app"}, tproj,
+                                   tool_env());
+  CHECK(run_named.code == 0);
+  CHECK(run_named.output.ends_with("3"));
+
+  // ---- 无 exe 目标：run 报错；无 tests 声明：test 提示并返回 0 ----
+  const fs::path noproj = root / "noproj";
+  fs::create_directories(noproj, ec);
+  CHECK(write_text(noproj / "VMakeSet.vmake",
+                   "staticlib(\"util\", sources=[\"util.vx\"])\n"));
+  CHECK(write_text(noproj / "util.vx", "func id(x: int) -> int:\n"
+                                       "    return x\n"));
+  RunResult no_exe =
+      run_in_dir(vmake, {"run", "-B", "bdir"}, noproj, tool_env());
+  CHECK(no_exe.code == 2);
+  CHECK(contains(no_exe.output, "no exe target"));
+  RunResult no_tests =
+      run_in_dir(vmake, {"test", "-B", "bdir"}, noproj, tool_env());
+  CHECK(no_tests.code == 0);
+  CHECK(contains(no_tests.output, "no tests declared"));
+
   // ---- 语法错误：失败诊断应包含 Cargo 风格错误行 ----
   CHECK(write_text(root / "main.vx", "func main(:\n    return 0\n"));
   RunResult bad = run_in_dir(vmake, {"build", "-B", "bdir"}, root, tool_env());

@@ -1,6 +1,7 @@
 # vx-tidy — VX 静态分析引擎，独立 CMake 工程。
-# 架构：引擎编译为动态库 libvxtidy（SHARED），CLI（vx-tidy）与
-# 外部工具（如 vxls 的 --no-tidy/默认集成）均通过该 dylib 使用。
+# 架构：引擎编译为纯动态库 libvxtidy（SHARED），无 CLI 可执行文件；
+# 外部工具（如 vxls 的 --no-tidy/默认集成/--only-tidy）与嵌入方通过该 dylib 使用，
+# 命令行形态的检查可由 `vxls --only-tidy` 承担。
 # 单独配置（cmake -S tools/vx-tidy）时反向引入 vx-toolkit 根工程的库目标
 #（置位 VX_TOOLS_SUBBUILD 防止根工程递归纳入 tools/）。
 cmake_minimum_required(VERSION 3.23)
@@ -18,7 +19,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     endif()
 endif()
 
-# 引擎动态库（libvxtidy.dylib）：vx-tidy CLI 与 vxls 共同依赖。
+# 引擎动态库（libvxtidy.dylib）：vxls 等消费方依赖的唯一产物。
 # vx_compiler 用 PRIVATE 链接：tidy.hpp 公共接口不暴露编译器类型，
 # 避免下游（vxls）同时链接 vx_compiler 产生重复库告警。
 add_library(vxtidy SHARED src/tidy.cpp)
@@ -27,11 +28,9 @@ target_link_libraries(vxtidy PRIVATE vx_compiler)
 target_compile_options(vxtidy PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(vxtidy PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# CLI：vx-tidy（链接 vxtidy 动态库；自身用 vx_util::read_file，需链 vx_util）
-add_executable(vx-tidy src/main.cpp)
-target_link_libraries(vx-tidy PRIVATE vxtidy vx_util)
-target_include_directories(vx-tidy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
-target_compile_options(vx-tidy PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS vxtidy
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # 引擎测试（注册到所属构建的 CTest）
 add_executable(vx_tidy_tests tests/tidy_test.cpp)

@@ -147,6 +147,16 @@ int main() {
            "    return 0\n",
            "Hello, VX!\n", "cpp");
 
+  // @imp(sys)：系统能力库，shell 命令执行经 VX ABI 调用（headers/sys.c）
+  run_case("@imp(sys)\n"
+           "func main() -> int:\n"
+           "    out_int(sys.system(\"true\"))\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(sys.system(\"false\") != 0)\n"
+           "    out(\"\\n\")\n"
+           "    return 0\n",
+           "0\ntrue\n", "sys");
+
   // 整套库：int/float/bool/string/void + 子目录 + 别名 + C++ 混合导入
   run_case("@imp(math)\n"
            "@imp(collections/vec)\n"

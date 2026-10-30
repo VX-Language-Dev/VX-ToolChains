@@ -1,5 +1,60 @@
 # CHANGELOG
 
+## Unreleased — v1.16.0 (开发中)
+
+### 编译器（`vxc` 0.5.0）
+- **`--target <triple>` 参数**：显式指定交叉编译目标三元组，优先于自动检测的 host triple；help 同步更新
+
+### 后端（`vlnk`）
+- **`--lib <file>` 参数**（可重复）：链接原生库（`.a`/`.dylib`/`.so`，如其他目标构建出的 dylib），原样传给 clang，不参与模块合并
+- **`--cflag <arg>` / `--ldflag <arg>` 参数**（可重复）：额外 clang 参数，`--cflag` 紧随输入文件（作用于 `.ll`/`.c`/`.cpp` 的编译与链接），`--ldflag` 置于命令末尾（链接器参数，如 `-Wl,...`）
+- `link_module` 新增 `native_libs` / `cflags` / `ldflags` 形参（后两者默认空）
+
+### VMake（`tools/vmake` 0.4.0）
+- **`VMakeSet.vmake` 新增 `deps=[...]` 字段**：声明对其他 dylib 目标的链接依赖，支持前向引用；校验未声明目标 / 自引用 / 空依赖名 / 非 dylib 依赖
+- 构建计划对选中目标做依赖闭包展开，自动纳入依赖 dylib
+- 链接签名纳入依赖 dylib 的路径与内容摘要：dylib 变更后依赖方仅重链（不重编）
+- **新增 `cflags` / `defines` / `ldflags` 字段**：链接期 clang 参数与宏定义（`defines` → `-D...`），透传 `vlnk --cflag`/`--ldflag`；`staticlib` 禁用（无链接阶段）；纳入链接签名（改 flags 仅重链不重编）
+- **新增 build profile**：`--release`（链接期 `-O2`）/ `--debug`（默认，`-g`），入链接签名
+- **新增 `tests=[...]` 字段与 `vmake test` 子命令**：为声明 tests 的目标派生 `<name>-test`（staticlib/dylib 并入目标源、exe 仅测试源），构建后逐个运行并汇总 `vmake-test: N passed, M failed`；`--` 参数转发
+- **新增 `vmake run` 子命令**：构建 exe 目标后直接执行（继承 stdio），未点名时用清单中唯一的 exe，`--` 参数转发
+- deps 校验放宽：被依赖方可以是 dylib 或 staticlib
+- 单元测试（deps 解析/校验/闭包、flags/tests 字段、test 目标派生）+ 端到端测试（dylib 先建、exe 运行、dylib 变更仅触发依赖方重链、selected 闭包、defines 透传与重链、profile 切换、run/test 子命令）
+- `vx` 元命令新增 `run` / `test` 转发（`vmake run` / `vmake test`），bash/zsh 补全同步
+- 文档同步：`docs/VMAKE_SYNTAX.md`（staticlib / libs / lib_dirs / cflags / defines / ldflags / tests 字段、run/test/clean 子命令、profile、链接签名 v2、输出风格、EBNF、已知限制）、`tree-sitter-vmake/grammar.js`（kind 增加 `staticlib`）、README §4 用法示例
+
+### VMake 语言服务器（`vmake-lsp` 0.3.0）
+- 同步支持 `deps` 字段的解析、位置、hover、definition（依赖名跳转到被依赖目标声明）、补全（字段名与 `[""]` 片段）、未知字段提示更新
+- 同步支持 `cflags` / `defines` / `ldflags` / `tests` 字段（泛型数组字段存储）：解析、位置、诊断（staticlib 禁用 flags、tests 必须 `.vx`、空元素/重复）、hover、definition（tests 元素跳转 .vx 测试文件）、补全、格式化、折叠
+- 新增 parser 单测（deps 位置/hit/诊断、新字段解析/hit/诊断）
+
+### LSP 语言服务器（`vxls`）
+- `ImportContext` 扩展 `sys_dirs` 字段（系统 C/C++ 头目录），用于 `@cppimp` 的系统头探测；聚合初始化兼容既有调用
+
+### 内置 `system` 迁移为 `sys` 导入库
+- **`system(cmd)` 不再是内置运行时函数**：声明移入 `headers/sys.vxh`（实现 `headers/sys.c`，VX ABI 符号 `_vx_sys_system`），用法改为 `@imp(sys)` 后 `sys.system(cmd)`，链接期由 `vlnk` 自动并入 `sys.c`
+- 后端 builtin 表与 `vxrt` 运行时同步移除 `system`；`vx-tidy` 内置清单、`vxls` 内置 hover/补全文档同步移除
+- 新增 `@imp(sys)` 端到端用例；README、docs/SYNTAX.md、std/README.md 同步
+
+### vx-tidy 改为纯动态链接库
+- **移除 `vx-tidy` CLI**（`tools/vx-tidy/src/main.cpp` 与 `vx-tidy` 可执行目标）：引擎仅以动态库 `libvxtidy`（CMake 目标 `vxtidy`）形态提供，供 vxls 集成与嵌入方（`tidy.hpp`）使用；命令行检查走 `vxls --only-tidy`（text/json，退出码 0/1/2）
+- `vx` 元命令移除 `tidy`/`t` 子命令，bash/zsh 补全同步
+- `install.zsh` 不再安装 `vx-tidy` 二进制，新增安装 `libvxtidy` 动态库到 `~/.local/lib`（匹配 vxls 安装 RPATH `../lib`）；发布包 `install.sh` / `build-release.sh` 与 uv 包（`stage.py` / console script / `_dispatch`）不再携带 `vx-tidy` 可执行文件，`libvxtidy` 照常分发
+- README（模块表、产物表、安装说明、§8 静态分析、项目结构）同步
+
+### 平台支持
+- **移除 Windows 原生（PE/MSVC）支持**：不再生成 PE 可执行文件；Windows 用户请使用 MSYS2 / Git Bash / Cygwin / WSL / WSL2 等 POSIX 环境构建（产物为 POSIX 可执行文件）
+- 删除 `scripts/toolchains/toolchain-windows-x86_64.cmake` 交叉编译模板
+
+### 工程与安装
+- 根 `CMakeLists.txt` 新增标准 `install()` 规则（`cmake --install`），统一 bin/lib/headers/std/completions 安装
+- 各工具子项目追加各自的 `install(TARGETS ...)`，支持独立构建安装
+- `vxls`/`vx-tidy` 安装 RPATH 设置为 `../lib`，安装后无需 `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH`
+- 新增 `.clang-format` 与 CMake `format`/`check-format`/`lint` 目标；`ci/check.sh` 集成 clang-format 建议性检查
+- `ci/check.sh` 将 clang 作为硬性前置依赖，避免 e2e 测试被跳过
+- `.gitignore` 补充根目录 in-source CMake 产物（`CMakeCache.txt`、`CMakeFiles/` 等），取消其 Git 跟踪
+- `codegen` 移除遗留 `has_return_` 成员（裸 return 默认值逻辑由 v1.14.0 的兜底返回处理）
+
 ## v1.15.0 — `-I` 头文件搜索路径（vxc / VMake / vxls）(2026-10-28)
 
 ### 编译器（`vxc`）
@@ -24,6 +79,14 @@
 - 单一转发入口 `vx_toolkit._dispatch:main`：按 console script 名分派；二进制查找顺序 `VX_TOOLKIT_BIN` → 包内 `_bin/` → `PATH`，全部未命中时打印 stage / PATH 修复指引（退出码 127）
 - `python/scripts/stage.py`：把 CMake 产物、`libvxrt.a`、`libvxtidy` 动态库与 `headers/` 复制进 `_bin/`（`_bin/headers` 即 vxc/vxls 默认导入库根）；核心产物 `vxc`/`vlnk` 缺失即失败，可选工具缺失仅警告
 - 入口在 exec 前把二进制同目录注入 `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH`：构建期 rpath 是绝对路径，安装到别处后 `libvxtidy` 会加载失败（已验证删掉构建目录的动态库后，经 uv 入口 `vxls` 仍正常启动）
+
+### VMake 目标依赖（deps + dylib 链接）
+
+- **`VMakeSet.vmake` 新增 `deps=[...]` 字段**：声明对其他目标的链接依赖；被依赖方必须是 dylib 目标，允许前向引用；校验未声明目标 / 自引用 / 空依赖名
+- **vmake 构建编排**：命令行只选部分目标时依赖经传递闭包自动纳入计划；链接期把依赖 dylib 产物以 `vlnk --lib <file>` 传给 clang；链接签名纳入依赖 dylib 的路径与内容摘要——dylib 重新链接后依赖方自动重链（源文件不变时只重链不重编），计划阶段以「依赖将重链」哨兵摘要避免两阶段误判 Fresh
+- **vlnk 新增 `--lib <file>` 参数**（可多次）：原生库（.a/.dylib/.so）原样传给 clang 参与链接，不参与模块合并；`link_module` 相应扩展 `native_libs` 形参
+- vmake-lsp 同步：`deps` 字段解析与位置、hover（目标摘要列依赖 / deps 字段说明 / 元素值）、definition（依赖名跳到被依赖目标声明）、补全（字段名与 `[\"\"]` 片段）；未知字段提示更新
+- 测试：vmake 单测（deps 解析/校验/闭包展开）、vmake e2e（dylib 先建、exe 运行取值、dylib 变更仅触发依赖方重链、selected 闭包）、vmake-lsp parser（deps 位置/hit/诊断）
 
 ### 版本对齐
 

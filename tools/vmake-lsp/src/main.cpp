@@ -27,7 +27,7 @@ namespace vmake_lsp {
 
 using json::Value;
 
-constexpr const char *kVersion = "0.1.0";
+constexpr const char *kVersion = "0.3.0";
 
 // 打开的文档集合（uri → 全文）
 std::map<std::string, std::string> g_docs;
@@ -206,6 +206,13 @@ static std::size_t find_source_index(const VTarget &t, int line,
   return 0;
 }
 
+static std::size_t find_dep_index(const VTarget &t, int line, int character) {
+  for (std::size_t j = 0; j < t.dep_ranges.size(); ++j) {
+    if (pos_in_range(line, character, t.dep_ranges[j])) return j;
+  }
+  return 0;
+}
+
 void handle_document_symbol(const LspMessage &req) {
   const Value *td = req.params.find("textDocument");
   if (td == nullptr) {
@@ -258,7 +265,8 @@ void handle_hover(const LspMessage &req) {
   case Hit::Part::Kind:
     md = "### `" + std::string(kind_name(t.kind)) + "` 目标类型\n";
     md += "声明一个 ";
-    md += (t.kind == TargetKind::Exe ? "可执行文件" : "动态链接库");
+    md += (t.kind == TargetKind::Exe ? "可执行文件" :
+           t.kind == TargetKind::Dylib ? "动态链接库" : "静态库（ar 归档）");
     md += " 目标。\n";
     break;
   case Hit::Part::Name:
@@ -271,6 +279,30 @@ void handle_hover(const LspMessage &req) {
     }
     md += "\n";
     if (t.output) md += "- 输出：`" + *t.output + "`\n";
+    if (!t.deps.empty()) {
+      md += "- 依赖：";
+      for (std::size_t i = 0; i < t.deps.size(); ++i) {
+        if (i) md += ", ";
+        md += "`" + t.deps[i] + "`";
+      }
+      md += "\n";
+    }
+    if (!t.libs.empty()) {
+      md += "- 外部库：";
+      for (std::size_t i = 0; i < t.libs.size(); ++i) {
+        if (i) md += ", ";
+        md += "`" + t.libs[i] + "`";
+      }
+      md += "\n";
+    }
+    if (!t.lib_dirs.empty()) {
+      md += "- 库搜索目录：";
+      for (std::size_t i = 0; i < t.lib_dirs.size(); ++i) {
+        if (i) md += ", ";
+        md += "`" + t.lib_dirs[i] + "`";
+      }
+      md += "\n";
+    }
     break;
   case Hit::Part::Sources:
     md = "### `sources`\n";
@@ -288,6 +320,75 @@ void handle_hover(const LspMessage &req) {
     if (t.output) md += *t.output;
     md += "`\n";
     break;
+  case Hit::Part::Deps:
+    md = "### `deps`\n";
+    md += "目标 `" + t.name + "` 依赖的目标名列表；被依赖方必须是 dylib 或 staticlib 目标，"
+          "构建时先于依赖方构建，链接期以 `--lib` 并入，产物变化时依赖方自动重链。\n";
+    break;
+  case Hit::Part::DepElem: {
+    std::size_t idx = find_dep_index(t, line, character);
+    md = "### 依赖目标\n";
+    md += "`" + (idx < t.deps.size() ? t.deps[idx] : std::string()) + "`\n";
+    break;
+  }
+  case Hit::Part::Libs:
+    md = "### `libs`\n";
+    md += "目标 `" + t.name + "` 的外部库列表；裸名 → `-l<name>`，路径或带后缀 → `--lib <path>`。\n";
+    break;
+  case Hit::Part::LibElem: {
+    std::size_t idx = 0;
+    for (; idx < t.lib_ranges.size(); ++idx) {
+      if (pos_in_range(line, character, t.lib_ranges[idx])) break;
+    }
+    md = "### 外部库\n";
+    md += "`" + (idx < t.libs.size() ? t.libs[idx] : std::string()) + "`\n";
+    break;
+  }
+  case Hit::Part::LibDirs:
+    md = "### `lib_dirs`\n";
+    md += "目标 `" + t.name + "` 的库搜索目录列表；每个目录以 `-L<dir>` 传给链接器。\n";
+    break;
+  case Hit::Part::LibDirElem: {
+    std::size_t idx = 0;
+    for (; idx < t.lib_dir_ranges.size(); ++idx) {
+      if (pos_in_range(line, character, t.lib_dir_ranges[idx])) break;
+    }
+    md = "### 库搜索目录\n";
+    md += "`" + (idx < t.lib_dirs.size() ? t.lib_dirs[idx] : std::string()) + "`\n";
+    break;
+  }
+  case Hit::Part::ExtraField: {
+    const ArrayField &f = t.extra_arrays[hit.extra_index];
+    md = "### `" + f.key + "`\n";
+    if (f.key == "cflags") {
+      md += "目标 `" + t.name + "` 的额外 clang 参数；链接期与 .ll/.c/.cpp 一并"
+            "传给 clang，并纳入增量链接签名（变化仅重链，不重编）。\n";
+    } else if (f.key == "defines") {
+      md += "目标 `" + t.name + "` 的宏定义；每项转为 `-D<name>[=<value>]` "
+            "传给链接期的 clang。\n";
+    } else if (f.key == "ldflags") {
+      md += "目标 `" + t.name + "` 的链接器参数；置于链接期 clang 命令末尾"
+            "（如 `-Wl,-rpath,...`）。\n";
+    } else {
+      md += "目标 `" + t.name + "` 的测试源文件（.vx）；`vmake test` 将其与目标"
+            "源文件一并构建为 `" + t.name + "-test` 并运行。\n";
+    }
+    break;
+  }
+  case Hit::Part::ExtraElem: {
+    const ArrayField &f = t.extra_arrays[hit.extra_index];
+    const std::string v =
+        hit.elem_index < f.values.size() ? f.values[hit.elem_index]
+                                         : std::string();
+    if (f.key == "tests") {
+      md = "### 测试文件\n`" + v + "`\n";
+    } else if (f.key == "defines") {
+      md = "### 宏定义\n`" + v + "` → `-D" + v + "`\n";
+    } else {
+      md = "### `" + f.key + " 参数\n`" + v + "`\n";
+    }
+    break;
+  }
   default:
     send_response(req, Value{});
     return;
@@ -359,6 +460,38 @@ void handle_definition(const LspMessage &req) {
   case Hit::Part::Output:
     r_ = t.output_range;
     break;
+  case Hit::Part::DepElem: {
+    // 依赖名 → 跳到同文档中被依赖目标的声明
+    const std::size_t idx = find_dep_index(t, line, character);
+    if (idx < t.deps.size()) {
+      for (const auto &other : r.targets) {
+        if (other.name == t.deps[idx]) {
+          send_response(req, Value::object(
+                                 {{"uri", Value::string(uri)},
+                                  {"range", range_value(other.name_range)}}));
+          return;
+        }
+      }
+    }
+    send_response(req, Value{}); // 未找到被依赖目标 → 不提供跳转
+    return;
+  }
+  case Hit::Part::ExtraElem: {
+    // tests 元素 → 跳到磁盘上的 .vx 测试文件；其余字段不提供跳转
+    const ArrayField &f = t.extra_arrays[hit.extra_index];
+    if (f.key == "tests" && hit.elem_index < f.values.size()) {
+      if (std::optional<std::string> src_uri =
+              resolve_source_uri(uri, f.values[hit.elem_index])) {
+        send_response(req, Value::object(
+                               {{"uri", Value::string(*src_uri)},
+                                {"range", range_value(
+                                              Range{Position{0, 0}, Position{0, 0}})}}));
+        return;
+      }
+    }
+    send_response(req, Value{});
+    return;
+  }
   default:
     send_response(req, Value{});
     return;
@@ -500,6 +633,7 @@ void handle_completion(const LspMessage &req) {
     // 语句位置：目标类型
     items.push_back(make_completion("exe", 3, "声明可执行文件目标", "exe"));
     items.push_back(make_completion("dylib", 3, "声明动态链接库目标", "dylib"));
+    items.push_back(make_completion("staticlib", 3, "声明静态库目标（ar 归档）", "staticlib"));
   } else if (sc.last_sig == '=') {
     // 字段值：按字段名给出片段
     if (sc.field == "name") {
@@ -510,6 +644,27 @@ void handle_completion(const LspMessage &req) {
     } else if (sc.field == "output") {
       items.push_back(
           make_completion("\"\"", 1, "输出路径（字符串）", "\"$0\"", true));
+    } else if (sc.field == "deps") {
+      items.push_back(
+          make_completion("[\"\"]", 1, "依赖目标名列表（dylib/staticlib）", "[\"$0\"]", true));
+    } else if (sc.field == "libs") {
+      items.push_back(
+          make_completion("[\"\"]", 1, "外部库列表", "[\"$0\"]", true));
+    } else if (sc.field == "lib_dirs") {
+      items.push_back(
+          make_completion("[\"\"]", 1, "库搜索目录列表", "[\"$0\"]", true));
+    } else if (sc.field == "cflags") {
+      items.push_back(
+          make_completion("[\"\"]", 1, "额外 clang 参数列表", "[\"$0\"]", true));
+    } else if (sc.field == "defines") {
+      items.push_back(
+          make_completion("[\"\"]", 1, "宏定义列表（→ -D...）", "[\"$0\"]", true));
+    } else if (sc.field == "ldflags") {
+      items.push_back(
+          make_completion("[\"\"]", 1, "链接器参数列表", "[\"$0\"]", true));
+    } else if (sc.field == "tests") {
+      items.push_back(
+          make_completion("[\"\"]", 1, "测试源文件列表（.vx）", "[\"$0\"]", true));
     }
   } else {
     // 参数位置：关键字字段名（首个位置参数为目标名）
@@ -520,6 +675,14 @@ void handle_completion(const LspMessage &req) {
     items.push_back(make_completion("name", 5, "目标名称", "name"));
     items.push_back(make_completion("sources", 5, "源文件列表", "sources"));
     items.push_back(make_completion("output", 5, "输出路径", "output"));
+    items.push_back(
+        make_completion("deps", 5, "依赖目标名列表（dylib/staticlib）", "deps"));
+    items.push_back(make_completion("libs", 5, "外部库列表", "libs"));
+    items.push_back(make_completion("lib_dirs", 5, "库搜索目录列表", "lib_dirs"));
+    items.push_back(make_completion("cflags", 5, "额外 clang 参数列表", "cflags"));
+    items.push_back(make_completion("defines", 5, "宏定义列表（→ -D...）", "defines"));
+    items.push_back(make_completion("ldflags", 5, "链接器参数列表", "ldflags"));
+    items.push_back(make_completion("tests", 5, "测试源文件列表（.vx）", "tests"));
   }
 
   send_response(req, Value::array(items));
@@ -603,6 +766,41 @@ static std::string format_target(const VTarget &t) {
     out += ", output=";
     out += quote_string(*t.output);
   }
+  if (t.has_deps && !t.deps.empty()) {
+    out += ", deps=[";
+    for (std::size_t i = 0; i < t.deps.size(); ++i) {
+      if (i) out += ", ";
+      out += quote_string(t.deps[i]);
+    }
+    out += ']';
+  }
+  if (t.has_libs && !t.libs.empty()) {
+    out += ", libs=[";
+    for (std::size_t i = 0; i < t.libs.size(); ++i) {
+      if (i) out += ", ";
+      out += quote_string(t.libs[i]);
+    }
+    out += ']';
+  }
+  if (t.has_lib_dirs && !t.lib_dirs.empty()) {
+    out += ", lib_dirs=[";
+    for (std::size_t i = 0; i < t.lib_dirs.size(); ++i) {
+      if (i) out += ", ";
+      out += quote_string(t.lib_dirs[i]);
+    }
+    out += ']';
+  }
+  // cflags / defines / ldflags / tests：按声明顺序输出
+  for (const ArrayField &f : t.extra_arrays) {
+    out += ", ";
+    out += f.key;
+    out += "=[";
+    for (std::size_t i = 0; i < f.values.size(); ++i) {
+      if (i) out += ", ";
+      out += quote_string(f.values[i]);
+    }
+    out += ']';
+  }
   out += ')';
   return out;
 }
@@ -659,6 +857,8 @@ void handle_folding_range(const LspMessage &req) {
   for (const auto &t : r.targets) {
     add_fold(t.call_range);
     add_fold(t.sources_range);
+    for (const auto &f : t.extra_arrays)
+      add_fold(f.range);
   }
   send_response(req, Value::array(ranges));
 }

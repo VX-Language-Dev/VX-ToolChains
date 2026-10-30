@@ -4,6 +4,7 @@
 // 增量判定采用内容哈希签名，而非 mtime：
 //   - 对象签名 = 工具身份 + 导入依赖签名 + 源文件内容哈希 + 源路径
 //   - 链接签名 = vlnk 身份 + 导入依赖签名 + 目标描述 + 全部对象内容哈希
+//     + profile + cflags/defines/ldflags（链接期 clang 参数变化 → 仅重链）
 // 签名写入产物旁的 <产物>.sig 旁路文件。内容未变的 touch 不会重编，也不会重链。
 // 导入依赖签名覆盖 headers 根目录（@imp/@cppimp 的 .vxh/.c/.a 等）以及项目内
 // 所有 .vxh，修复了头文件变更不触发重建的漏编问题。
@@ -17,9 +18,12 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -32,24 +36,7 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr std::string_view RESET = "\033[0m";
-constexpr std::string_view GREEN = "\033[1;32m";
 constexpr std::string_view RED = "\033[1;31m";
-constexpr std::string_view CYAN = "\033[1;36m";
-
-// Cargo 风格状态行：右对齐 12 列标签 + 消息（写 stderr）
-void status_line(std::string_view label, std::string_view color,
-                 const std::string &message, bool use_color) {
-  const std::size_t pad = label.size() < 12 ? 12 - label.size() : 0;
-  std::fprintf(stderr, "%*s", static_cast<int>(pad), "");
-  if (use_color) {
-    std::fprintf(stderr, "%s%.*s%s", std::string(color).c_str(),
-                 static_cast<int>(label.size()), label.data(),
-                 std::string(RESET).c_str());
-  } else {
-    std::fprintf(stderr, "%.*s", static_cast<int>(label.size()), label.data());
-  }
-  std::fprintf(stderr, " %s\n", message.c_str());
-}
 
 void error_line(const std::string &message, bool use_color) {
   if (use_color) {
@@ -216,26 +203,88 @@ std::string dependency_signature(const BuildOptions &opts) {
 }
 
 std::string object_signature(std::string_view vxc_id, std::string_view deps_id,
+                             std::string_view target,
                              std::string_view source, std::string_view digest) {
   std::string sig;
   add_field(sig, "vmake-obj-v1");
   add_field(sig, vxc_id);
   add_field(sig, deps_id);
+  add_field(sig, target);
   add_field(sig, source);
   add_field(sig, digest);
   return sig_digest(sig);
 }
 
+// profile 默认 clang 参数：链接期单次 clang 调用同时编译 .ll/.c/.cpp，
+// debug 补 -g，release 补 -O2（vxc 前端不受 profile 影响，对象不重编）。
+std::vector<std::string> profile_cflags(std::string_view profile) {
+  if (profile == "release")
+    return {"-O2"};
+  return {"-g"};
+}
+
+// 目标的最终链接参数：profile 默认值 + 目标 cflags + defines（→ -D...），
+// ldflags 单独成列（置于 clang 命令末尾）。参与链接签名。
+struct LinkFlags {
+  std::vector<std::string> cflags;
+  std::vector<std::string> ldflags;
+};
+
+LinkFlags target_link_flags(const Target &t, const BuildOptions &opts) {
+  LinkFlags f;
+  f.cflags = profile_cflags(opts.profile);
+  f.cflags.insert(f.cflags.end(), t.cflags.begin(), t.cflags.end());
+  for (const std::string &d : t.defines)
+    f.cflags.push_back(d.starts_with("-D") ? d : "-D" + d);
+  f.ldflags = t.ldflags;
+  return f;
+}
+
 std::string link_signature(std::string_view vlnk_id, std::string_view deps_id,
-                           const Target &target,
-                           const std::vector<std::string> &object_digests) {
+                           std::string_view target,
+                           const Target &target_struct,
+                           const std::vector<std::string> &object_digests,
+                           const std::vector<std::pair<std::string, std::string>> &dep_libs,
+                           std::string_view profile,
+                           const std::vector<std::string> &cflags,
+                           const std::vector<std::string> &ldflags) {
   std::string sig;
-  add_field(sig, "vmake-link-v1");
+  add_field(sig, "vmake-link-v2");
   add_field(sig, vlnk_id);
   add_field(sig, deps_id);
-  add_field(sig, target.name);
-  add_field(sig, kind_name(target.kind));
-  add_field(sig, target.output ? *target.output : "");
+  add_field(sig, target);
+  add_field(sig, profile);
+  add_field(sig, target_struct.name);
+  add_field(sig, kind_name(target_struct.kind));
+  add_field(sig, target_struct.output ? *target_struct.output : "");
+  for (const std::string &d : object_digests)
+    add_field(sig, d);
+  for (const auto &[path, digest] : dep_libs) {
+    add_field(sig, path);
+    add_field(sig, digest);
+  }
+  for (const std::string &d : target_struct.lib_dirs)
+    add_field(sig, d);
+  for (const std::string &l : target_struct.libs)
+    add_field(sig, l);
+  for (const std::string &f : cflags)
+    add_field(sig, f);
+  for (const std::string &f : ldflags)
+    add_field(sig, f);
+  return sig_digest(sig);
+}
+
+std::string staticlib_signature(std::string_view vxc_id, std::string_view deps_id,
+                                std::string_view target,
+                                const Target &target_struct,
+                                const std::vector<std::string> &object_digests) {
+  std::string sig;
+  add_field(sig, "vmake-ar-v1");
+  add_field(sig, vxc_id);
+  add_field(sig, deps_id);
+  add_field(sig, target);
+  add_field(sig, target_struct.name);
+  add_field(sig, kind_name(target_struct.kind));
   for (const std::string &d : object_digests)
     add_field(sig, d);
   return sig_digest(sig);
@@ -292,6 +341,48 @@ std::size_t worker_count(const BuildOptions &opts, std::size_t job_count) {
   if (n == 0)
     n = 4;
   return std::min(n, job_count);
+}
+
+// 判断库条目是否是路径型（含路径分隔符或常见后缀）→ --lib；否则裸名 → -l
+bool looks_like_lib_path(std::string_view lib) {
+  if (lib.find('/') != std::string_view::npos) return true;
+#ifdef _WIN32
+  if (lib.find('\\') != std::string_view::npos) return true;
+#endif
+  const char *exts[] = {".a", ".dylib", ".so", ".lib", ".dll"};
+  for (const char *e : exts) {
+    std::size_t elen = std::strlen(e);
+    if (lib.size() >= elen &&
+        lib.compare(lib.size() - elen, elen, e) == 0) return true;
+  }
+  return false;
+}
+
+// 查找 ar 工具：VX_AR 环境变量 > PATH 中的 ar
+std::string find_ar() {
+  if (const char *env = std::getenv("VX_AR"); env != nullptr && env[0] != '\0')
+    return env;
+  // Windows 上可能是 lib.exe
+  const char *candidates[] = {"ar", "llvm-ar", "lib.exe"};
+  for (const char *c : candidates) {
+    // 用 which 查找
+    std::error_code ec;
+    fs::path found;
+    // 先看 PATH
+    if (const char *path = std::getenv("PATH"); path != nullptr) {
+      std::string p = path;
+      std::size_t start = 0;
+      while (start <= p.size()) {
+        std::size_t end = p.find(':', start);
+        if (end == std::string::npos) end = p.size();
+        fs::path cand = fs::path(std::string(p.substr(start, end - start))) / c;
+        if (fs::is_regular_file(cand, ec) && !ec)
+          return cand.string();
+        start = end + 1;
+      }
+    }
+  }
+  return "ar"; // 兜底：让子进程自己报 "command not found"
 }
 
 struct TargetPlan {
@@ -373,6 +464,11 @@ std::string default_output_name(TargetKind kind, std::string_view name,
     return host_os == "windows" ? std::string(name) + ".exe"
                                 : std::string(name);
   }
+  if (kind == TargetKind::StaticLib) {
+    if (host_os == "windows") return std::string(name) + ".lib";
+    return "lib" + std::string(name) + ".a";
+  }
+  // Dylib
   if (host_os == "macosx")
     return "lib" + std::string(name) + ".dylib";
   if (host_os == "linux")
@@ -380,6 +476,29 @@ std::string default_output_name(TargetKind kind, std::string_view name,
   if (host_os == "windows")
     return std::string(name) + ".dll";
   return "lib" + std::string(name) + ".so";
+}
+
+// 由原目标派生测试可执行目标（vmake test 构建与运行的单元）。
+// 源组成规则（vlnk 合并期同一模块内函数名不得重复，且每程序仅一个入口）：
+//   - staticlib/dylib：无入口 → 测试二进制并入目标自身源文件，测试文件提供 main
+//   - exe：源文件含 main，与测试入口冲突 → 仅用测试源，经 deps/libs 引用被测代码
+std::optional<Target> test_target_of(const Target &target) {
+  if (target.tests.empty())
+    return std::nullopt;
+  Target t;
+  t.name = target.name + "-test";
+  t.kind = TargetKind::Exe;
+  if (target.kind != TargetKind::Exe)
+    t.sources = target.sources;
+  t.sources.insert(t.sources.end(), target.tests.begin(), target.tests.end());
+  t.deps = target.deps;
+  t.libs = target.libs;
+  t.lib_dirs = target.lib_dirs;
+  t.cflags = target.cflags;
+  t.defines = target.defines;
+  t.ldflags = target.ldflags;
+  t.line = target.line;
+  return t;
 }
 
 fs::path artifact_path(const fs::path &build_dir, const Target &target) {
@@ -400,18 +519,46 @@ fs::path object_path(const fs::path &build_dir, const Target &target,
 
 std::vector<const Target *>
 plan_order(const Manifest &manifest, const std::vector<std::string> &selected) {
-  auto wanted = [&](const Target &t) {
-    return selected.empty() || std::find(selected.begin(), selected.end(),
-                                         t.name) != selected.end();
-  };
+  // 目标索引：name → target
+  std::map<std::string, const Target *> by_name;
+  for (const Target &t : manifest.targets) by_name.emplace(t.name, &t);
+
+  // 计算纳入计划的目标集合：selected 非空时做依赖传递闭包展开
+  //（deps 均为 dylib，先于被依赖方构建；此处保证依赖目标也被构建）。
+  std::set<std::string> wanted;
+  if (selected.empty()) {
+    for (const Target &t : manifest.targets) wanted.insert(t.name);
+  } else {
+    std::vector<const Target *> queue;
+    for (const std::string &name : selected) {
+      const auto it = by_name.find(name);
+      if (it != by_name.end()) queue.push_back(it->second);
+    }
+    while (!queue.empty()) {
+      const Target *t = queue.back();
+      queue.pop_back();
+      if (!wanted.insert(t->name).second) continue;
+      for (const std::string &dep : t->deps) {
+        const auto it = by_name.find(dep);
+        if (it != by_name.end()) queue.push_back(it->second);
+      }
+    }
+  }
+
+  auto is_wanted = [&](const Target &t) { return wanted.count(t.name) > 0; };
   std::vector<const Target *> plan;
-  // 动态库先构建：可执行文件可能通过导入/链接依赖它们。
+  // StaticLib 先构建 → Dylib → Exe：静态库是对象归档，dylib/exe 可依赖；
+  // dylib 先于 exe：exe 可依赖 dylib。组内保持声明顺序。
   for (const Target &t : manifest.targets) {
-    if (t.kind == TargetKind::Dylib && wanted(t))
+    if (t.kind == TargetKind::StaticLib && is_wanted(t))
       plan.push_back(&t);
   }
   for (const Target &t : manifest.targets) {
-    if (t.kind == TargetKind::Exe && wanted(t))
+    if (t.kind == TargetKind::Dylib && is_wanted(t))
+      plan.push_back(&t);
+  }
+  for (const Target &t : manifest.targets) {
+    if (t.kind == TargetKind::Exe && is_wanted(t))
       plan.push_back(&t);
   }
   return plan;
@@ -447,6 +594,12 @@ int build_manifest(const Manifest &manifest, const BuildOptions &opts) {
   plans.reserve(plan.size());
   std::vector<CompileJob> jobs;
 
+  // 依赖产物索引：目标名 → 产物路径（artifact_path 为纯函数，对全 manifest 计算）
+  std::map<std::string, fs::path> dep_artifact;
+  for (const Target &t : manifest.targets)
+    dep_artifact.emplace(t.name, artifact_path(opts.build_dir, t));
+
+  // ---- 第一遍：对象级判定（编译任务收集 + any_stale）----
   for (const Target *t : plan) {
     TargetPlan tp;
     tp.target = t;
@@ -468,7 +621,7 @@ int build_manifest(const Manifest &manifest, const BuildOptions &opts) {
         return 1;
       }
       const std::string osig =
-          object_signature(vxc_id, deps_id, t->sources[i], source_digest);
+          object_signature(vxc_id, deps_id, opts.target, t->sources[i], source_digest);
 
       std::string object_digest;
       if (up_to_date(object, osig) && file_digest(object, object_digest)) {
@@ -491,19 +644,62 @@ int build_manifest(const Manifest &manifest, const BuildOptions &opts) {
         job.args.push_back("-I");
         job.args.push_back(inc);
       }
+      if (!opts.target.empty()) {
+        job.args.push_back("--target");
+        job.args.push_back(opts.target);
+      }
       if (opts.verbose)
         job.args.push_back("-v");
       jobs.push_back(std::move(job));
     }
 
-    if (any_stale) {
-      tp.link_needed = true;
-    } else {
+    tp.link_needed = any_stale;
+    plans.push_back(std::move(tp));
+  }
+
+  // ---- 第二遍：链接/归档级判定 ----
+  // deps 均为 dylib 或 staticlib，且计划顺序保证被依赖方在前，因此处理某
+  // 目标时可确定其依赖是否将重链/重建；dep 将重链 → 内容必变 → 哨兵摘要
+  // 强制本目标重链。staticlib 用 staticlib_signature 判定（无依赖、无链接）。
+  {
+    std::map<std::string, TargetPlan *> by_name;
+    for (TargetPlan &tp : plans) by_name.emplace(tp.target->name, &tp);
+    for (TargetPlan &tp : plans) {
+      if (tp.link_needed) continue;
+      const Target &t = *tp.target;
+      if (t.kind == TargetKind::StaticLib) {
+        const std::string ssig =
+            staticlib_signature(vxc_id, deps_id, opts.target, t, tp.object_digests);
+        tp.link_needed = !up_to_date(tp.artifact, ssig);
+        continue;
+      }
+      if (t.deps.empty()) {
+        const LinkFlags flags = target_link_flags(t, opts);
+        const std::string lsig =
+            link_signature(vlnk_id, deps_id, opts.target, t, tp.object_digests,
+                           {}, opts.profile, flags.cflags, flags.ldflags);
+        tp.link_needed = !up_to_date(tp.artifact, lsig);
+        continue;
+      }
+      std::vector<std::pair<std::string, std::string>> dep_libs;
+      for (const std::string &dep : t.deps) {
+        const auto da = dep_artifact.find(dep);
+        const auto dp = by_name.find(dep);
+        std::string digest = "unreadable";
+        if (dp != by_name.end() && dp->second->link_needed) {
+          digest = "relinking";
+        } else if (da != dep_artifact.end()) {
+          file_digest(da->second, digest);
+        }
+        if (da != dep_artifact.end())
+          dep_libs.emplace_back(da->second.string(), digest);
+      }
+      const LinkFlags flags = target_link_flags(t, opts);
       const std::string lsig =
-          link_signature(vlnk_id, deps_id, *t, tp.object_digests);
+          link_signature(vlnk_id, deps_id, opts.target, t, tp.object_digests,
+                         dep_libs, opts.profile, flags.cflags, flags.ldflags);
       tp.link_needed = !up_to_date(tp.artifact, lsig);
     }
-    plans.push_back(std::move(tp));
   }
 
   std::size_t total_steps = jobs.size();
@@ -561,7 +757,7 @@ int build_manifest(const Manifest &manifest, const BuildOptions &opts) {
   std::size_t compiled = 0;
   std::size_t fresh = 0;
 
-  // 阶段 2：按计划顺序链接（对象已就绪，签名按最终对象内容重算）
+  // 阶段 2：按计划顺序链接/归档（对象已就绪，签名按最终对象内容重算）
   for (TargetPlan &tp : plans) {
     const Target &t = *tp.target;
     if (!tp.link_needed) {
@@ -584,7 +780,68 @@ int build_manifest(const Manifest &manifest, const BuildOptions &opts) {
       }
       digests.push_back(std::move(d));
     }
-    const std::string lsig = link_signature(vlnk_id, deps_id, t, digests);
+
+    // ---- staticlib：ar 归档 ----
+    if (t.kind == TargetKind::StaticLib) {
+      const std::string ssig =
+          staticlib_signature(vxc_id, deps_id, opts.target, t, digests);
+      // macOS ranlib 可选：ar rcs 后 ranlib 索引（无 ranlib 也能工作，但链接时警告）
+      std::string ar_path = find_ar();
+      std::vector<std::string> args = {"rcs", tp.artifact.string()};
+      for (const fs::path &obj : tp.objects)
+        args.push_back(obj.string());
+
+      ++step;
+      std::fprintf(stderr, "[ %zu/%zu] %s %s\n", step, total_steps,
+                   opts.color ? "\033[1;32mar\033[0m" : "ar",
+                   tp.artifact.filename().c_str());
+
+      if (opts.verbose) {
+        std::fprintf(stderr, "  %s\n", format_command(ar_path, args).c_str());
+      }
+      ProcessResult r = run_process(ar_path, args, opts.child_env);
+      if (!r.ok) {
+        print_child_output(r.output);
+        if (!r.error.empty())
+          std::fprintf(stderr, "  %s\n", r.error.c_str());
+        error_line("could not archive `" + t.name + "` (staticlib)",
+                   opts.color);
+        return 1;
+      }
+      if (!write_sig(tp.artifact, ssig) && opts.verbose) {
+        std::fprintf(stderr,
+                     "vmake-builder: warning: cannot write signature for %s\n",
+                     tp.artifact.string().c_str());
+      }
+      continue;
+    }
+
+    // ---- dylib / exe：vlnk 链接 ----
+    // deps（dylib 或 staticlib）：此时被依赖方（计划顺序在前）已链接/归档完毕
+    std::vector<std::pair<std::string, std::string>> dep_libs;
+    std::vector<std::string> lib_args;
+    for (const std::string &dep : t.deps) {
+      const auto da = dep_artifact.find(dep);
+      if (da == dep_artifact.end())
+        continue;
+      std::error_code ec;
+      if (!fs::is_regular_file(da->second, ec) || ec) {
+        error_line("target '" + t.name + "' dependency artifact is missing: " +
+                       da->second.string(),
+                   opts.color);
+        return 1;
+      }
+      std::string d;
+      if (!file_digest(da->second, d))
+        d = "unreadable";
+      dep_libs.emplace_back(da->second.string(), d);
+      lib_args.push_back(da->second.string());
+    }
+    // 外部 libs/lib_dirs 与链接参数（profile/cflags/defines/ldflags）：纳入链接签名
+    const LinkFlags flags = target_link_flags(t, opts);
+    const std::string lsig =
+        link_signature(vlnk_id, deps_id, opts.target, t, digests, dep_libs,
+                       opts.profile, flags.cflags, flags.ldflags);
 
     std::vector<std::string> args;
     for (const fs::path &obj : tp.objects)
@@ -593,6 +850,41 @@ int build_manifest(const Manifest &manifest, const BuildOptions &opts) {
     args.push_back(tp.artifact.string());
     if (t.kind == TargetKind::Dylib)
       args.push_back("--shared");
+    if (!opts.target.empty()) {
+      args.push_back("--target");
+      args.push_back(opts.target);
+    }
+    // 额外 clang 参数（cflags + defines → -D...）：透传 vlnk --cflag
+    for (const std::string &f : flags.cflags) {
+      args.push_back("--cflag");
+      args.push_back(f);
+    }
+    // lib_dirs：CLI --lib-dir 合并到目标配置；CLI 优先（放在前面）
+    for (const std::string &ld : opts.lib_dirs_cli) {
+      args.push_back("-L" + ld);
+    }
+    for (const std::string &ld : t.lib_dirs) {
+      args.push_back("-L" + ld);
+    }
+    // deps 产物（dylib/staticlib）→ --lib <path>
+    for (const std::string &lib : lib_args) {
+      args.push_back("--lib");
+      args.push_back(lib);
+    }
+    // 外部 libs：路径型 → --lib；裸名 → -l<name>
+    for (const std::string &l : t.libs) {
+      if (looks_like_lib_path(l)) {
+        args.push_back("--lib");
+        args.push_back(l);
+      } else {
+        args.push_back("-l" + l);
+      }
+    }
+    // 链接器参数：透传 vlnk --ldflag（置于 clang 命令末尾）
+    for (const std::string &f : flags.ldflags) {
+      args.push_back("--ldflag");
+      args.push_back(f);
+    }
     if (opts.verbose)
       args.push_back("-v");
 

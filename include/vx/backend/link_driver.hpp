@@ -6,6 +6,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace vx::backend {
 
@@ -31,11 +32,18 @@ LinkResult link_executable(std::string_view ll_ir, std::string_view exe_path,
 // 模块感知链接：在 link_executable 基础上，依 ModuleIR::libs 并入导入库的
 // 实现文件（@imp 的 .c/.a/.dylib），并为 @cppimp 生成 C++ shim 一并编译。
 // shared 为 true 时输出动态库（clang -shared -fPIC），否则输出可执行文件。
+// native_libs 为额外原生库（.a/.dylib/.so，如其他目标构建出的 dylib），
+// 原样传给 clang 参与链接，不参与模块合并。
+// cflags 为额外 clang 参数（紧随输入文件，影响 .ll/.c/.cpp 的编译与链接）；
+// ldflags 为链接器参数，置于 clang 命令末尾（如 -Wl,...）。二者默认空。
 LinkResult link_module(std::string_view ll_ir,
                        const vx::compiler::ir::ModuleIR &mod,
                        std::string_view exe_path,
                        std::string_view target = {},
-                       bool shared = false);
+                       bool shared = false,
+                       const std::vector<std::string> &native_libs = {},
+                       const std::vector<std::string> &cflags = {},
+                       const std::vector<std::string> &ldflags = {});
 
 // 生成 @cppimp 的 C++ shim 源码：为每个 C++ 导入符号生成 extern "C" 包装，
 // 把 C++ ABI 转换为 VX ABI（符号 _vx_<lib>_<name>，类型映射见 vxabi.hpp）。

@@ -518,8 +518,6 @@ const std::map<std::string_view, BuiltinDoc> &builtin_docs() {
         "覆写写入文件，返回写入字节数；失败返回 -1"}},
       {"file_exists",
        {"file_exists(path: string) -> bool", "判断文件是否存在（可读）"}},
-      {"system",
-       {"system(cmd: string) -> int", "执行 shell 命令，返回退出码"}},
   };
   return table;
 }
@@ -1266,7 +1264,7 @@ std::vector<LspCompletion> collect_from_prog(
   if (ctx.kind == CompCtx::Member) {
     if (!headers_root.empty()) {
       DiagBag ibag;
-      ImportContext ictx{headers_root, headers_root, include_dirs};
+      ImportContext ictx{headers_root, headers_root, include_dirs, {}};
       if (auto table = build_import_table(prog, ictx, "<document>", ibag)) {
         if (const ImportedLib *lib = table->lib_by_prefix(ctx.receiver)) {
           for (const ImportedSymbol &sym : lib->symbols) {
@@ -1483,7 +1481,7 @@ std::string lib_symbol_hover(std::string_view text, int line, int character,
   const std::string prefix(toks[idx - 2].text);
   auto prog = vx::compiler::parse(toks, "<document>", arena, bag);
   if (!prog) return {};
-  vx::compiler::ImportContext ctx{headers_root, headers_root, include_dirs};
+  vx::compiler::ImportContext ctx{headers_root, headers_root, include_dirs, {}};
   auto table = vx::compiler::build_import_table(*prog, ctx, "<document>", bag);
   if (!table) return {};
   const vx::compiler::ImportedLib *lib = table->lib_by_prefix(prefix);
