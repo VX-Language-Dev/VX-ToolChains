@@ -4,7 +4,7 @@
 
 #include <string>
 
-const char *greet(const char *name) {
+const char* greet(const char* name) {
   static std::string msg;
   msg = std::string("Hello, ") + (name ? name : "") + "!";
   return msg.c_str();

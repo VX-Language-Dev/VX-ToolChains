@@ -23,12 +23,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using namespace vx::compiler;
@@ -37,13 +37,14 @@ namespace backend = vx::backend;
 
 // 执行可执行文件，返回 (退出码, stdout) ；退出码 -1 表示启动失败
 // extra_args 为追加的命令行参数（用于验证 argv 能力）
-std::pair<int, std::string> run_capture(const std::string &exe,
-                                       const std::string &extra_args = {}) {
+std::pair<int, std::string> run_capture(const std::string& exe, const std::string& extra_args = {}) {
   std::string cmd = "\"" + exe + "\"";
-  if (!extra_args.empty()) cmd += " " + extra_args;
+  if (!extra_args.empty())
+    cmd += " " + extra_args;
   cmd += " 2>/dev/null";
-  FILE *p = ::popen(cmd.c_str(), "r");
-  if (!p) return {-1, {}};
+  FILE* p = ::popen(cmd.c_str(), "r");
+  if (!p)
+    return {-1, {}};
   std::string out;
   std::array<char, 256> buf{};
   std::size_t n = 0;
@@ -58,27 +59,28 @@ std::pair<int, std::string> run_capture(const std::string &exe,
 // 全流程：源码 → ModuleIR → VXOBJ → reader → .ll → link → 运行，
 // 断言 stdout 等于 expected。tag 用于临时文件与诊断输出。
 // explicit_target 为 true 时走 link_executable 的显式 -target 路径并校验命令行。
-void run_case(const char *src, const std::string &expected,
-              const std::string &tag, bool explicit_target = false,
-              const std::string &extra_args = {}) {
-  const std::string exe = "/tmp/vx_vlnk_e2e_" + tag + "_" +
-                          std::to_string(::getpid());
+void run_case(const char* src, const std::string& expected, const std::string& tag, bool explicit_target = false,
+              const std::string& extra_args = {}) {
+  const std::string exe = "/tmp/vx_vlnk_e2e_" + tag + "_" + std::to_string(::getpid());
   static Arena arena;
   DiagBag bag;
   auto toks = tokenize(src, "<e2e>", arena, bag);
   auto prog = parse(toks, "<e2e>", arena, bag);
   CHECK(prog != std::nullopt);
-  if (!prog) return;
+  if (!prog)
+    return;
   auto mod = generate_module(*prog, "<e2e>", bag);
   CHECK(mod.has_value());
-  if (!mod) return;
+  if (!mod)
+    return;
 
   const std::string host = backend::host_triple();
   // 序列化 → 反序列化（同时验证 reader）
   const std::string obj = obj::serialize(*mod, host);
   auto rt = backend::read_vxobj(obj);
   CHECK(rt.ok);
-  if (!rt.ok) return;
+  if (!rt.ok)
+    return;
 
   auto em = backend::emit_llvm_ir(rt.module, host);
   CHECK(em.ok);
@@ -87,8 +89,7 @@ void run_case(const char *src, const std::string &expected,
     return;
   }
 
-  auto lr = explicit_target ? backend::link_executable(em.ir, exe, host)
-                            : backend::link_executable(em.ir, exe);
+  auto lr = explicit_target ? backend::link_executable(em.ir, exe, host) : backend::link_executable(em.ir, exe);
   CHECK(lr.ok);
   if (!lr.ok) {
     std::fprintf(stderr, "link error (%s): %s\n", tag.c_str(), lr.error.c_str());
@@ -209,24 +210,29 @@ int main() {
 
   // 系统能力：文件 I/O（写入 → 读取 → 存在性检查）
   {
-    const std::string path =
-        "/tmp/vx_vlnk_fileio_" + std::to_string(::getpid()) + ".txt";
-    const std::string src =
-        "extern out(msg: string)\n"
-        "extern out_int(v: int)\n"
-        "func main() -> int:\n"
-        "    var n = file_write(\"" + path + "\", \"hello file\")\n"
-        "    out_int(n)\n"
-        "    out(\"|\")\n"
-        "    var content = file_read(\"" + path + "\")\n"
-        "    out(content)\n"
-        "    out(\"|\")\n"
-        "    if file_exists(\"" + path + "\"):\n"
-        "        out(\"exists\")\n"
-        "    out(\"|\")\n"
-        "    out_int(file_exists(\"/tmp/vx_vlnk_absent_" +
-        std::to_string(::getpid()) + ".txt\"))\n"
-        "    return 0\n";
+    const std::string path = "/tmp/vx_vlnk_fileio_" + std::to_string(::getpid()) + ".txt";
+    const std::string src = "extern out(msg: string)\n"
+                            "extern out_int(v: int)\n"
+                            "func main() -> int:\n"
+                            "    var n = file_write(\"" +
+                            path +
+                            "\", \"hello file\")\n"
+                            "    out_int(n)\n"
+                            "    out(\"|\")\n"
+                            "    var content = file_read(\"" +
+                            path +
+                            "\")\n"
+                            "    out(content)\n"
+                            "    out(\"|\")\n"
+                            "    if file_exists(\"" +
+                            path +
+                            "\"):\n"
+                            "        out(\"exists\")\n"
+                            "    out(\"|\")\n"
+                            "    out_int(file_exists(\"/tmp/vx_vlnk_absent_" +
+                            std::to_string(::getpid()) +
+                            ".txt\"))\n"
+                            "    return 0\n";
     run_case(src.c_str(), "10|hello file|exists|0", "fileio");
     ::remove(path.c_str());
   }

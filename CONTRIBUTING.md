@@ -25,7 +25,7 @@
 1. **Fork 仓库** 并从 `master` 分支创建特性分支
 2. **保持提交历史清晰**：每个 commit 聚焦一个逻辑变更
 3. **编写测试**：新增功能请补充单元测试或集成测试
-4. **确保格式正确**：`clang-format -i src/ include/ tests/` 不应有格式问题
+4. **确保格式正确**：提交前执行 `cmake --build build --target format`（等价于对全部 C/C++ 源文件跑一遍 `clang-format -i`），随后 `cmake --build build --target check-format` 应零违规退出
 5. **运行测试套件**：
 
 ```bash
@@ -39,7 +39,7 @@ bash ci/check.sh             # 本地 CI 全套检查
 
 ## 代码风格
 
-- 使用 `clang-format` 自动格式化代码（4 空格缩进，基于 LLVM 风格）
+- 使用 `clang-format` 自动格式化代码（`.clang-format`：基于 LLVM 风格，2 空格缩进，`ColumnLimit` 120）
 - 模块职责单一，公开 API 集中在 `include/` 目录中
 - 使用 C++ 惯用的命名风格（PascalCase 用于类型，camelCase 用于函数/变量）
 - 中文注释和文档与英文技术术语混用时保持一致性
@@ -52,11 +52,11 @@ bash ci/check.sh             # 本地 CI 全套检查
 | ------------- | ---------------------------- |
 | `src/`        | C++ 源码（util / compiler / backend / driver） |
 | `include/`    | 公开头文件                   |
-| `tests/`      | 测试代码（CTest 17 组）      |
+| `tests/`      | 测试代码（CTest 19 组）      |
 | `std/`        | VX 标准库（设计参考/前瞻规范，见 std/README.md） |
 | `compiler/`   | VX 编译器前端源码（.vx 源文件） |
 | `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |
-| `tools/`      | 独立工具子项目（json、vmake、vmake-lsp、vxls、vx-tidy） |
+| `tools/`      | 独立工具子项目（json、vmake、vmake-lsp、vxls、vx-tidy、vfmt） |
 | `tree-sitter-vx/` | Tree-sitter 语法（VX 编辑器高亮） |
 | `tree-sitter-vmake/` | Tree-sitter 语法（VMakeSet.vmake 高亮） |
 | `scripts/`    | CMake 交叉编译工具链预设（toolchain-*.cmake） |

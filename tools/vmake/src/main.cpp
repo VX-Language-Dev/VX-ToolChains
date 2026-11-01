@@ -32,9 +32,9 @@ struct CliOptions {
   std::vector<std::string> targets;
   std::vector<std::string> include_dirs; // -I 头文件搜索目录（透传给 vxc）
   std::vector<std::string> lib_dirs;     // --lib-dir（覆盖所有目标的 lib_dirs）
-  std::string target;                     // --target <triple>
+  std::string target;                    // --target <triple>
   std::string color = "auto";
-  std::string profile = "debug";          // --release / --debug
+  std::string profile = "debug"; // --release / --debug
   bool verbose = false;
   int jobs = 0; // 0 = 自动（CPU 核数）
   bool help = false;
@@ -83,7 +83,9 @@ static void print_help() {
                "  exe(\"hello\", sources=[\"src/main.vx\", \"src/util.vx\"])\n"
                "  dylib(\"mylib\", sources=[\"src/lib.vx\"], output=\"libmylib.dylib\")\n"
                "  staticlib(\"util\", sources=[\"src/util.vx\"])\n"
-               "  exe(\"app\", sources=[\"src/app.vx\"], deps=[\"mylib\", \"util\"])\n"
+               "  exe(\"app\", sources=[\"src/app.vx\", \"src/platform.c\", \"src/extra.cpp\"],\n"
+               "       ccflags=[\"-Wall\"], cxxflags=[\"-Wall\"], incs=[\"include\"],\n"
+               "       std=\"c++20\", deps=[\"mylib\", \"util\"])\n"
                "  exe(\"sys\", sources=[\"src/sys.vx\"], libs=[\"ssl\", \"/opt/lib/libfoo.a\"],\n"
                "       lib_dirs=[\"/usr/local/lib\"])\n"
                "  exe(\"app\", sources=[\"src/app.vx\"],\n"
@@ -92,16 +94,18 @@ static void print_help() {
                "       tests=[\"tests/app_test.vx\", \"tests/util_test.vx\"])\n"
                "  # output is optional, relative to the -B build directory;\n"
                "  # deps links other VMake targets (dylib or staticlib);\n"
+               "  # sources accept .vx (vxc) mixed with .c/.cpp (clang -c);\n"
+               "  # ccflags/cxxflags/incs/std are compile-stage clang args;\n"
                "  # libs/lib_dirs add external libraries (裸名 → -l, 路径 → --lib);\n"
                "  # cflags/defines/ldflags are extra clang args at link stage;\n"
                "  # tests build <name>-test, run by `vmake test`\n"
                "\n"
-               "Environment: VX_VXC / VX_VLNK / VX_AR override toolchain paths; VX_HEADERS "
-               "overrides the import library root.\n",
+               "Environment: VX_VXC / VX_VLNK / VX_CC / VX_AR override toolchain paths; "
+               "VX_HEADERS_DIR / VX_HEADERS override the import library root.\n",
                VERSION.data());
 }
 
-static int parse_args(int argc, char **argv, CliOptions &opts) {
+static int parse_args(int argc, char** argv, CliOptions& opts) {
   for (int i = 1; i < argc; ++i) {
     const std::string_view a = argv[i];
     if (a == "-h" || a == "--help") {
@@ -120,7 +124,8 @@ static int parse_args(int argc, char **argv, CliOptions &opts) {
       } else {
         opts.jobs = std::stoi(std::string(a.substr(2)));
       }
-      if (opts.jobs < 0) opts.jobs = 0;
+      if (opts.jobs < 0)
+        opts.jobs = 0;
     } else if (a == "-B" || a.starts_with("-B")) {
       if (a == "-B") {
         if (i + 1 >= argc) {
@@ -168,10 +173,8 @@ static int parse_args(int argc, char **argv, CliOptions &opts) {
       } else {
         opts.color = std::string(a.substr(8));
       }
-      if (opts.color != "auto" && opts.color != "always" &&
-          opts.color != "never") {
-        std::fprintf(stderr, "error: invalid --color value: %s\n",
-                     opts.color.c_str());
+      if (opts.color != "auto" && opts.color != "always" && opts.color != "never") {
+        std::fprintf(stderr, "error: invalid --color value: %s\n", opts.color.c_str());
         return 2;
       }
     } else if (a == "--release") {
@@ -184,14 +187,12 @@ static int parse_args(int argc, char **argv, CliOptions &opts) {
         opts.passthrough.emplace_back(argv[i]);
       break;
     } else if (a.starts_with("-")) {
-      std::fprintf(stderr, "error: unknown option: %.*s (try --help)\n",
-                   static_cast<int>(a.size()), a.data());
+      std::fprintf(stderr, "error: unknown option: %.*s (try --help)\n", static_cast<int>(a.size()), a.data());
       return 2;
     } else {
       // 首个位置词为子命令关键字（build/clean/run/test）时设定命令，
       // 否则作为目标名；命令一经设定，后续同名字词按目标名处理。
-      if (!opts.command_explicit &&
-          (a == "build" || a == "clean" || a == "run" || a == "test")) {
+      if (!opts.command_explicit && (a == "build" || a == "clean" || a == "run" || a == "test")) {
         opts.command = (a == "build")   ? Command::Build
                        : (a == "clean") ? Command::Clean
                        : (a == "run")   ? Command::Run
@@ -210,11 +211,10 @@ static bool color_enabled(std::string_view mode) {
     return true;
   if (mode == "never")
     return false;
-  if (const char *no_color = std::getenv("NO_COLOR"); no_color != nullptr) {
+  if (const char* no_color = std::getenv("NO_COLOR"); no_color != nullptr) {
     return false;
   }
-  if (const char *term = std::getenv("TERM");
-      term != nullptr && std::string_view(term) == "dumb") {
+  if (const char* term = std::getenv("TERM"); term != nullptr && std::string_view(term) == "dumb") {
     return false;
   }
   return ::isatty(STDERR_FILENO) != 0;
@@ -222,7 +222,7 @@ static bool color_enabled(std::string_view mode) {
 
 // 在可执行文件上级目录中寻找 headers/（覆盖 build/tools/vmake → build →
 // 仓库根）
-static std::optional<fs::path> headers_near(const fs::path &exe) {
+static std::optional<fs::path> headers_near(const fs::path& exe) {
   fs::path dir = exe.parent_path();
   if (dir.empty())
     return std::nullopt;
@@ -245,35 +245,32 @@ static std::optional<fs::path> headers_near(const fs::path &exe) {
 
 // vmake run：构建指定（或清单中唯一的）exe 目标后直接执行（继承 stdio，
 // 保持交互性），返回目标程序的退出码。
-static int run_command(const vmake::Manifest &manifest,
-                       vmake::BuildOptions &opts, const CliOptions &cli,
-                       const fs::path &build_dir) {
-  const vmake::Target *t = nullptr;
+static int run_command(const vmake::Manifest& manifest, vmake::BuildOptions& opts, const CliOptions& cli,
+                       const fs::path& build_dir) {
+  const vmake::Target* t = nullptr;
   if (cli.targets.size() > 1) {
     std::fprintf(stderr, "error: run takes at most one target\n");
     return 2;
   }
   if (!cli.targets.empty()) {
-    for (const vmake::Target &c : manifest.targets) {
+    for (const vmake::Target& c : manifest.targets) {
       if (c.name == cli.targets[0]) {
         t = &c;
         break;
       }
     }
     if (t == nullptr) { // 目标名校验在 parse 后已做，此处防御
-      std::fprintf(stderr, "error: target not found: '%s'\n",
-                   cli.targets[0].c_str());
+      std::fprintf(stderr, "error: target not found: '%s'\n", cli.targets[0].c_str());
       return 2;
     }
     if (t->kind != vmake::TargetKind::Exe) {
-      std::fprintf(stderr,
-                   "error: target '%s' is a %s; run requires an exe target\n",
-                   t->name.c_str(), vmake::kind_name(t->kind));
+      std::fprintf(stderr, "error: target '%s' is a %s; run requires an exe target\n", t->name.c_str(),
+                   vmake::kind_name(t->kind));
       return 2;
     }
   } else {
-    std::vector<const vmake::Target *> exes;
-    for (const vmake::Target &c : manifest.targets) {
+    std::vector<const vmake::Target*> exes;
+    for (const vmake::Target& c : manifest.targets) {
       if (c.kind == vmake::TargetKind::Exe)
         exes.push_back(&c);
     }
@@ -282,10 +279,9 @@ static int run_command(const vmake::Manifest &manifest,
       return 2;
     }
     if (exes.size() > 1) {
-      std::fprintf(stderr,
-                   "error: multiple exe targets; specify one:"
-                   "\n  vmake run -B <dir> <target>  (available:");
-      for (const vmake::Target *e : exes)
+      std::fprintf(stderr, "error: multiple exe targets; specify one:"
+                           "\n  vmake run -B <dir> <target>  (available:");
+      for (const vmake::Target* e : exes)
         std::fprintf(stderr, " %s", e->name.c_str());
       std::fprintf(stderr, ")\n");
       return 2;
@@ -300,23 +296,19 @@ static int run_command(const vmake::Manifest &manifest,
   const fs::path artifact = vmake::artifact_path(build_dir, *t);
   std::error_code ec;
   if (!fs::is_regular_file(artifact, ec) || ec) {
-    std::fprintf(stderr, "error: artifact missing after build: %s\n",
-                 artifact.string().c_str());
+    std::fprintf(stderr, "error: artifact missing after build: %s\n", artifact.string().c_str());
     return 1;
   }
-  std::fprintf(stderr, "vmake-runner: running %s\n",
-               artifact.filename().c_str());
-  return vmake::run_process_direct(artifact.string(), cli.passthrough,
-                                   opts.child_env);
+  std::fprintf(stderr, "vmake-runner: running %s\n", artifact.filename().c_str());
+  return vmake::run_process_direct(artifact.string(), cli.passthrough, opts.child_env);
 }
 
 // vmake test：为每个声明 tests=[...] 的目标派生 <name>-test 可执行目标并
 // 构建（依赖闭包自动纳入），随后逐个运行并汇总结果。
-static int test_command(const vmake::Manifest &manifest,
-                        vmake::BuildOptions &opts, const CliOptions &cli,
-                        const fs::path &build_dir) {
-  auto named = [&](const std::string &name) {
-    for (const std::string &n : cli.targets) {
+static int test_command(const vmake::Manifest& manifest, vmake::BuildOptions& opts, const CliOptions& cli,
+                        const fs::path& build_dir) {
+  auto named = [&](const std::string& name) {
+    for (const std::string& n : cli.targets) {
       if (n == name)
         return true;
     }
@@ -324,11 +316,10 @@ static int test_command(const vmake::Manifest &manifest,
   };
 
   std::vector<vmake::Target> test_targets;
-  for (const vmake::Target &t : manifest.targets) {
+  for (const vmake::Target& t : manifest.targets) {
     if (t.tests.empty()) {
       if (!cli.targets.empty() && named(t.name)) {
-        std::fprintf(stderr, "error: target '%s' declares no tests\n",
-                     t.name.c_str());
+        std::fprintf(stderr, "error: target '%s' declares no tests\n", t.name.c_str());
         return 2;
       }
       continue;
@@ -338,7 +329,7 @@ static int test_command(const vmake::Manifest &manifest,
     std::optional<vmake::Target> tt = vmake::test_target_of(t);
     if (!tt)
       continue;
-    for (const vmake::Target &other : manifest.targets) {
+    for (const vmake::Target& other : manifest.targets) {
       if (other.name == tt->name) {
         std::fprintf(stderr,
                      "error: derived test target '%s' collides with an "
@@ -360,7 +351,7 @@ static int test_command(const vmake::Manifest &manifest,
   // 测试目标追加进清单副本；selected 只含测试目标，deps 闭包自动纳入依赖
   vmake::Manifest m2 = manifest;
   opts.selected.clear();
-  for (const vmake::Target &tt : test_targets) {
+  for (const vmake::Target& tt : test_targets) {
     m2.targets.push_back(tt);
     opts.selected.push_back(tt.name);
   }
@@ -372,21 +363,19 @@ static int test_command(const vmake::Manifest &manifest,
   constexpr std::string_view RED = "\033[1;31m";
   std::size_t passed = 0;
   std::size_t failed = 0;
-  for (const vmake::Target &tt : test_targets) {
+  for (const vmake::Target& tt : test_targets) {
     const fs::path artifact = vmake::artifact_path(build_dir, tt);
     std::error_code ec;
     if (!fs::is_regular_file(artifact, ec) || ec) {
-      std::fprintf(stderr, "error: test binary missing: %s\n",
-                   artifact.string().c_str());
+      std::fprintf(stderr, "error: test binary missing: %s\n", artifact.string().c_str());
       return 1;
     }
-    const vmake::ProcessResult r = vmake::run_process(
-        artifact.string(), cli.passthrough, opts.child_env, cli.verbose);
+    const vmake::ProcessResult r = vmake::run_process(artifact.string(), cli.passthrough, opts.child_env, cli.verbose);
     if (r.ok) {
       ++passed;
       if (opts.color)
-        std::fprintf(stderr, "test %s ... %sok%s\n", tt.name.c_str(),
-                     std::string(GREEN).c_str(), std::string(RESET).c_str());
+        std::fprintf(stderr, "test %s ... %sok%s\n", tt.name.c_str(), std::string(GREEN).c_str(),
+                     std::string(RESET).c_str());
       else
         std::fprintf(stderr, "test %s ... ok\n", tt.name.c_str());
       if (cli.verbose && !r.output.empty())
@@ -394,12 +383,10 @@ static int test_command(const vmake::Manifest &manifest,
     } else {
       ++failed;
       if (opts.color)
-        std::fprintf(stderr, "test %s ... %sFAILED%s (exit %d)\n",
-                     tt.name.c_str(), std::string(RED).c_str(),
+        std::fprintf(stderr, "test %s ... %sFAILED%s (exit %d)\n", tt.name.c_str(), std::string(RED).c_str(),
                      std::string(RESET).c_str(), r.exit_code);
       else
-        std::fprintf(stderr, "test %s ... FAILED (exit %d)\n", tt.name.c_str(),
-                     r.exit_code);
+        std::fprintf(stderr, "test %s ... FAILED (exit %d)\n", tt.name.c_str(), r.exit_code);
       if (!r.output.empty()) {
         std::fwrite(r.output.data(), 1, r.output.size(), stderr);
         if (r.output.back() != '\n')
@@ -413,7 +400,7 @@ static int test_command(const vmake::Manifest &manifest,
   return failed == 0 ? 0 : 1;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   CliOptions cli;
   if (const int rc = parse_args(argc, argv, cli); rc != 0)
     return rc;
@@ -439,8 +426,7 @@ int main(int argc, char **argv) {
   }
 
   if (!cli.has_build_dir || cli.build_dir.empty()) {
-    std::fprintf(stderr,
-                 "error: missing -B <dir> argument (build directory must be explicitly specified)\n\n");
+    std::fprintf(stderr, "error: missing -B <dir> argument (build directory must be explicitly specified)\n\n");
     print_help();
     return 2;
   }
@@ -454,25 +440,23 @@ int main(int argc, char **argv) {
   const fs::path manifest_path = cwd / "VMakeSet.vmake";
   auto text = vx::util::read_file(manifest_path);
   if (!text) {
-    std::fprintf(stderr,
-                 "error: VMakeSet.vmake not found (run vmake from the project root)\n");
+    std::fprintf(stderr, "error: VMakeSet.vmake not found (run vmake from the project root)\n");
     return 1;
   }
 
   std::vector<vmake::ParseError> errors;
   auto manifest = vmake::parse_manifest(*text, errors);
   if (!manifest) {
-    for (const vmake::ParseError &e : errors) {
-      std::fprintf(stderr, "error: VMakeSet.vmake:%zu: %s\n", e.line,
-                   e.message.c_str());
+    for (const vmake::ParseError& e : errors) {
+      std::fprintf(stderr, "error: VMakeSet.vmake:%zu: %s\n", e.line, e.message.c_str());
     }
     return 2;
   }
 
   // 目标名筛选校验
-  for (const std::string &name : cli.targets) {
+  for (const std::string& name : cli.targets) {
     bool found = false;
-    for (const vmake::Target &t : manifest->targets) {
+    for (const vmake::Target& t : manifest->targets) {
       if (t.name == name) {
         found = true;
         break;
@@ -480,7 +464,7 @@ int main(int argc, char **argv) {
     }
     if (!found) {
       std::fprintf(stderr, "error: target not found: '%s' (available targets:", name.c_str());
-      for (const vmake::Target &t : manifest->targets) {
+      for (const vmake::Target& t : manifest->targets) {
         std::fprintf(stderr, " %s", t.name.c_str());
       }
       std::fprintf(stderr, "）\n");
@@ -495,20 +479,21 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  fs::path build_dir =
-      cli.build_dir.is_absolute() ? cli.build_dir : cwd / cli.build_dir;
+  fs::path build_dir = cli.build_dir.is_absolute() ? cli.build_dir : cwd / cli.build_dir;
   fs::create_directories(build_dir, ec);
   if (ec) {
-    std::fprintf(stderr, "error: cannot create build directory %s: %s\n",
-                 build_dir.string().c_str(), ec.message().c_str());
+    std::fprintf(stderr, "error: cannot create build directory %s: %s\n", build_dir.string().c_str(),
+                 ec.message().c_str());
     return 1;
   }
 
-  // 传递导入库根目录：显式 VX_HEADERS > 项目 headers/ > 编译器旁的 headers/
+  // 传递导入库根目录：显式 VX_HEADERS_DIR / VX_HEADERS > 项目 headers/ > 编译器旁的 headers/
   // 同时记录到 opts.headers_root，供增量签名的依赖树哈希使用。
   std::vector<std::pair<std::string, std::string>> child_env;
   std::optional<fs::path> headers_root;
-  const char *inherited_headers = std::getenv("VX_HEADERS");
+  const char* inherited_headers = std::getenv("VX_HEADERS_DIR");
+  if (inherited_headers == nullptr || inherited_headers[0] == '\0')
+    inherited_headers = std::getenv("VX_HEADERS");
   if (inherited_headers != nullptr && inherited_headers[0] != '\0') {
     headers_root = fs::path(inherited_headers);
   } else {
@@ -535,6 +520,7 @@ int main(int argc, char **argv) {
   }
   opts.vxc = toolchain->vxc;
   opts.vlnk = toolchain->vlnk;
+  opts.clang = toolchain->clang;
   opts.include_dirs = cli.include_dirs;
   opts.lib_dirs_cli = cli.lib_dirs;
   opts.target = cli.target;
@@ -545,14 +531,14 @@ int main(int argc, char **argv) {
   opts.jobs = cli.jobs;
   opts.color = color_enabled(cli.color);
   switch (cli.command) {
-  case Command::Build:
-    return vmake::build_manifest(*manifest, opts);
-  case Command::Run:
-    return run_command(*manifest, opts, cli, build_dir);
-  case Command::Test:
-    return test_command(*manifest, opts, cli, build_dir);
-  case Command::Clean:
-    break; // clean 已在读取清单前处理
+    case Command::Build:
+      return vmake::build_manifest(*manifest, opts);
+    case Command::Run:
+      return run_command(*manifest, opts, cli, build_dir);
+    case Command::Test:
+      return test_command(*manifest, opts, cli, build_dir);
+    case Command::Clean:
+      break; // clean 已在读取清单前处理
   }
   return 0;
 }

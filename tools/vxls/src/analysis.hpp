@@ -6,6 +6,7 @@
 #include "vx/compiler/diag.hpp"
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,8 +38,8 @@ struct LspDiagnostic {
 struct LspSymbol {
   std::string name;
   std::string detail;
-  int kind = 0; // LSP SymbolKind
-  LspRange range;         // 整体范围（行级）
+  int kind = 0;             // LSP SymbolKind
+  LspRange range;           // 整体范围（行级）
   LspRange selection_range; // 名称范围
 };
 
@@ -69,8 +70,7 @@ Analysis analyze(std::string_view text);
 LspPosition diag_pos_to_lsp(std::string_view text, int line, int col);
 
 // 诊断 → LSP 诊断
-LspDiagnostic to_lsp_diagnostic(const vx::compiler::Diagnostic &d,
-                                std::string_view text);
+LspDiagnostic to_lsp_diagnostic(const vx::compiler::Diagnostic& d, std::string_view text);
 
 // 悬停信息：给定 0 起始位置，返回富化的 Markdown 文本（空 = 无结果）。
 // 内容按声明种类展开：
@@ -81,9 +81,8 @@ LspDiagnostic to_lsp_diagnostic(const vx::compiler::Diagnostic &d,
 //   - 导入库符号（vec.sum_to 形态）：ABI 符号与 .vxh 来源
 // headers_root 为空时跳过导入库符号解析（其余 hover 不受影响）。
 // include_dirs 为 -I 头文件搜索目录（优先于 headers_root，查找规则同 vxc）。
-std::string hover_at(std::string_view text, int line, int character,
-                     const std::filesystem::path &headers_root = {},
-                     const std::vector<std::filesystem::path> &include_dirs = {});
+std::string hover_at(std::string_view text, int line, int character, const std::filesystem::path& headers_root = {},
+                     const std::vector<std::filesystem::path>& include_dirs = {});
 
 // 跳转定义：给定位置，返回目标声明的范围（找不到返回空范围 start.line<0）
 LspRange definition_at(std::string_view text, int line, int character);
@@ -98,15 +97,45 @@ LspRange definition_at(std::string_view text, int line, int character);
 // snippet_support 为 true 时可调用项给出 `name(${1:a})` 形式的 snippet 插入。
 // headers_root 用于解析 @imp 导入库符号（空 = 跳过）。
 // include_dirs 为 -I 头文件搜索目录（优先于 headers_root，查找规则同 vxc）。
-std::vector<LspCompletion> completion_at(std::string_view text, int line,
-                                         int character,
-                                         const std::filesystem::path &headers_root = {},
-                                         const std::vector<std::filesystem::path> &include_dirs = {},
+std::vector<LspCompletion> completion_at(std::string_view text, int line, int character,
+                                         const std::filesystem::path& headers_root = {},
+                                         const std::vector<std::filesystem::path>& include_dirs = {},
                                          bool snippet_support = false);
 
 // vx-tidy 静态检查结果 → LSP 诊断（经 vxtidy 动态库）。
 // VXTIDY900（语法错误透传）会被跳过：该类问题由前端诊断负责，避免重复。
-std::vector<LspDiagnostic> tidy_diagnostics(std::string_view text,
-                                            std::string_view filename);
+std::vector<LspDiagnostic> tidy_diagnostics(std::string_view text, std::string_view filename);
+
+// ---- 跨文件语义（workspace 级别） ----
+
+struct LspLocation {
+  std::string uri;
+  LspRange range;
+};
+
+struct LspWorkspaceSymbol {
+  std::string name;
+  int kind = 0;
+  std::string uri;
+  LspRange range;
+};
+
+struct LspTextEdit {
+  LspRange range;
+  std::string new_text;
+};
+
+std::vector<LspWorkspaceSymbol> workspace_symbols(const std::string& query,
+                                                  const std::map<std::string, std::string>& docs);
+
+LspLocation definition_at_cross(const std::string& uri, std::string_view text, int line, int character,
+                                const std::map<std::string, std::string>& docs);
+
+std::vector<LspLocation> references_at(const std::string& uri, std::string_view text, int line, int character,
+                                       const std::map<std::string, std::string>& docs, bool include_declaration = true);
+
+std::map<std::string, std::vector<LspTextEdit>> rename_at(const std::string& uri, std::string_view text, int line,
+                                                          int character, const std::string& new_name,
+                                                          const std::map<std::string, std::string>& docs);
 
 } // namespace vxls

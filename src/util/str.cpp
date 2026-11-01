@@ -57,8 +57,7 @@ bool contains(std::string_view s, std::string_view substr) {
   return s.find(substr) != std::string_view::npos;
 }
 
-std::string replace(std::string_view s, std::string_view from,
-                    std::string_view to) {
+std::string replace(std::string_view s, std::string_view from, std::string_view to) {
   if (from.empty()) {
     return std::string(s);
   }

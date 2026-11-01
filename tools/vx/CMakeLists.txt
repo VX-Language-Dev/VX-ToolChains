@@ -6,9 +6,16 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(CMAKE_CXX_STANDARD 23)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CXX_EXTENSIONS OFF)
+    enable_testing()
 endif()
 
-add_executable(vx main.cpp)
+add_executable(vx main.cpp settings.cpp)
 target_compile_options(vx PRIVATE -Wall -Wextra -Wpedantic)
 
 install(TARGETS vx RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# write-settings 设置块生成 / 幂等合并单测
+add_executable(vx_settings_tests tests/settings_test.cpp settings.cpp)
+target_include_directories(vx_settings_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(vx_settings_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME vx_settings_tests COMMAND vx_settings_tests)

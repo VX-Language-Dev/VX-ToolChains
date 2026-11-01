@@ -25,12 +25,12 @@ struct LspMessage {
 std::optional<LspMessage> read_message();
 
 // 发送请求/通知（无 id 为通知）
-void send_message(const LspMessage &msg);
+void send_message(const LspMessage& msg);
 
 // 发送响应：id 回显，result 为结果值
-void send_response(const LspMessage &req, json::Value result);
+void send_response(const LspMessage& req, json::Value result);
 
 // 发送错误响应（LSP ErrorCodes：-32601 方法不支持等）
-void send_error(const LspMessage &req, int code, const std::string &message);
+void send_error(const LspMessage& req, int code, const std::string& message);
 
 } // namespace vxls

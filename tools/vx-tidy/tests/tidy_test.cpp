@@ -9,28 +9,30 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using vxtidy::Finding;
 
 // 在发现中查找指定规则的条目；返回指针或 nullptr
-const Finding *find_rule(const std::vector<Finding> &fs, std::string_view rule) {
-  for (const Finding &f : fs) {
-    if (f.rule == rule) return &f;
+const Finding* find_rule(const std::vector<Finding>& fs, std::string_view rule) {
+  for (const Finding& f : fs) {
+    if (f.rule == rule)
+      return &f;
   }
   return nullptr;
 }
 
-std::size_t count_rule(const std::vector<Finding> &fs, std::string_view rule) {
+std::size_t count_rule(const std::vector<Finding>& fs, std::string_view rule) {
   std::size_t n = 0;
-  for (const Finding &f : fs) {
-    if (f.rule == rule) ++n;
+  for (const Finding& f : fs) {
+    if (f.rule == rule)
+      ++n;
   }
   return n;
 }
@@ -39,31 +41,28 @@ std::size_t count_rule(const std::vector<Finding> &fs, std::string_view rule) {
 
 void test_clean_source() {
   // 完全干净的源码：无任何发现
-  const auto fs = vxtidy::check(
-      "func add(a: int, b: int) -> int:\n"
-      "    return a + b\n"
-      "\n"
-      "func main() -> int:\n"
-      "    var x = add(1, 2)\n"
-      "    out_int(x)\n"
-      "    return 0\n",
-      "clean.vx");
+  const auto fs = vxtidy::check("func add(a: int, b: int) -> int:\n"
+                                "    return a + b\n"
+                                "\n"
+                                "func main() -> int:\n"
+                                "    var x = add(1, 2)\n"
+                                "    out_int(x)\n"
+                                "    return 0\n",
+                                "clean.vx");
   CHECK(fs.empty());
   if (!fs.empty()) {
-    for (const auto &f : fs) {
-      std::fprintf(stderr, "  unexpected: %s\n",
-                   vxtidy::format_text(f, "clean.vx").c_str());
+    for (const auto& f : fs) {
+      std::fprintf(stderr, "  unexpected: %s\n", vxtidy::format_text(f, "clean.vx").c_str());
     }
   }
 }
 
 void test_undeclared_call() {
-  const auto fs = vxtidy::check(
-      "func main():\n"
-      "    nosuchfn(1)\n"
-      "    return\n",
-      "u.vx");
-  const Finding *f = find_rule(fs, "VXTIDY001");
+  const auto fs = vxtidy::check("func main():\n"
+                                "    nosuchfn(1)\n"
+                                "    return\n",
+                                "u.vx");
+  const Finding* f = find_rule(fs, "VXTIDY001");
   CHECK(f != nullptr);
   if (f) {
     CHECK(f->line == 2);
@@ -71,70 +70,63 @@ void test_undeclared_call() {
     CHECK(f->severity == 1);
   }
   // 内置函数不算未声明
-  const auto fs2 = vxtidy::check(
-      "func main():\n"
-      "    out_int(42)\n"
-      "    return\n",
-      "b.vx");
+  const auto fs2 = vxtidy::check("func main():\n"
+                                 "    out_int(42)\n"
+                                 "    return\n",
+                                 "b.vx");
   CHECK(find_rule(fs2, "VXTIDY001") == nullptr);
   // extern 声明后调用合法
-  const auto fs3 = vxtidy::check(
-      "extern puts(s: string)\n"
-      "func main():\n"
-      "    puts(\"hi\")\n"
-      "    return\n",
-      "e.vx");
+  const auto fs3 = vxtidy::check("extern puts(s: string)\n"
+                                 "func main():\n"
+                                 "    puts(\"hi\")\n"
+                                 "    return\n",
+                                 "e.vx");
   CHECK(find_rule(fs3, "VXTIDY001") == nullptr);
 }
 
 void test_unused_variable() {
-  const auto fs = vxtidy::check(
-      "func main():\n"
-      "    var unused = 1\n"
-      "    return\n",
-      "v.vx");
-  const Finding *f = find_rule(fs, "VXTIDY002");
+  const auto fs = vxtidy::check("func main():\n"
+                                "    var unused = 1\n"
+                                "    return\n",
+                                "v.vx");
+  const Finding* f = find_rule(fs, "VXTIDY002");
   CHECK(f != nullptr);
   if (f) {
     CHECK(f->line == 2);
     CHECK(f->severity == 2); // warning
   }
   // 读取过的变量不报
-  const auto fs2 = vxtidy::check(
-      "func main() -> int:\n"
-      "    var used = 1\n"
-      "    return used\n",
-      "v2.vx");
+  const auto fs2 = vxtidy::check("func main() -> int:\n"
+                                 "    var used = 1\n"
+                                 "    return used\n",
+                                 "v2.vx");
   CHECK(find_rule(fs2, "VXTIDY002") == nullptr);
 }
 
 void test_redeclared() {
   // 函数重复声明
-  const auto fs = vxtidy::check(
-      "func dup():\n"
-      "    return\n"
-      "func dup():\n"
-      "    return\n",
-      "d.vx");
+  const auto fs = vxtidy::check("func dup():\n"
+                                "    return\n"
+                                "func dup():\n"
+                                "    return\n",
+                                "d.vx");
   CHECK(count_rule(fs, "VXTIDY003") == 1);
   // 局部变量重复声明
-  const auto fs2 = vxtidy::check(
-      "func f():\n"
-      "    var a = 1\n"
-      "    var a = 2\n"
-      "    out_int(a)\n"
-      "    return\n",
-      "d2.vx");
+  const auto fs2 = vxtidy::check("func f():\n"
+                                 "    var a = 1\n"
+                                 "    var a = 2\n"
+                                 "    out_int(a)\n"
+                                 "    return\n",
+                                 "d2.vx");
   CHECK(find_rule(fs2, "VXTIDY003") != nullptr);
 }
 
 void test_shadowed_param() {
-  const auto fs = vxtidy::check(
-      "func f(x: int) -> int:\n"
-      "    var x = 1\n"
-      "    return x\n",
-      "s.vx");
-  const Finding *f = find_rule(fs, "VXTIDY004");
+  const auto fs = vxtidy::check("func f(x: int) -> int:\n"
+                                "    var x = 1\n"
+                                "    return x\n",
+                                "s.vx");
+  const Finding* f = find_rule(fs, "VXTIDY004");
   CHECK(f != nullptr);
   if (f) {
     CHECK(f->message.find("遮蔽") != std::string::npos);
@@ -142,63 +134,57 @@ void test_shadowed_param() {
 }
 
 void test_missing_return() {
-  const auto fs = vxtidy::check(
-      "func f() -> int:\n"
-      "    var x = 1\n"
-      "    out_int(x)\n",
-      "m.vx");
-  const Finding *f = find_rule(fs, "VXTIDY005");
+  const auto fs = vxtidy::check("func f() -> int:\n"
+                                "    var x = 1\n"
+                                "    out_int(x)\n",
+                                "m.vx");
+  const Finding* f = find_rule(fs, "VXTIDY005");
   CHECK(f != nullptr);
   // void 函数不要求 return
-  const auto fs2 = vxtidy::check(
-      "func g():\n"
-      "    return\n",
-      "m2.vx");
+  const auto fs2 = vxtidy::check("func g():\n"
+                                 "    return\n",
+                                 "m2.vx");
   CHECK(find_rule(fs2, "VXTIDY005") == nullptr);
   // 有 return 不报
-  const auto fs3 = vxtidy::check(
-      "func h() -> int:\n"
-      "    return 0\n",
-      "m3.vx");
+  const auto fs3 = vxtidy::check("func h() -> int:\n"
+                                 "    return 0\n",
+                                 "m3.vx");
   CHECK(find_rule(fs3, "VXTIDY005") == nullptr);
 }
 
 void test_import_prefix() {
   // @imp 导入库前缀调用不报未声明
-  const auto fs = vxtidy::check(
-      "@imp(math)\n"
-      "func main() -> int:\n"
-      "    return math.add(1, 2)\n",
-      "i.vx");
+  const auto fs = vxtidy::check("@imp(math)\n"
+                                "func main() -> int:\n"
+                                "    return math.add(1, 2)\n",
+                                "i.vx");
   CHECK(find_rule(fs, "VXTIDY001") == nullptr);
   // 未导入的前缀报 VXTIDY001
-  const auto fs2 = vxtidy::check(
-      "func main() -> int:\n"
-      "    return unknownlib.f(1)\n",
-      "i2.vx");
+  const auto fs2 = vxtidy::check("func main() -> int:\n"
+                                 "    return unknownlib.f(1)\n",
+                                 "i2.vx");
   CHECK(find_rule(fs2, "VXTIDY001") != nullptr);
 }
 
 void test_syntax_error_passthrough() {
-  const auto fs = vxtidy::check(
-      "func main():\n"
-      "    var x = \n",
-      "sy.vx");
-  const Finding *f = find_rule(fs, "VXTIDY900");
+  const auto fs = vxtidy::check("func main():\n"
+                                "    var x = \n",
+                                "sy.vx");
+  const Finding* f = find_rule(fs, "VXTIDY900");
   CHECK(f != nullptr);
-  if (f) CHECK(f->severity == 1);
+  if (f)
+    CHECK(f->severity == 1);
 }
 
 void test_system_builtins_exempt() {
   // 内置系统能力（file_read / sys_argv_count 等）无需声明，不应报 VXTIDY001
-  const auto fs = vxtidy::check(
-      "func main() -> int:\n"
-      "    var content = file_read(\"a.txt\")\n"
-      "    var n = file_write(\"b.txt\", content)\n"
-      "    out_int(sys_argv_count())\n"
-      "    out(sys_argv_get(1))\n"
-      "    return 0\n",
-      "sys.vx");
+  const auto fs = vxtidy::check("func main() -> int:\n"
+                                "    var content = file_read(\"a.txt\")\n"
+                                "    var n = file_write(\"b.txt\", content)\n"
+                                "    out_int(sys_argv_count())\n"
+                                "    out(sys_argv_get(1))\n"
+                                "    return 0\n",
+                                "sys.vx");
   CHECK(count_rule(fs, "VXTIDY001") == 0);
   CHECK(count_rule(fs, "VXTIDY900") == 0);
 }
@@ -216,7 +202,7 @@ void test_format() {
 }
 
 void test_rules_registry() {
-  const auto &rules = vxtidy::all_rules();
+  const auto& rules = vxtidy::all_rules();
   CHECK(rules.size() >= 6);
   // 编号唯一
   for (std::size_t i = 0; i < rules.size(); ++i) {

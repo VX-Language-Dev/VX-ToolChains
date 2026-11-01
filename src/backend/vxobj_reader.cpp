@@ -20,52 +20,60 @@ struct Cursor {
   explicit Cursor(std::string_view d) : data(d) {}
 
   bool need(std::size_t n) {
-    if (bad) return false;
+    if (bad)
+      return false;
     if (pos + n > data.size()) {
       bad = true;
-      if (error.empty()) error = "VXOBJ 数据截断";
+      if (error.empty())
+        error = "VXOBJ 数据截断";
       return false;
     }
     return true;
   }
   std::uint8_t u8() {
-    if (!need(1)) return 0;
+    if (!need(1))
+      return 0;
     return static_cast<std::uint8_t>(data[pos++]);
   }
   std::uint32_t u32() {
-    if (!need(4)) return 0;
-    std::uint32_t v = (static_cast<std::uint32_t>(
-                           static_cast<unsigned char>(data[pos])) << 24) |
-                      (static_cast<std::uint32_t>(
-                           static_cast<unsigned char>(data[pos + 1])) << 16) |
-                      (static_cast<std::uint32_t>(
-                           static_cast<unsigned char>(data[pos + 2])) << 8) |
-                      static_cast<std::uint32_t>(
-                          static_cast<unsigned char>(data[pos + 3]));
+    if (!need(4))
+      return 0;
+    std::uint32_t v = (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos])) << 24) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos + 1])) << 16) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos + 2])) << 8) |
+                      static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos + 3]));
     pos += 4;
     return v;
   }
   std::string str() {
     const std::uint32_t n = u32();
-    if (!need(n)) return {};
+    if (!need(n))
+      return {};
     std::string s(data.substr(pos, n));
     pos += n;
     return s;
   }
   void skip(std::size_t n) {
-    if (need(n)) pos += n;
+    if (need(n))
+      pos += n;
   }
 };
 
 // 类型标签 → 类型名（vxobj.cpp type_tag_for 的逆映射）
 std::string_view tag_to_type(std::uint8_t tag) {
   switch (tag) {
-    case ir::TYPE_INT:    return "int";
-    case ir::TYPE_FLOAT:  return "float";
-    case ir::TYPE_BOOL:   return "bool";
-    case ir::TYPE_STRING: return "string";
-    case ir::TYPE_VOID:   return "void";
-    default:              return "var";
+    case ir::TYPE_INT:
+      return "int";
+    case ir::TYPE_FLOAT:
+      return "float";
+    case ir::TYPE_BOOL:
+      return "bool";
+    case ir::TYPE_STRING:
+      return "string";
+    case ir::TYPE_VOID:
+      return "void";
+    default:
+      return "var";
   }
 }
 
@@ -98,7 +106,8 @@ VxobjReadResult read_vxobj(std::string_view data) {
     const std::string name = c.str();
     const std::uint32_t off = c.u32();
     const std::uint32_t sz = c.u32();
-    if (c.bad) break;
+    if (c.bad)
+      break;
     if (name == "TypeIR") {
       typeir_off = off;
       typeir_size = sz;
@@ -175,12 +184,14 @@ VxobjReadResult read_vxobj(std::string_view data) {
       ir::Inst inst;
       inst.op = t.u8();
       const std::uint32_t args_len = t.u32();
-      if (!t.need(args_len)) break;
+      if (!t.need(args_len))
+        break;
       inst.args.assign(t.data.data() + t.pos, args_len);
       t.pos += args_len;
       f.instructions.push_back(std::move(inst));
     }
-    if (t.bad) break;
+    if (t.bad)
+      break;
     r.module.funcs.push_back(std::move(f));
   }
   if (t.bad) {
@@ -192,8 +203,8 @@ VxobjReadResult read_vxobj(std::string_view data) {
   const std::uint32_t link_count = t.u32();
   for (std::uint32_t i = 0; i < link_count; ++i) {
     ir::LinkEntry e;
-    (void)t.u32();  // func_id (unused for extern)
-    (void)t.u8();   // is_external
+    (void)t.u32(); // func_id (unused for extern)
+    (void)t.u8();  // is_external
     e.name = t.str();
     e.abi_symbol = t.str();
     e.lib = t.str();
@@ -208,7 +219,8 @@ VxobjReadResult read_vxobj(std::string_view data) {
       p.type = tag_to_type(t.u8());
       e.params.push_back(std::move(p));
     }
-    if (t.bad) break;
+    if (t.bad)
+      break;
     r.module.linkage.push_back(std::move(e));
   }
   if (t.bad) {
@@ -231,7 +243,8 @@ VxobjReadResult read_vxobj(std::string_view data) {
       dep.impl_file = d.str();
       dep.from_cpp = d.u8() != 0;
       dep.cpp_header = d.str();
-      if (d.bad) break;
+      if (d.bad)
+        break;
       r.module.libs.push_back(std::move(dep));
     }
     if (d.bad) {

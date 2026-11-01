@@ -14,17 +14,16 @@ public:
   explicit Arena(std::size_t block_size = 64 * 1024);
   ~Arena();
 
-  Arena(const Arena &) = delete;
-  Arena &operator=(const Arena &) = delete;
+  Arena(const Arena&) = delete;
+  Arena& operator=(const Arena&) = delete;
 
   // 分配指定对齐（必须为 2 的幂）的未初始化内存。
   // 单次需求超过当前块容量时会开辟新块。
-  void *allocate(std::size_t bytes,
-                 std::size_t alignment = alignof(std::max_align_t));
+  void* allocate(std::size_t bytes, std::size_t alignment = alignof(std::max_align_t));
 
   // 在 arena 上原地构造 T
-  template <class T, class... Args> T *create(Args &&...args) {
-    void *mem = allocate(sizeof(T), alignof(T));
+  template <class T, class... Args> T* create(Args&&... args) {
+    void* mem = allocate(sizeof(T), alignof(T));
     return ::new (mem) T(std::forward<Args>(args)...);
   }
 
@@ -39,8 +38,8 @@ private:
 
   void new_block(std::size_t bytes, std::size_t alignment);
 
-  Block *head_ = nullptr;    // 最新块在前
-  Block *current_ = nullptr; // 当前 bump 块
+  Block* head_ = nullptr;    // 最新块在前
+  Block* current_ = nullptr; // 当前 bump 块
   std::size_t block_size_;
 };
 

@@ -11,12 +11,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using vmake_lsp::ParseResult;
@@ -27,20 +27,19 @@ ParseResult parse(std::string_view text) {
   return vmake_lsp::parse_vmake(text);
 }
 
-std::size_t diag_count(const ParseResult &r) { return r.diagnostics.size(); }
+std::size_t diag_count(const ParseResult& r) {
+  return r.diagnostics.size();
+}
 
 // 断言恰好一条诊断且文案包含 needle
-void expect_one_diag(const ParseResult &r, std::string_view needle,
-                     const char *file, int line) {
+void expect_one_diag(const ParseResult& r, std::string_view needle, const char* file, int line) {
   if (r.diagnostics.size() != 1) {
-    std::fprintf(stderr, "FAIL %s:%d: 期望 1 条诊断，实际 %zu\n", file, line,
-                 r.diagnostics.size());
+    std::fprintf(stderr, "FAIL %s:%d: 期望 1 条诊断，实际 %zu\n", file, line, r.diagnostics.size());
     ++g_failures;
     return;
   }
   if (r.diagnostics[0].message.find(needle) == std::string::npos) {
-    std::fprintf(stderr, "FAIL %s:%d: 诊断文案不含 '%.*s'，实际 '%s'\n", file,
-                 line, (int)needle.size(), needle.data(),
+    std::fprintf(stderr, "FAIL %s:%d: 诊断文案不含 '%.*s'，实际 '%s'\n", file, line, (int)needle.size(), needle.data(),
                  r.diagnostics[0].message.c_str());
     ++g_failures;
   }
@@ -53,9 +52,10 @@ void test_valid_target() {
   CHECK(r.ok);
   CHECK(diag_count(r) == 0);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
+  if (r.targets.size() != 1)
+    return;
 
-  const VTarget &t = r.targets[0];
+  const VTarget& t = r.targets[0];
   CHECK(t.kind == TargetKind::Exe);
   CHECK(t.name == "app");
   CHECK(t.sources.size() == 2);
@@ -79,11 +79,13 @@ void test_dylib_and_output() {
   ParseResult r = parse("dylib(\"calc\", sources=[\"a.vx\"], output=\"libcalc.dylib\")\n");
   CHECK(r.ok);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
-  const VTarget &t = r.targets[0];
+  if (r.targets.size() != 1)
+    return;
+  const VTarget& t = r.targets[0];
   CHECK(t.kind == TargetKind::Dylib);
   CHECK(t.output.has_value());
-  if (t.output) CHECK(*t.output == "libcalc.dylib");
+  if (t.output)
+    CHECK(*t.output == "libcalc.dylib");
 }
 
 void test_keyword_name() {
@@ -91,7 +93,8 @@ void test_keyword_name() {
   ParseResult r = parse("exe(name=\"app\", sources=[\"a.vx\"])\n");
   CHECK(r.ok);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
+  if (r.targets.size() != 1)
+    return;
   CHECK(r.targets[0].name == "app");
 }
 
@@ -103,8 +106,9 @@ void test_multiline_and_comments() {
   CHECK(r.ok);
   CHECK(diag_count(r) == 0);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
-  const VTarget &t = r.targets[0];
+  if (r.targets.size() != 1)
+    return;
+  const VTarget& t = r.targets[0];
   CHECK(t.sources.size() == 2);
   CHECK(t.source_ranges.size() == 2);
   // 第一个源文件位于第 2 行
@@ -120,7 +124,8 @@ void test_escapes() {
   ParseResult r = parse("exe(\"a\\u0042c\", sources=[\"c\\u0041.vx\", \"d\\t.vx\"])\n");
   CHECK(r.ok);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
+  if (r.targets.size() != 1)
+    return;
   CHECK(r.targets[0].name == "aBc");
   CHECK(r.targets[0].sources.size() == 2);
   CHECK(r.targets[0].sources[0] == "cA.vx");
@@ -138,7 +143,8 @@ void test_unicode_escape_utf8() {
   CHECK(r.ok);
   CHECK(diag_count(r) == 0);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
+  if (r.targets.size() != 1)
+    return;
   CHECK(r.targets[0].sources[0] == "\u4e2d.vx");
 }
 
@@ -147,7 +153,8 @@ void test_single_quotes() {
   ParseResult r = parse("exe('app', sources=['a.vx'])\n");
   CHECK(r.ok);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
+  if (r.targets.size() != 1)
+    return;
   CHECK(r.targets[0].name == "app");
   CHECK(r.targets[0].sources[0] == "a.vx");
 }
@@ -266,15 +273,16 @@ void test_error_recovery() {
   ParseResult r = parse("foo()\nexe(\"app\", sources=[\"a.vx\"])\n");
   CHECK(diag_count(r) == 1);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() == 1) CHECK(r.targets[0].name == "app");
+  if (r.targets.size() == 1)
+    CHECK(r.targets[0].name == "app");
 }
 
 void test_hit_test() {
-  const std::string text =
-      "exe(\"app\", sources=[\"a.vx\"], output=\"out\")\n";
+  const std::string text = "exe(\"app\", sources=[\"a.vx\"], output=\"out\")\n";
   ParseResult r = parse(text);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
+  if (r.targets.size() != 1)
+    return;
 
   auto hit = vmake_lsp::hit_test(r.targets, 0, 1);
   CHECK(hit.part == vmake_lsp::Hit::Part::Kind);
@@ -303,14 +311,14 @@ void test_hit_test() {
 
 void test_deps_field() {
   // 解析 + 位置
-  const std::string text =
-      "exe(\"app\", sources=[\"a.vx\"], deps=[\"calc\", \"util\"])\n";
+  const std::string text = "exe(\"app\", sources=[\"a.vx\"], deps=[\"calc\", \"util\"])\n";
   ParseResult r = parse(text);
   CHECK(r.ok);
   CHECK(diag_count(r) == 0);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
-  const VTarget &t = r.targets[0];
+  if (r.targets.size() != 1)
+    return;
+  const VTarget& t = r.targets[0];
   CHECK(t.has_deps);
   CHECK(t.deps.size() == 2);
   if (t.deps.size() == 2) {
@@ -334,8 +342,7 @@ void test_deps_field() {
   CHECK(plain.ok);
   if (plain.targets.size() == 1) {
     CHECK(!plain.targets[0].has_deps);
-    const auto hit0 =
-        vmake_lsp::hit_test(plain.targets, 0, 0);
+    const auto hit0 = vmake_lsp::hit_test(plain.targets, 0, 0);
     CHECK(hit0.part != vmake_lsp::Hit::Part::Deps);
   }
 
@@ -358,31 +365,31 @@ void test_kind_name() {
 
 void test_flags_and_tests_fields() {
   // cflags / defines / ldflags / tests：解析 + 位置（列号由 find 计算，稳健）
-  const std::string text =
-      "exe(\"app\", sources=[\"a.vx\"], cflags=[\"-Wall\"],\n"
-      "    defines=[\"NDEBUG\", \"FOO=1\"], ldflags=[\"-s\"],\n"
-      "    tests=[\"tests/app_test.vx\"])\n";
+  const std::string text = "exe(\"app\", sources=[\"a.vx\"], cflags=[\"-Wall\"],\n"
+                           "    defines=[\"NDEBUG\", \"FOO=1\"], ldflags=[\"-s\"],\n"
+                           "    tests=[\"tests/app_test.vx\"])\n";
   ParseResult r = parse(text);
   CHECK(r.ok);
   CHECK(diag_count(r) == 0);
   CHECK(r.targets.size() == 1);
-  if (r.targets.size() != 1) return;
-  const VTarget &t = r.targets[0];
+  if (r.targets.size() != 1)
+    return;
+  const VTarget& t = r.targets[0];
   CHECK(t.extra_arrays.size() == 4);
-  if (t.extra_arrays.size() != 4) return;
+  if (t.extra_arrays.size() != 4)
+    return;
 
-  auto col = [&](std::string_view needle, std::size_t off = 0) {
-    return static_cast<int>(text.find(needle, off));
-  };
+  auto col = [&](std::string_view needle, std::size_t off = 0) { return static_cast<int>(text.find(needle, off)); };
 
-  const vmake_lsp::ArrayField &cflags = t.extra_arrays[0];
+  const vmake_lsp::ArrayField& cflags = t.extra_arrays[0];
   CHECK(cflags.key == "cflags");
   CHECK(cflags.values.size() == 1);
-  if (cflags.values.size() == 1) CHECK(cflags.values[0] == "-Wall");
+  if (cflags.values.size() == 1)
+    CHECK(cflags.values[0] == "-Wall");
   CHECK(cflags.kw_range.start.character == col("cflags"));
   CHECK(cflags.value_ranges[0].start.character == col("\"-Wall\"") + 1);
 
-  const vmake_lsp::ArrayField &defines = t.extra_arrays[1];
+  const vmake_lsp::ArrayField& defines = t.extra_arrays[1];
   CHECK(defines.key == "defines");
   CHECK(defines.values.size() == 2);
   if (defines.values.size() == 2) {
@@ -392,15 +399,17 @@ void test_flags_and_tests_fields() {
     CHECK(defines.value_ranges[1].start.line == 1);
   }
 
-  const vmake_lsp::ArrayField &ldflags = t.extra_arrays[2];
+  const vmake_lsp::ArrayField& ldflags = t.extra_arrays[2];
   CHECK(ldflags.key == "ldflags");
   CHECK(ldflags.values.size() == 1);
-  if (ldflags.values.size() == 1) CHECK(ldflags.values[0] == "-s");
+  if (ldflags.values.size() == 1)
+    CHECK(ldflags.values[0] == "-s");
 
-  const vmake_lsp::ArrayField &tests = t.extra_arrays[3];
+  const vmake_lsp::ArrayField& tests = t.extra_arrays[3];
   CHECK(tests.key == "tests");
   CHECK(tests.values.size() == 1);
-  if (tests.values.size() == 1) CHECK(tests.values[0] == "tests/app_test.vx");
+  if (tests.values.size() == 1)
+    CHECK(tests.values[0] == "tests/app_test.vx");
 
   // hit_test：字段名 / 元素
   auto hit = vmake_lsp::hit_test(r.targets, 0, col("cflags") + 1);
@@ -421,11 +430,9 @@ void test_flags_and_tests_fields() {
 
 void test_flags_tests_diagnostics() {
   // 重复字段
-  ParseResult dup = parse(
-      "exe(\"a\", sources=[\"a.vx\"], cflags=[\"-O2\"], cflags=[\"-g\"])\n");
+  ParseResult dup = parse("exe(\"a\", sources=[\"a.vx\"], cflags=[\"-O2\"], cflags=[\"-g\"])\n");
   EXPECT_DIAG(dup, "字段 cflags 重复");
-  ParseResult dup2 = parse(
-      "exe(\"a\", sources=[\"a.vx\"], tests=[\"t.vx\"], tests=[\"u.vx\"])\n");
+  ParseResult dup2 = parse("exe(\"a\", sources=[\"a.vx\"], tests=[\"t.vx\"], tests=[\"u.vx\"])\n");
   EXPECT_DIAG(dup2, "字段 tests 重复");
 
   // 类型错误 / 未闭合
@@ -451,11 +458,9 @@ void test_flags_tests_diagnostics() {
   EXPECT_DIAG(bad_ext, "测试文件必须是 .vx 文件: t.txt");
 
   // staticlib：禁止 cflags / defines / ldflags，但允许 tests
-  ParseResult sl_flags =
-      parse("staticlib(\"u\", sources=[\"u.vx\"], cflags=[\"-O2\"])\n");
+  ParseResult sl_flags = parse("staticlib(\"u\", sources=[\"u.vx\"], cflags=[\"-O2\"])\n");
   EXPECT_DIAG(sl_flags, "staticlib 目标不允许 cflags / defines / ldflags");
-  ParseResult sl_tests =
-      parse("staticlib(\"u\", sources=[\"u.vx\"], tests=[\"t.vx\"])\n");
+  ParseResult sl_tests = parse("staticlib(\"u\", sources=[\"u.vx\"], tests=[\"t.vx\"])\n");
   CHECK(sl_tests.ok);
   CHECK(diag_count(sl_tests) == 0);
   // 非 staticlib 目标不受限

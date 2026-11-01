@@ -30,6 +30,7 @@ vlnk = "vx_toolkit._dispatch:main"
 vmake = "vx_toolkit._dispatch:main"
 vxls = "vx_toolkit._dispatch:main"
 vmake-lsp = "vx_toolkit._dispatch:main"
+vfmt = "vx_toolkit._dispatch:main"
 vx = "vx_toolkit._dispatch:main"
 
 [tool.hatch.build.targets.wheel]

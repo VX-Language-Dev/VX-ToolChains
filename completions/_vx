@@ -2,6 +2,12 @@
 # Zsh completion for vx meta-command
 
 _vx() {
+    # write-settings 的第二个参数是编辑器名
+    if (( CURRENT == 3 )) && [[ ${words[2]} == write-settings ]]; then
+        _values 'editor' nvim neovim vim helix hx emacs
+        return
+    fi
+
     local -a commands
     commands=(
         'compile:Compile .vx source to .vxobj (vxc)'
@@ -12,9 +18,12 @@ _vx() {
         'b:Build project (vmake)'
         'run:Build and run an exe target (vmake run)'
         'test:Build and run test targets (vmake test)'
+        'fmt:Format VX source files (vfmt)'
+        'f:Format VX source files (vfmt)'
         'lsp:Start VX language server (vxls)'
         'vmake-lsp:Start VMake language server'
         'clean:Clean build directory'
+        'write-settings:Register the VX language in an editor (nvim/vim/helix/emacs)'
     )
     _describe 'command' commands
 }

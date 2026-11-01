@@ -27,12 +27,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using namespace vx::compiler;
@@ -41,10 +41,11 @@ namespace fs = std::filesystem;
 namespace backend = vx::backend;
 
 // 执行可执行文件，返回 (退出码, stdout)；退出码 -1 表示启动失败
-std::pair<int, std::string> run_capture(const std::string &exe) {
+std::pair<int, std::string> run_capture(const std::string& exe) {
   std::string cmd = "\"" + exe + "\" 2>/dev/null";
-  FILE *p = ::popen(cmd.c_str(), "r");
-  if (!p) return {-1, {}};
+  FILE* p = ::popen(cmd.c_str(), "r");
+  if (!p)
+    return {-1, {}};
   std::string out;
   std::array<char, 256> buf{};
   std::size_t n = 0;
@@ -57,32 +58,29 @@ std::pair<int, std::string> run_capture(const std::string &exe) {
 }
 
 // 全流程：源码（含 @imp/@cppimp）→ 运行，断言 stdout 等于 expected。
-void run_case(const char *src, const std::string &expected,
-              const std::string &tag) {
-  const std::string exe = "/tmp/vx_import_e2e_" + tag + "_" +
-                          std::to_string(::getpid());
+void run_case(const char* src, const std::string& expected, const std::string& tag) {
+  const std::string exe = "/tmp/vx_import_e2e_" + tag + "_" + std::to_string(::getpid());
   static Arena arena;
   DiagBag bag;
   auto toks = tokenize(src, "<e2e>", arena, bag);
   auto prog = parse(toks, "<e2e>", arena, bag);
   CHECK(prog != std::nullopt);
-  if (!prog) return;
+  if (!prog)
+    return;
 
   const fs::path headers = fs::path(VX_SOURCE_DIR) / "headers";
   ImportContext ctx{headers, headers};
   auto imports = build_import_table(*prog, ctx, "<e2e>", bag);
   CHECK(imports.has_value());
   if (!imports) {
-    std::fprintf(stderr, "import error (%s):\n%s", tag.c_str(),
-                 render_all(bag, src, false).c_str());
+    std::fprintf(stderr, "import error (%s):\n%s", tag.c_str(), render_all(bag, src, false).c_str());
     return;
   }
 
   auto mod = generate_module(*prog, "<e2e>", bag, &*imports);
   CHECK(mod.has_value());
   if (!mod) {
-    std::fprintf(stderr, "codegen error (%s):\n%s", tag.c_str(),
-                 render_all(bag, src, false).c_str());
+    std::fprintf(stderr, "codegen error (%s):\n%s", tag.c_str(), render_all(bag, src, false).c_str());
     return;
   }
 
@@ -90,7 +88,8 @@ void run_case(const char *src, const std::string &expected,
   const std::string obj = obj::serialize(*mod, host);
   auto rt = backend::read_vxobj(obj);
   CHECK(rt.ok);
-  if (!rt.ok) return;
+  if (!rt.ok)
+    return;
 
   auto em = backend::emit_llvm_ir(rt.module, host);
   CHECK(em.ok);

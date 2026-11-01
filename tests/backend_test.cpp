@@ -18,12 +18,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using namespace vx::compiler;
@@ -47,8 +47,7 @@ std::optional<ir::ModuleIR> gen_src(std::string_view src) {
   }
   auto mod = generate_module(*prog, "<test>", bag);
   if (!mod) {
-    std::fprintf(stderr, "FAIL codegen:\n%s",
-                 render_all(bag, src, false).c_str());
+    std::fprintf(stderr, "FAIL codegen:\n%s", render_all(bag, src, false).c_str());
     ++g_failures;
     return std::nullopt;
   }
@@ -66,13 +65,12 @@ bool ret_type_eq(std::string_view a, std::string_view b) {
 // ==================== Reader ====================
 
 void test_reader_roundtrip() {
-  auto m = gen_src(
-      "extern out(msg: string)\n"
-      "func add(a: int, b: int) -> int:\n"
-      "    return a + b\n"
-      "func main() -> int:\n"
-      "    out(\"hi\")\n"
-      "    return 0\n");
+  auto m = gen_src("extern out(msg: string)\n"
+                   "func add(a: int, b: int) -> int:\n"
+                   "    return a + b\n"
+                   "func main() -> int:\n"
+                   "    out(\"hi\")\n"
+                   "    return 0\n");
   CHECK(m);
   const std::string data = obj::serialize(*m, "test-target");
 
@@ -86,10 +84,9 @@ void test_reader_roundtrip() {
   CHECK(rt.module.funcs.size() == m->funcs.size());
 
   // 逐函数比对名字 / 参数 / 返回类型 / 指令数
-  for (std::size_t i = 0; i < m->funcs.size() && i < rt.module.funcs.size();
-       ++i) {
-    const ir::FuncIR &a = m->funcs[i];
-    const ir::FuncIR &b = rt.module.funcs[i];
+  for (std::size_t i = 0; i < m->funcs.size() && i < rt.module.funcs.size(); ++i) {
+    const ir::FuncIR& a = m->funcs[i];
+    const ir::FuncIR& b = rt.module.funcs[i];
     CHECK(a.name == b.name);
     CHECK(a.id == b.id);
     CHECK(ret_type_eq(a.ret_type, b.ret_type));
@@ -100,8 +97,7 @@ void test_reader_roundtrip() {
       CHECK(a.params[j].name == b.params[j].name);
       CHECK(a.params[j].type == b.params[j].type);
     }
-    for (std::size_t j = 0;
-         j < a.instructions.size() && j < b.instructions.size(); ++j) {
+    for (std::size_t j = 0; j < a.instructions.size() && j < b.instructions.size(); ++j) {
       CHECK(a.instructions[j].op == b.instructions[j].op);
       CHECK(a.instructions[j].args == b.instructions[j].args);
     }
@@ -142,11 +138,10 @@ void test_reader_bad_version() {
 // ==================== Emitter ====================
 
 void test_emitter_simple() {
-  auto m = gen_src(
-      "extern out(msg: string)\n"
-      "func main() -> int:\n"
-      "    out(\"hello vx\")\n"
-      "    return 0\n");
+  auto m = gen_src("extern out(msg: string)\n"
+                   "func main() -> int:\n"
+                   "    out(\"hello vx\")\n"
+                   "    return 0\n");
   CHECK(m);
   auto r = backend::emit_llvm_ir(*m, kTriple);
   CHECK(r.ok);
@@ -154,7 +149,7 @@ void test_emitter_simple() {
     std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
     return;
   }
-  const std::string &ir = r.ir;
+  const std::string& ir = r.ir;
   CHECK(ir.find("target triple = \"arm64-apple-macosx\"") != std::string::npos);
   CHECK(ir.find("define i32 @vx_main()") != std::string::npos);
   CHECK(ir.find("define i32 @main()") != std::string::npos);
@@ -167,25 +162,24 @@ void test_emitter_simple() {
 
 void test_emitter_no_entry_wrapper() {
   // 动态库模式：main 仍发射为 @vx_main，但不生成进程入口 @main
-  auto m = gen_src(
-      "func main() -> int:\n"
-      "    return 0\n");
+  auto m = gen_src("func main() -> int:\n"
+                   "    return 0\n");
   CHECK(m);
   auto r = backend::emit_llvm_ir(*m, kTriple, false);
   CHECK(r.ok);
-  if (!r.ok) return;
+  if (!r.ok)
+    return;
   CHECK(r.ir.find("define i32 @vx_main()") != std::string::npos);
   CHECK(r.ir.find("define i32 @main()") == std::string::npos);
 }
 
 void test_emitter_arithmetic_and_branch() {
-  auto m = gen_src(
-      "extern out_int(v: int)\n"
-      "func main() -> int:\n"
-      "    var x = 3 + 4 * 2\n"
-      "    if x > 5:\n"
-      "        out_int(x)\n"
-      "    return x\n");
+  auto m = gen_src("extern out_int(v: int)\n"
+                   "func main() -> int:\n"
+                   "    var x = 3 + 4 * 2\n"
+                   "    if x > 5:\n"
+                   "        out_int(x)\n"
+                   "    return x\n");
   CHECK(m);
   auto r = backend::emit_llvm_ir(*m, kTriple);
   CHECK(r.ok);
@@ -193,7 +187,7 @@ void test_emitter_arithmetic_and_branch() {
     std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
     return;
   }
-  const std::string &ir = r.ir;
+  const std::string& ir = r.ir;
   CHECK(ir.find("mul i32") != std::string::npos);
   CHECK(ir.find("add i32") != std::string::npos);
   CHECK(ir.find("icmp sgt i32") != std::string::npos);
@@ -202,11 +196,10 @@ void test_emitter_arithmetic_and_branch() {
 }
 
 void test_emitter_param_and_return() {
-  auto m = gen_src(
-      "func square(n: int) -> int:\n"
-      "    return n * n\n"
-      "func main() -> int:\n"
-      "    return square(5)\n");
+  auto m = gen_src("func square(n: int) -> int:\n"
+                   "    return n * n\n"
+                   "func main() -> int:\n"
+                   "    return square(5)\n");
   CHECK(m);
   auto r = backend::emit_llvm_ir(*m, kTriple);
   CHECK(r.ok);
@@ -214,19 +207,18 @@ void test_emitter_param_and_return() {
     std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
     return;
   }
-  const std::string &ir = r.ir;
+  const std::string& ir = r.ir;
   CHECK(ir.find("define i32 @square(i32 %a0)") != std::string::npos);
   CHECK(ir.find("store i32 %a0, ptr %s0") != std::string::npos);
   CHECK(ir.find("call i32 @square(i32 5)") != std::string::npos);
 }
 
 void test_emitter_void_function() {
-  auto m = gen_src(
-      "func nop():\n"
-      "    return\n"
-      "func main():\n"
-      "    nop()\n"
-      "    return\n");
+  auto m = gen_src("func nop():\n"
+                   "    return\n"
+                   "func main():\n"
+                   "    nop()\n"
+                   "    return\n");
   CHECK(m);
   auto r = backend::emit_llvm_ir(*m, kTriple);
   CHECK(r.ok);
@@ -239,15 +231,14 @@ void test_emitter_void_function() {
 }
 
 void test_emitter_float() {
-  auto m = gen_src(
-      "extern out_float(v: float)\n"
-      "func cmp() -> int:\n"
-      "    if 1.0 < 2.5:\n"
-      "        return 1\n"
-      "    return 0\n"
-      "func main() -> float:\n"
-      "    out_float(1.5 + 2.25 * 2.0 - 0.5 / 2.0)\n"
-      "    return -3.25\n");
+  auto m = gen_src("extern out_float(v: float)\n"
+                   "func cmp() -> int:\n"
+                   "    if 1.0 < 2.5:\n"
+                   "        return 1\n"
+                   "    return 0\n"
+                   "func main() -> float:\n"
+                   "    out_float(1.5 + 2.25 * 2.0 - 0.5 / 2.0)\n"
+                   "    return -3.25\n");
   CHECK(m);
   auto r = backend::emit_llvm_ir(*m, kTriple);
   CHECK(r.ok);
@@ -255,7 +246,7 @@ void test_emitter_float() {
     std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
     return;
   }
-  const std::string &ir = r.ir;
+  const std::string& ir = r.ir;
   CHECK(ir.find("declare void @out_float(double)") != std::string::npos);
   CHECK(ir.find("fadd double") != std::string::npos);
   CHECK(ir.find("fsub double") != std::string::npos);
@@ -311,12 +302,11 @@ void test_emitter_unsupported_opcode() {
 
 void test_emitter_system_builtins() {
   // 系统能力 builtin：声明与调用发射（符号名与 VX 可见名不同）
-  auto m = gen_src(
-      "func main() -> int:\n"
-      "    var s = file_read(\"a.txt\")\n"
-      "    var n = file_write(\"b.txt\", s)\n"
-      "    out_int(sys_argv_count())\n"
-      "    return 0\n");
+  auto m = gen_src("func main() -> int:\n"
+                   "    var s = file_read(\"a.txt\")\n"
+                   "    var n = file_write(\"b.txt\", s)\n"
+                   "    out_int(sys_argv_count())\n"
+                   "    return 0\n");
   CHECK(m);
   auto r = backend::emit_llvm_ir(*m, kTriple);
   CHECK(r.ok);
@@ -324,7 +314,7 @@ void test_emitter_system_builtins() {
     std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
     return;
   }
-  const std::string &ir = r.ir;
+  const std::string& ir = r.ir;
   CHECK(ir.find("declare ptr @vx_file_read(ptr)") != std::string::npos);
   CHECK(ir.find("call ptr @vx_file_read(ptr") != std::string::npos);
   CHECK(ir.find("declare i32 @vx_file_write(ptr, ptr)") != std::string::npos);

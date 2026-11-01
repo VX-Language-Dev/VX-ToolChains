@@ -16,9 +16,9 @@ namespace vx::backend {
 struct VxobjReadResult {
   bool ok = false;
   std::string error;
-  std::string target;             // 文件头中的平台三元组
+  std::string target; // 文件头中的平台三元组
   vx::compiler::ir::ModuleIR module;
-  std::deque<std::string> pool;   // 支撑 Param 的 string_view
+  std::deque<std::string> pool; // 支撑 Param 的 string_view
 };
 
 // 解析 VXOBJ v4 字节流；失败时 ok=false 且 error 含中文原因。

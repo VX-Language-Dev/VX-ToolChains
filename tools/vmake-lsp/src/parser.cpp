@@ -2,8 +2,8 @@
 #include "parser.hpp"
 
 #include <cctype>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <set>
 #include <string>
 #include <string_view>
@@ -15,20 +15,23 @@ namespace {
 // 与 tools/vmake/src/config.cpp 的 valid_target_name 保持一致：
 // 目标名仅允许字母、数字、下划线与连字符。
 bool valid_target_name(std::string_view name) {
-  if (name.empty()) return false;
+  if (name.empty())
+    return false;
   for (char c : name) {
     const auto u = static_cast<unsigned char>(c);
-    if (!(std::isalnum(u) != 0 || c == '_' || c == '-')) return false;
+    if (!(std::isalnum(u) != 0 || c == '_' || c == '-'))
+      return false;
   }
   return true;
 }
 
 // 绝对路径判定：POSIX 的 `/` 开头，以及 Windows 盘符前缀（如 `C:\`）。
 bool is_absolute_path(std::string_view p) {
-  if (p.empty()) return false;
-  if (p[0] == '/' || p[0] == '\\') return true;
-  return p.size() >= 2 && std::isalpha(static_cast<unsigned char>(p[0])) &&
-         p[1] == ':';
+  if (p.empty())
+    return false;
+  if (p[0] == '/' || p[0] == '\\')
+    return true;
+  return p.size() >= 2 && std::isalpha(static_cast<unsigned char>(p[0])) && p[1] == ':';
 }
 
 // 路径分量中是否含 `..`（按 `/` 与 `\` 切分）。
@@ -36,9 +39,12 @@ bool has_dotdot_component(std::string_view p) {
   std::size_t i = 0;
   while (i <= p.size()) {
     std::size_t j = p.find_first_of("/\\", i);
-    if (j == std::string_view::npos) j = p.size();
-    if (p.substr(i, j - i) == "..") return true;
-    if (j == p.size()) break;
+    if (j == std::string_view::npos)
+      j = p.size();
+    if (p.substr(i, j - i) == "..")
+      return true;
+    if (j == p.size())
+      break;
     i = j + 1;
   }
   return false;
@@ -61,8 +67,8 @@ enum class TokType {
 
 struct Token {
   TokType type = TokType::End;
-  std::string text;   // 原始源文本
-  std::string value;  // 字符串：未转义值；标识符：同 text
+  std::string text;  // 原始源文本
+  std::string value; // 字符串：未转义值；标识符：同 text
   Position start;
   Position end; // 不含
 };
@@ -92,7 +98,8 @@ public:
       }
       if (c == '#') {
         // 注释：跳到行尾
-        while (pos_ < text_.size() && text_[pos_] != '\n') advance(1);
+        while (pos_ < text_.size() && text_[pos_] != '\n')
+          advance(1);
         continue;
       }
       if (c == '"' || c == '\'') {
@@ -134,7 +141,8 @@ public:
       }
       if (is_ident_start(c)) {
         std::size_t start = pos_;
-        while (pos_ < text_.size() && is_ident_char(text_[pos_])) advance(1);
+        while (pos_ < text_.size() && is_ident_char(text_[pos_]))
+          advance(1);
         std::string id(text_.substr(start, pos_ - start));
         tokens_.push_back({TokType::Ident, id, id, cur_pos_at(start), cur_pos()});
         continue;
@@ -146,8 +154,7 @@ public:
           advance(1);
         }
         std::string num(text_.substr(start, pos_ - start));
-        tokens_.push_back(
-            {TokType::Num, num, num, cur_pos_at(start), cur_pos()});
+        tokens_.push_back({TokType::Num, num, num, cur_pos_at(start), cur_pos()});
         continue;
       }
       // 未知字符：跳过
@@ -156,7 +163,7 @@ public:
     tokens_.push_back({TokType::End, "", "", cur_pos(), cur_pos()});
   }
 
-  const std::vector<Token> &tokens() const { return tokens_; }
+  const std::vector<Token>& tokens() const { return tokens_; }
 
 private:
   std::string_view text_;
@@ -203,7 +210,7 @@ private:
     return {type, std::string(text), std::string(text), s, cur_pos()};
   }
 
-  bool parse_string(char quote, Token &tok) {
+  bool parse_string(char quote, Token& tok) {
     // quote 已由调用者确认，pos_ 指向 quote
     advance(1); // 消费 quote
     std::string out;
@@ -217,33 +224,53 @@ private:
         tok.end = cur_pos();
         return true;
       }
-      if (c == '\n') return false; // 字符串不能跨行
+      if (c == '\n')
+        return false; // 字符串不能跨行
       if (quote == '"' && c == '\\') {
         advance(1); // 消费反斜杠
-        if (pos_ >= text_.size()) return false;
+        if (pos_ >= text_.size())
+          return false;
         char esc = text_[pos_];
         switch (esc) {
-        case 'n': out += '\n'; advance(1); break;
-        case 't': out += '\t'; advance(1); break;
-        case 'r': out += '\r'; advance(1); break;
-        case '"': out += '"'; advance(1); break;
-        case '\\': out += '\\'; advance(1); break;
-        case 'u': {
-          advance(1); // 消费 u
-          if (pos_ + 4 > text_.size()) return false;
-          unsigned cp = 0;
-          for (int i = 0; i < 4; ++i) {
-            char h = text_[pos_];
-            if (!(std::isxdigit(static_cast<unsigned char>(h)) != 0)) return false;
-            cp = cp * 16 +
-                 (std::isdigit(static_cast<unsigned char>(h)) ? h - '0'
-                                                              : (std::tolower(static_cast<unsigned char>(h)) - 'a' + 10));
+          case 'n':
+            out += '\n';
             advance(1);
+            break;
+          case 't':
+            out += '\t';
+            advance(1);
+            break;
+          case 'r':
+            out += '\r';
+            advance(1);
+            break;
+          case '"':
+            out += '"';
+            advance(1);
+            break;
+          case '\\':
+            out += '\\';
+            advance(1);
+            break;
+          case 'u': {
+            advance(1); // 消费 u
+            if (pos_ + 4 > text_.size())
+              return false;
+            unsigned cp = 0;
+            for (int i = 0; i < 4; ++i) {
+              char h = text_[pos_];
+              if (!(std::isxdigit(static_cast<unsigned char>(h)) != 0))
+                return false;
+              cp = cp * 16 + (std::isdigit(static_cast<unsigned char>(h))
+                                  ? h - '0'
+                                  : (std::tolower(static_cast<unsigned char>(h)) - 'a' + 10));
+              advance(1);
+            }
+            append_utf8(out, cp);
+            break; // 4 位十六进制已全部消费，不再额外前进
           }
-          append_utf8(out, cp);
-          break; // 4 位十六进制已全部消费，不再额外前进
-        }
-        default: return false;
+          default:
+            return false;
         }
         continue;
       }
@@ -253,7 +280,7 @@ private:
     return false;
   }
 
-  static void append_utf8(std::string &out, unsigned cp) {
+  static void append_utf8(std::string& out, unsigned cp) {
     if (cp < 0x80) {
       out += static_cast<char>(cp);
     } else if (cp < 0x800) {
@@ -292,28 +319,26 @@ private:
   std::size_t pos_ = 0;
   std::set<std::string> seen_names_; // 已声明的目标名（用于查重）
 
-  const Token &cur() const {
-    return toks_[pos_ < toks_.size() ? pos_ : toks_.size() - 1];
-  }
-  bool eof() const {
-    return pos_ >= toks_.size() || cur().type == TokType::End;
-  }
+  const Token& cur() const { return toks_[pos_ < toks_.size() ? pos_ : toks_.size() - 1]; }
+  bool eof() const { return pos_ >= toks_.size() || cur().type == TokType::End; }
 
-  void add_diag(ParseResult &result, const Range &r, std::string message) {
+  void add_diag(ParseResult& result, const Range& r, std::string message) {
     result.diagnostics.push_back({r, 1, std::move(message)});
   }
 
   void skip_newlines() {
-    while (!eof() && cur().type == TokType::Newline) ++pos_;
+    while (!eof() && cur().type == TokType::Newline)
+      ++pos_;
   }
 
   // 解析整个文档
-  void parse_document(ParseResult &result) {
+  void parse_document(ParseResult& result) {
     skip_newlines();
     while (!eof()) {
       if (!parse_statement(result)) {
         // 错误恢复：跳到下一行或结束
-        while (!eof() && cur().type != TokType::Newline) ++pos_;
+        while (!eof() && cur().type != TokType::Newline)
+          ++pos_;
         skip_newlines();
       } else {
         skip_newlines();
@@ -328,8 +353,7 @@ private:
 
   // 解析字符串数组字段（cflags/defines/ldflags/tests），记录字段名、整个数组
   // 与各元素的位置；失败时写诊断并返回 false。
-  bool parse_array_field(ParseResult &result, VTarget &t,
-                         const std::string &key, const Range &key_range) {
+  bool parse_array_field(ParseResult& result, VTarget& t, const std::string& key, const Range& key_range) {
     if (cur().type != TokType::LBracket) {
       add_diag(result, cur_range(), key + " 期望字符串数组");
       return false;
@@ -340,7 +364,8 @@ private:
     std::vector<Range> arr_ranges;
     while (true) {
       skip_newlines();
-      if (cur().type == TokType::RBracket) break;
+      if (cur().type == TokType::RBracket)
+        break;
       if (eof()) {
         add_diag(result, cur_range(), key + " 数组未闭合");
         return false;
@@ -357,7 +382,8 @@ private:
         ++pos_;
         continue;
       }
-      if (cur().type == TokType::RBracket) break;
+      if (cur().type == TokType::RBracket)
+        break;
       add_diag(result, cur_range(), "数组元素之间缺少 ','");
       return false;
     }
@@ -379,20 +405,19 @@ private:
   }
 
   // 解析单条语句：exe(...) / dylib(...)
-  bool parse_statement(ParseResult &result) {
+  bool parse_statement(ParseResult& result) {
     if (cur().type != TokType::Ident) {
-      add_diag(result, cur_range(),
-               "期望目标声明 exe(...) 或 dylib(...)");
+      add_diag(result, cur_range(), "期望目标声明 exe(...) 或 dylib(...)");
       return false;
     }
     std::string kindname = cur().text;
     if (kindname != "exe" && kindname != "dylib" && kindname != "staticlib") {
-      add_diag(result, cur_range(),
-               "未知目标类型 '" + kindname + "'（支持 exe / dylib / staticlib）");
+      add_diag(result, cur_range(), "未知目标类型 '" + kindname + "'（支持 exe / dylib / staticlib）");
       return false;
     }
-    TargetKind kind = (kindname == "exe") ? TargetKind::Exe :
-                      (kindname == "dylib") ? TargetKind::Dylib : TargetKind::StaticLib;
+    TargetKind kind = (kindname == "exe")     ? TargetKind::Exe
+                      : (kindname == "dylib") ? TargetKind::Dylib
+                                              : TargetKind::StaticLib;
     Range kind_range = cur_range();
     ++pos_;
 
@@ -419,14 +444,16 @@ private:
       t.name_range = value_range(cur());
       seen_name = true;
       ++pos_;
-      if (cur().type == TokType::Comma) ++pos_;
+      if (cur().type == TokType::Comma)
+        ++pos_;
     }
     skip_newlines();
 
     // 关键字参数
     while (!eof() && cur().type != TokType::RParen) {
       skip_newlines();
-      if (cur().type == TokType::RParen) break;
+      if (cur().type == TokType::RParen)
+        break;
       if (cur().type != TokType::Ident) {
         add_diag(result, cur_range(),
                  "期望字段名 (name/sources/output/deps/libs/lib_dirs/"
@@ -471,7 +498,8 @@ private:
         Range array_start = lbracket_range;
         while (true) {
           skip_newlines();
-          if (cur().type == TokType::RBracket) break;
+          if (cur().type == TokType::RBracket)
+            break;
           if (eof()) {
             add_diag(result, cur_range(), "sources 数组未闭合");
             return false;
@@ -488,7 +516,8 @@ private:
             ++pos_;
             continue;
           }
-          if (cur().type == TokType::RBracket) break;
+          if (cur().type == TokType::RBracket)
+            break;
           add_diag(result, cur_range(), "数组元素之间缺少 ','");
           return false;
         }
@@ -534,7 +563,8 @@ private:
         Range array_start = lbracket_range;
         while (true) {
           skip_newlines();
-          if (cur().type == TokType::RBracket) break;
+          if (cur().type == TokType::RBracket)
+            break;
           if (eof()) {
             add_diag(result, cur_range(), "deps 数组未闭合");
             return false;
@@ -551,7 +581,8 @@ private:
             ++pos_;
             continue;
           }
-          if (cur().type == TokType::RBracket) break;
+          if (cur().type == TokType::RBracket)
+            break;
           add_diag(result, cur_range(), "数组元素之间缺少 ','");
           return false;
         }
@@ -580,19 +611,35 @@ private:
         Range array_start = lbracket_range;
         while (true) {
           skip_newlines();
-          if (cur().type == TokType::RBracket) break;
-          if (eof()) { add_diag(result, cur_range(), "libs 数组未闭合"); return false; }
-          if (cur().type != TokType::Str) { add_diag(result, cur_range(), "数组元素必须是字符串"); return false; }
+          if (cur().type == TokType::RBracket)
+            break;
+          if (eof()) {
+            add_diag(result, cur_range(), "libs 数组未闭合");
+            return false;
+          }
+          if (cur().type != TokType::Str) {
+            add_diag(result, cur_range(), "数组元素必须是字符串");
+            return false;
+          }
           arr.push_back(cur().value);
           arr_ranges.push_back(value_range(cur()));
           ++pos_;
           skip_newlines();
-          if (cur().type == TokType::Comma) { ++pos_; continue; }
-          if (cur().type == TokType::RBracket) break;
-          add_diag(result, cur_range(), "数组元素之间缺少 ','"); return false;
+          if (cur().type == TokType::Comma) {
+            ++pos_;
+            continue;
+          }
+          if (cur().type == TokType::RBracket)
+            break;
+          add_diag(result, cur_range(), "数组元素之间缺少 ','");
+          return false;
         }
-        if (cur().type != TokType::RBracket) { add_diag(result, cur_range(), "libs 数组未闭合"); return false; }
-        Range rbracket_range = cur_range(); ++pos_;
+        if (cur().type != TokType::RBracket) {
+          add_diag(result, cur_range(), "libs 数组未闭合");
+          return false;
+        }
+        Range rbracket_range = cur_range();
+        ++pos_;
         t.libs = std::move(arr);
         t.lib_ranges = std::move(arr_ranges);
         t.libs_range.start = array_start.start;
@@ -611,45 +658,64 @@ private:
         Range array_start = lbracket_range;
         while (true) {
           skip_newlines();
-          if (cur().type == TokType::RBracket) break;
-          if (eof()) { add_diag(result, cur_range(), "lib_dirs 数组未闭合"); return false; }
-          if (cur().type != TokType::Str) { add_diag(result, cur_range(), "数组元素必须是字符串"); return false; }
+          if (cur().type == TokType::RBracket)
+            break;
+          if (eof()) {
+            add_diag(result, cur_range(), "lib_dirs 数组未闭合");
+            return false;
+          }
+          if (cur().type != TokType::Str) {
+            add_diag(result, cur_range(), "数组元素必须是字符串");
+            return false;
+          }
           arr.push_back(cur().value);
           arr_ranges.push_back(value_range(cur()));
           ++pos_;
           skip_newlines();
-          if (cur().type == TokType::Comma) { ++pos_; continue; }
-          if (cur().type == TokType::RBracket) break;
-          add_diag(result, cur_range(), "数组元素之间缺少 ','"); return false;
+          if (cur().type == TokType::Comma) {
+            ++pos_;
+            continue;
+          }
+          if (cur().type == TokType::RBracket)
+            break;
+          add_diag(result, cur_range(), "数组元素之间缺少 ','");
+          return false;
         }
-        if (cur().type != TokType::RBracket) { add_diag(result, cur_range(), "lib_dirs 数组未闭合"); return false; }
-        Range rbracket_range = cur_range(); ++pos_;
+        if (cur().type != TokType::RBracket) {
+          add_diag(result, cur_range(), "lib_dirs 数组未闭合");
+          return false;
+        }
+        Range rbracket_range = cur_range();
+        ++pos_;
         t.lib_dirs = std::move(arr);
         t.lib_dir_ranges = std::move(arr_ranges);
         t.lib_dirs_range.start = array_start.start;
         t.lib_dirs_range.end = rbracket_range.end;
         t.lib_dirs_kw_range = key_range;
         t.has_lib_dirs = true;
-      } else if (key == "cflags" || key == "defines" || key == "ldflags" ||
-                 key == "tests") {
+      } else if (key == "cflags" || key == "defines" || key == "ldflags" || key == "tests") {
         bool dup = false;
-        for (const ArrayField &f : t.extra_arrays) {
+        for (const ArrayField& f : t.extra_arrays) {
           if (f.key == key) {
             add_diag(result, key_range, "字段 " + key + " 重复");
             dup = true;
             break;
           }
         }
-        if (dup) return false;
-        if (!parse_array_field(result, t, key, key_range)) return false;
+        if (dup)
+          return false;
+        if (!parse_array_field(result, t, key, key_range))
+          return false;
       } else {
-        add_diag(result, key_range, "未知字段 '" + key +
-                                       "'（支持 name / sources / output / deps /"
-                                       " libs / lib_dirs / cflags / defines /"
-                                       " ldflags / tests）");
+        add_diag(result, key_range,
+                 "未知字段 '" + key +
+                     "'（支持 name / sources / output / deps /"
+                     " libs / lib_dirs / cflags / defines /"
+                     " ldflags / tests）");
         return false;
       }
-      if (cur().type == TokType::Comma) ++pos_;
+      if (cur().type == TokType::Comma)
+        ++pos_;
       skip_newlines();
     }
 
@@ -679,10 +745,9 @@ private:
   }
 
   // 目标级语义校验（名称合法性/唯一性、源文件后缀、output 路径约束）
-  void validate_target(ParseResult &result, const VTarget &t) {
+  void validate_target(ParseResult& result, const VTarget& t) {
     if (t.sources.empty()) {
-      add_diag(result, t.sources_range,
-               "目标 '" + t.name + "' 的 sources 不能为空");
+      add_diag(result, t.sources_range, "目标 '" + t.name + "' 的 sources 不能为空");
     }
 
     if (!valid_target_name(t.name)) {
@@ -692,51 +757,44 @@ private:
     }
 
     for (std::size_t i = 0; i < t.sources.size(); ++i) {
-      const std::string &src = t.sources[i];
+      const std::string& src = t.sources[i];
       if (src.empty()) {
-        add_diag(result, t.source_ranges[i],
-                 "目标 '" + t.name + "' 含空源文件路径");
+        add_diag(result, t.source_ranges[i], "目标 '" + t.name + "' 含空源文件路径");
       } else if (src.size() < 4 || src.compare(src.size() - 3, 3, ".vx") != 0) {
-        add_diag(result, t.source_ranges[i],
-                 "源文件必须是 .vx 文件: " + src);
+        add_diag(result, t.source_ranges[i], "源文件必须是 .vx 文件: " + src);
       }
     }
 
     if (t.output) {
-      const std::string &out = *t.output;
+      const std::string& out = *t.output;
       if (out.empty()) {
-        add_diag(result, t.output_range,
-                 "目标 '" + t.name + "' 的 output 不能为空");
+        add_diag(result, t.output_range, "目标 '" + t.name + "' 的 output 不能为空");
       } else if (is_absolute_path(out)) {
-        add_diag(result, t.output_range,
-                 "output 必须是相对构建目录的路径: " + out);
+        add_diag(result, t.output_range, "output 必须是相对构建目录的路径: " + out);
       } else if (has_dotdot_component(out)) {
         add_diag(result, t.output_range, "output 不得包含 '..': " + out);
       }
     }
 
     // cflags / defines / ldflags / tests：与 vmake config.cpp 规则对齐
-    const ArrayField *first_flag = nullptr;
-    for (const ArrayField &f : t.extra_arrays) {
+    const ArrayField* first_flag = nullptr;
+    for (const ArrayField& f : t.extra_arrays) {
       if (f.key == "cflags" || f.key == "defines" || f.key == "ldflags") {
         if (first_flag == nullptr)
           first_flag = &f;
         for (std::size_t i = 0; i < f.values.size(); ++i) {
           if (f.values[i].empty())
-            add_diag(result, f.value_ranges[i],
-                     "目标 '" + t.name + "' 含空 " + f.key + " 条目");
+            add_diag(result, f.value_ranges[i], "目标 '" + t.name + "' 含空 " + f.key + " 条目");
         }
       } else if (f.key == "tests") {
         if (f.values.empty())
           add_diag(result, f.range, "目标 '" + t.name + "' 的 tests 不能为空");
         for (std::size_t i = 0; i < f.values.size(); ++i) {
-          const std::string &v = f.values[i];
+          const std::string& v = f.values[i];
           if (v.empty()) {
-            add_diag(result, f.value_ranges[i],
-                     "目标 '" + t.name + "' 含空测试文件路径");
+            add_diag(result, f.value_ranges[i], "目标 '" + t.name + "' 含空测试文件路径");
           } else if (v.size() < 4 || v.compare(v.size() - 3, 3, ".vx") != 0) {
-            add_diag(result, f.value_ranges[i],
-                     "测试文件必须是 .vx 文件: " + v);
+            add_diag(result, f.value_ranges[i], "测试文件必须是 .vx 文件: " + v);
           }
         }
       }
@@ -749,15 +807,14 @@ private:
   }
 
   Range cur_range() const {
-    const Token &t = cur();
+    const Token& t = cur();
     return {t.start, t.end};
   }
 
   // 字符串值的范围（不含引号）：start+1 .. end-1
-  static Range value_range(const Token &tok) {
+  static Range value_range(const Token& tok) {
     if (tok.text.size() >= 2) {
-      return {Position{tok.start.line, tok.start.character + 1},
-              Position{tok.end.line, tok.end.character - 1}};
+      return {Position{tok.start.line, tok.start.character + 1}, Position{tok.end.line, tok.end.character - 1}};
     }
     return {tok.start, tok.end};
   }
@@ -765,11 +822,15 @@ private:
 
 } // namespace
 
-const char *kind_name(TargetKind kind) {
+const char* kind_name(TargetKind kind) {
   switch (kind) {
-    case TargetKind::Dylib: return "dylib";
-    case TargetKind::StaticLib: return "staticlib";
-    case TargetKind::Exe: default: return "exe";
+    case TargetKind::Dylib:
+      return "dylib";
+    case TargetKind::StaticLib:
+      return "staticlib";
+    case TargetKind::Exe:
+    default:
+      return "exe";
   }
 }
 
@@ -778,16 +839,19 @@ ParseResult parse_vmake(std::string_view text) {
   return parser.run();
 }
 
-Hit hit_test(const std::vector<VTarget> &targets, int line, int character) {
+Hit hit_test(const std::vector<VTarget>& targets, int line, int character) {
   Hit hit;
-  auto in_range = [&](const Range &r) {
-    if (line < r.start.line || line > r.end.line) return false;
-    if (line == r.start.line && character < r.start.character) return false;
-    if (line == r.end.line && character >= r.end.character) return false;
+  auto in_range = [&](const Range& r) {
+    if (line < r.start.line || line > r.end.line)
+      return false;
+    if (line == r.start.line && character < r.start.character)
+      return false;
+    if (line == r.end.line && character >= r.end.character)
+      return false;
     return true;
   };
   for (std::size_t i = 0; i < targets.size(); ++i) {
-    const auto &t = targets[i];
+    const auto& t = targets[i];
     if (in_range(t.kind_range)) {
       hit.target_index = i;
       hit.part = Hit::Part::Kind;
@@ -844,26 +908,42 @@ Hit hit_test(const std::vector<VTarget> &targets, int line, int character) {
     }
     // libs / lib_dirs
     if (t.has_libs && in_range(t.libs_kw_range)) {
-      hit.target_index = i; hit.part = Hit::Part::Libs; return hit;
+      hit.target_index = i;
+      hit.part = Hit::Part::Libs;
+      return hit;
     }
     for (std::size_t j = 0; j < t.lib_ranges.size(); ++j) {
-      if (in_range(t.lib_ranges[j])) { hit.target_index = i; hit.part = Hit::Part::LibElem; return hit; }
+      if (in_range(t.lib_ranges[j])) {
+        hit.target_index = i;
+        hit.part = Hit::Part::LibElem;
+        return hit;
+      }
     }
     if (t.has_libs && in_range(t.libs_range)) {
-      hit.target_index = i; hit.part = Hit::Part::Libs; return hit;
+      hit.target_index = i;
+      hit.part = Hit::Part::Libs;
+      return hit;
     }
     if (t.has_lib_dirs && in_range(t.lib_dirs_kw_range)) {
-      hit.target_index = i; hit.part = Hit::Part::LibDirs; return hit;
+      hit.target_index = i;
+      hit.part = Hit::Part::LibDirs;
+      return hit;
     }
     for (std::size_t j = 0; j < t.lib_dir_ranges.size(); ++j) {
-      if (in_range(t.lib_dir_ranges[j])) { hit.target_index = i; hit.part = Hit::Part::LibDirElem; return hit; }
+      if (in_range(t.lib_dir_ranges[j])) {
+        hit.target_index = i;
+        hit.part = Hit::Part::LibDirElem;
+        return hit;
+      }
     }
     if (t.has_lib_dirs && in_range(t.lib_dirs_range)) {
-      hit.target_index = i; hit.part = Hit::Part::LibDirs; return hit;
+      hit.target_index = i;
+      hit.part = Hit::Part::LibDirs;
+      return hit;
     }
     // cflags / defines / ldflags / tests
     for (std::size_t j = 0; j < t.extra_arrays.size(); ++j) {
-      const ArrayField &f = t.extra_arrays[j];
+      const ArrayField& f = t.extra_arrays[j];
       if (in_range(f.kw_range)) {
         hit.target_index = i;
         hit.part = Hit::Part::ExtraField;

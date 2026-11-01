@@ -8,8 +8,8 @@
 约定：
   - 核心产物 vxc / vlnk 缺失即失败（没有它们工具链不可用）
   - 其余工具、libvxrt.a、libvxtidy 动态库存在则复制，缺失只警告
-  - headers/ 复制为 _bin/headers —— vxc / vxls 的默认导入库根
-    （可用 -I 追加搜索目录，VX_HEADERS 覆盖库根）
+  - headers/ 复制为 _bin/headers —— vxc / vxls / vx 的默认导入库根
+    （可用 -I 追加搜索目录，VX_HEADERS_DIR 覆盖库根，VX_HEADERS 为兼容别名）
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ TOOLS = (
     ("vmake", "tools/vmake/vmake", False),
     ("vxls", "tools/vxls/vxls", False),
     ("vmake-lsp", "tools/vmake-lsp/vmake-lsp", False),
+    ("vfmt", "tools/vfmt/vfmt", False),
     ("vx", "tools/vx/vx", False),
 )
 
@@ -104,6 +105,13 @@ def main() -> int:
         staged.append(PACKAGE_BIN / "headers")
     else:
         warnings.append(f"缺少导入库目录: {headers}")
+
+    stdlib = REPO / "std"
+    if stdlib.is_dir():
+        shutil.copytree(stdlib, PACKAGE_BIN / "std")
+        staged.append(PACKAGE_BIN / "std")
+    else:
+        warnings.append(f"缺少标准库目录: {stdlib}")
 
     if os.name != "nt":
         # 仅工具二进制需要执行位；静态库/动态库保持原权限

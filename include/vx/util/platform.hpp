@@ -2,7 +2,9 @@
 // 编译期宏检测，前端（VXOBJ target 字段）与后端（IR 头 / clang -target）共用。
 #pragma once
 
+#include <initializer_list>
 #include <string>
+#include <string_view>
 
 namespace vx::util {
 
@@ -20,5 +22,10 @@ std::string host_triple();
 
 // 人读平台名（诊断/verbose 输出），如 "macOS arm64"、"Linux x86_64"。
 std::string host_name();
+
+// 在 $PATH 各目录中依次查找候选可执行文件名（如 {"ar", "llvm-ar"}），
+// 返回第一个可执行（access X_OK）命中的完整路径；全部未命中返回空串。
+// 环境变量覆盖（VX_CLANG / VX_AR 等）由调用方先行处理，此处只查 PATH。
+std::string find_in_path(std::initializer_list<std::string_view> candidates);
 
 } // namespace vx::util

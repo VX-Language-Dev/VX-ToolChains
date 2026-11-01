@@ -24,9 +24,7 @@ namespace vx::compiler {
 // 每个方法生成具名函数；顶层 VarDecl 仅记录进 ModuleIR::global_vars。
 // imports 为已解析的导入表（空则忽略 @imp/@cppimp，调用点按库内名解析）。
 // 失败时把诊断推入 bag 并返回 std::nullopt（fail-fast）。
-std::optional<ir::ModuleIR> generate_module(const Program &prog,
-                                            std::string_view filename,
-                                            DiagBag &bag,
-                                            const ImportTable *imports = nullptr);
+std::optional<ir::ModuleIR> generate_module(const Program& prog, std::string_view filename, DiagBag& bag,
+                                            const ImportTable* imports = nullptr);
 
 } // namespace vx::compiler

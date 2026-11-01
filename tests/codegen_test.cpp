@@ -12,12 +12,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using namespace vx::compiler;
@@ -37,8 +37,7 @@ std::optional<ir::ModuleIR> gen_src(std::string_view src) {
   }
   auto mod = generate_module(*prog, "<test>", bag);
   if (!mod) {
-    std::fprintf(stderr, "FAIL codegen:\n%s",
-                 render_all(bag, src, false).c_str());
+    std::fprintf(stderr, "FAIL codegen:\n%s", render_all(bag, src, false).c_str());
     ++g_failures;
     return std::nullopt;
   }
@@ -66,11 +65,11 @@ std::string gen_expect_error(std::string_view src) {
 }
 
 // 第 f 个函数第 i 条指令的操作码
-std::uint8_t op_at(const ir::ModuleIR &m, std::size_t f, std::size_t i) {
+std::uint8_t op_at(const ir::ModuleIR& m, std::size_t f, std::size_t i) {
   return m.funcs[f].instructions[i].op;
 }
 
-std::string args_at(const ir::ModuleIR &m, std::size_t f, std::size_t i) {
+std::string args_at(const ir::ModuleIR& m, std::size_t f, std::size_t i) {
   return m.funcs[f].instructions[i].args;
 }
 
@@ -79,11 +78,10 @@ std::string args_at(const ir::ModuleIR &m, std::size_t f, std::size_t i) {
 void test_arith() {
   auto m = gen_src("func main() -> int:\n    return 1 + 2 * 3\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
+  const auto& f = m->funcs[0];
   CHECK(f.name == "main");
-  const std::size_t expect_ops[] = {
-      ir::OP_CONST_INT, ir::OP_CONST_INT, ir::OP_CONST_INT,
-      ir::OP_I32_MUL,   ir::OP_I32_ADD,   ir::OP_RETURN};
+  const std::size_t expect_ops[] = {ir::OP_CONST_INT, ir::OP_CONST_INT, ir::OP_CONST_INT,
+                                    ir::OP_I32_MUL,   ir::OP_I32_ADD,   ir::OP_RETURN};
   CHECK(f.instructions.size() == 6);
   for (std::size_t i = 0; i < 6 && i < f.instructions.size(); ++i) {
     CHECK(f.instructions[i].op == expect_ops[i]);
@@ -95,12 +93,10 @@ void test_arith() {
 void test_vars_assign() {
   auto m = gen_src("func f():\n    var x = 1\n    x = x + 1\n    return x\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
+  const auto& f = m->funcs[0];
   CHECK(f.local_count == 1);
-  const std::size_t expect_ops[] = {ir::OP_CONST_INT, ir::OP_STORE_VAR,
-                                    ir::OP_LOAD_VAR,  ir::OP_CONST_INT,
-                                    ir::OP_I32_ADD,   ir::OP_STORE_VAR,
-                                    ir::OP_LOAD_VAR,  ir::OP_RETURN};
+  const std::size_t expect_ops[] = {ir::OP_CONST_INT, ir::OP_STORE_VAR, ir::OP_LOAD_VAR, ir::OP_CONST_INT,
+                                    ir::OP_I32_ADD,   ir::OP_STORE_VAR, ir::OP_LOAD_VAR, ir::OP_RETURN};
   CHECK(f.instructions.size() == 8);
   for (std::size_t i = 0; i < 8 && i < f.instructions.size(); ++i) {
     CHECK(f.instructions[i].op == expect_ops[i]);
@@ -110,16 +106,15 @@ void test_vars_assign() {
 }
 
 void test_if_elif_else() {
-  auto m = gen_src(
-      "func g(n: int) -> int:\n"
-      "    if n < 0:\n"
-      "        return 0 - 1\n"
-      "    elif n == 0:\n"
-      "        return 0\n"
-      "    else:\n"
-      "        return n\n");
+  auto m = gen_src("func g(n: int) -> int:\n"
+                   "    if n < 0:\n"
+                   "        return 0 - 1\n"
+                   "    elif n == 0:\n"
+                   "        return 0\n"
+                   "    else:\n"
+                   "        return n\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
+  const auto& f = m->funcs[0];
   // 关键控制流锚点
   CHECK(op_at(*m, 0, 2) == ir::OP_I32_LT);
   CHECK(op_at(*m, 0, 3) == ir::OP_JUMP_IF_FALSE);
@@ -132,7 +127,7 @@ void test_if_elif_else() {
   CHECK(args_at(*m, 0, 9) == "L1");
   // elif 条件后的 JUMP_IF_FALSE 与末尾 end 标签
   bool has_l3_jif = false, has_l3_label = false, has_end = false;
-  for (const auto &inst : f.instructions) {
+  for (const auto& inst : f.instructions) {
     if (inst.op == ir::OP_JUMP_IF_FALSE && inst.args == "L3") {
       has_l3_jif = true;
     }
@@ -149,18 +144,17 @@ void test_if_elif_else() {
 }
 
 void test_while_break_continue() {
-  auto m = gen_src(
-      "func w():\n"
-      "    var i = 0\n"
-      "    while i < 10:\n"
-      "        if i == 3:\n"
-      "            continue\n"
-      "        if i == 8:\n"
-      "            break\n"
-      "        i = i + 1\n"
-      "    return i\n");
+  auto m = gen_src("func w():\n"
+                   "    var i = 0\n"
+                   "    while i < 10:\n"
+                   "        if i == 3:\n"
+                   "            continue\n"
+                   "        if i == 8:\n"
+                   "            break\n"
+                   "        i = i + 1\n"
+                   "    return i\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
+  const auto& f = m->funcs[0];
   CHECK(f.local_count == 1); // 仅 i（隐藏变量只出现在 for）
   bool jump_start = false, jump_end = false;
   for (std::size_t i = 0; i < f.instructions.size(); ++i) {
@@ -176,22 +170,19 @@ void test_while_break_continue() {
 }
 
 void test_for() {
-  auto m = gen_src(
-      "func h(xs: var):\n"
-      "    for x in xs:\n"
-      "        out(x)\n");
+  auto m = gen_src("func h(xs: var):\n"
+                   "    for x in xs:\n"
+                   "        out(x)\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
+  const auto& f = m->funcs[0];
   // 参数 xs=0；隐藏变量 iter/idx；循环变量 x
   CHECK(f.local_count == 4);
   bool has_iter = false, has_idx = false, has_guard = false;
   for (std::size_t i = 0; i < f.instructions.size(); ++i) {
-    if (f.instructions[i].op == ir::OP_STORE_VAR &&
-        args_at(*m, 0, i) == "1") {
+    if (f.instructions[i].op == ir::OP_STORE_VAR && args_at(*m, 0, i) == "1") {
       has_iter = true;
     }
-    if (f.instructions[i].op == ir::OP_CONST_INT &&
-        args_at(*m, 0, i) == "i100000") {
+    if (f.instructions[i].op == ir::OP_CONST_INT && args_at(*m, 0, i) == "i100000") {
       has_guard = true;
     }
     if (f.instructions[i].op == ir::OP_INDEX_GET) {
@@ -212,11 +203,10 @@ void test_for() {
 }
 
 void test_extern_linkage() {
-  auto m = gen_src(
-      "extern out(msg: string)\n"
-      "func main():\n"
-      "    out(\"hi\")\n"
-      "    return\n");
+  auto m = gen_src("extern out(msg: string)\n"
+                   "func main():\n"
+                   "    out(\"hi\")\n"
+                   "    return\n");
   CHECK(m);
   CHECK(m->linkage.size() == 1);
   CHECK(m->linkage[0].name == "out");
@@ -231,19 +221,18 @@ void test_extern_linkage() {
 }
 
 void test_class_method_new() {
-  auto m = gen_src(
-      "class P:\n"
-      "    x: int\n"
-      "    func get() -> int:\n"
-      "        return self.x\n"
-      "\n"
-      "func make() -> var:\n"
-      "    var p = new P()\n"
-      "    return p.get()\n");
+  auto m = gen_src("class P:\n"
+                   "    x: int\n"
+                   "    func get() -> int:\n"
+                   "        return self.x\n"
+                   "\n"
+                   "func make() -> var:\n"
+                   "    var p = new P()\n"
+                   "    return p.get()\n");
   CHECK(m);
   CHECK(m->funcs.size() == 2);
   // 方法：P.get，隐式 self 占槽 0
-  const auto &get = m->funcs[0];
+  const auto& get = m->funcs[0];
   CHECK(get.name == "P.get");
   CHECK(get.params.size() == 1);
   CHECK(get.params[0].name == "self");
@@ -254,7 +243,7 @@ void test_class_method_new() {
   CHECK(args_at(*m, 0, 1) == "x");
   CHECK(op_at(*m, 0, 2) == ir::OP_RETURN);
   // 调用方：new + 方法调用 m;get + 显式 return
-  const auto &make = m->funcs[1];
+  const auto& make = m->funcs[1];
   CHECK(make.instructions.size() == 5);
   CHECK(op_at(*m, 1, 0) == ir::OP_NEWZ);
   CHECK(args_at(*m, 1, 0) == "P;8");
@@ -266,26 +255,19 @@ void test_class_method_new() {
 }
 
 void test_collections_index() {
-  auto m = gen_src(
-      "func c():\n"
-      "    var a = [1, 2]\n"
-      "    var d = {\"k\": 1}\n"
-      "    var v = a[0]\n"
-      "    a[0] = v + 1\n"
-      "    return d[\"k\"]\n");
+  auto m = gen_src("func c():\n"
+                   "    var a = [1, 2]\n"
+                   "    var d = {\"k\": 1}\n"
+                   "    var v = a[0]\n"
+                   "    a[0] = v + 1\n"
+                   "    return d[\"k\"]\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
-  const std::size_t ops[] = {ir::OP_CONST_INT,  ir::OP_CONST_INT,
-                             ir::OP_ARRAY_NEW,  ir::OP_STORE_VAR,
-                             ir::OP_CONST_STRING, ir::OP_CONST_INT,
-                             ir::OP_MAP_NEW,    ir::OP_STORE_VAR,
-                             ir::OP_LOAD_VAR,   ir::OP_CONST_INT,
-                             ir::OP_INDEX_GET,  ir::OP_STORE_VAR,
-                             ir::OP_LOAD_VAR,   ir::OP_CONST_INT,
-                             ir::OP_LOAD_VAR,   ir::OP_CONST_INT,
-                             ir::OP_I32_ADD,    ir::OP_INDEX_SET,
-                             ir::OP_LOAD_VAR,   ir::OP_CONST_STRING,
-                             ir::OP_INDEX_GET,  ir::OP_RETURN};
+  const auto& f = m->funcs[0];
+  const std::size_t ops[] = {
+      ir::OP_CONST_INT, ir::OP_CONST_INT,    ir::OP_ARRAY_NEW, ir::OP_STORE_VAR, ir::OP_CONST_STRING, ir::OP_CONST_INT,
+      ir::OP_MAP_NEW,   ir::OP_STORE_VAR,    ir::OP_LOAD_VAR,  ir::OP_CONST_INT, ir::OP_INDEX_GET,    ir::OP_STORE_VAR,
+      ir::OP_LOAD_VAR,  ir::OP_CONST_INT,    ir::OP_LOAD_VAR,  ir::OP_CONST_INT, ir::OP_I32_ADD,      ir::OP_INDEX_SET,
+      ir::OP_LOAD_VAR,  ir::OP_CONST_STRING, ir::OP_INDEX_GET, ir::OP_RETURN};
   CHECK(f.instructions.size() == 22);
   for (std::size_t i = 0; i < 22 && i < f.instructions.size(); ++i) {
     CHECK(f.instructions[i].op == ops[i]);
@@ -296,13 +278,12 @@ void test_collections_index() {
 }
 
 void test_literals_unary() {
-  auto m = gen_src(
-      "func k() -> var:\n"
-      "    var a = true\n"
-      "    var b = nil\n"
-      "    var c = -1\n"
-      "    var d = not (1 == 2)\n"
-      "    return a\n");
+  auto m = gen_src("func k() -> var:\n"
+                   "    var a = true\n"
+                   "    var b = nil\n"
+                   "    var c = -1\n"
+                   "    var d = not (1 == 2)\n"
+                   "    return a\n");
   CHECK(m);
   CHECK(op_at(*m, 0, 0) == ir::OP_CONST_BOOL);
   CHECK(args_at(*m, 0, 0) == "btrue");
@@ -318,7 +299,7 @@ void test_literals_unary() {
 void test_default_return() {
   auto m = gen_src("func noret() -> int:\n    var x = 1\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
+  const auto& f = m->funcs[0];
   CHECK(f.instructions.size() == 4);
   CHECK(op_at(*m, 0, 2) == ir::OP_CONST_INT);
   CHECK(args_at(*m, 0, 2) == "i0");
@@ -326,14 +307,13 @@ void test_default_return() {
 }
 
 void test_compound_assign() {
-  auto m = gen_src(
-      "func c():\n"
-      "    var x = 1\n"
-      "    x += 2\n"
-      "    var a = [1]\n"
-      "    a[0] += 5\n");
+  auto m = gen_src("func c():\n"
+                   "    var x = 1\n"
+                   "    x += 2\n"
+                   "    var a = [1]\n"
+                   "    a[0] += 5\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
+  const auto& f = m->funcs[0];
   // x += 2 → LOAD 0, CONST i2, ADD, STORE 0
   CHECK(op_at(*m, 0, 2) == ir::OP_LOAD_VAR);
   CHECK(op_at(*m, 0, 4) == ir::OP_I32_ADD);
@@ -349,10 +329,9 @@ void test_compound_assign() {
 }
 
 void test_globals_recorded() {
-  auto m = gen_src(
-      "var G = 5\n"
-      "func m():\n"
-      "    return G\n");
+  auto m = gen_src("var G = 5\n"
+                   "func m():\n"
+                   "    return G\n");
   CHECK(m);
   CHECK(m->global_vars.size() == 1);
   CHECK(m->global_vars[0] == "G");
@@ -364,11 +343,9 @@ void test_globals_recorded() {
 
 void test_errors() {
   // break 在循环外
-  CHECK(gen_expect_error("func e():\n    break\n") ==
-        "break outside loop");
+  CHECK(gen_expect_error("func e():\n    break\n") == "break outside loop");
   // continue 在循环外
-  CHECK(gen_expect_error("func e3():\n    continue\n") ==
-        "continue outside loop");
+  CHECK(gen_expect_error("func e3():\n    continue\n") == "continue outside loop");
 }
 
 // 逻辑运算短路求值：右侧仅在需要时求值，结果经临时槽位合流（0/1）
@@ -378,18 +355,20 @@ void test_short_circuit() {
                    "    var r = 2 > 1 and 3 > 2\n"
                    "    return r\n");
   CHECK(m);
-  const auto &f = m->funcs[0];
-  bool has_bool_and = false, has_jump_true = false, has_store = false,
-       has_load = false;
+  const auto& f = m->funcs[0];
+  bool has_bool_and = false, has_jump_true = false, has_store = false, has_load = false;
   for (std::size_t i = 0; i < f.instructions.size(); ++i) {
     const auto op = f.instructions[i].op;
-    if (op == ir::OP_BOOL_AND || op == ir::OP_BOOL_OR) has_bool_and = true;
-    if (op == ir::OP_JUMP_IF_TRUE) has_jump_true = true;
+    if (op == ir::OP_BOOL_AND || op == ir::OP_BOOL_OR)
+      has_bool_and = true;
+    if (op == ir::OP_JUMP_IF_TRUE)
+      has_jump_true = true;
     if (op == ir::OP_STORE_VAR && !f.instructions[i].args.empty()) {
       // __sc_ 临时槽合流（与用户变量 r 的槽号不同，此处仅计存在性）
       has_store = true;
     }
-    if (op == ir::OP_LOAD_VAR) has_load = true;
+    if (op == ir::OP_LOAD_VAR)
+      has_load = true;
   }
   CHECK(!has_bool_and); // 不再用非短路单指令
   CHECK(has_jump_true); // 分支判定跳转
@@ -397,9 +376,11 @@ void test_short_circuit() {
   CHECK(has_load);
   // 短路结果规范化：两条出 0 路径 + 一条出 1 路径（and 形态）
   std::size_t const_i0 = 0, const_i1 = 0;
-  for (const auto &inst : f.instructions) {
-    if (inst.op == ir::OP_CONST_INT && inst.args == "i0") ++const_i0;
-    if (inst.op == ir::OP_CONST_INT && inst.args == "i1") ++const_i1;
+  for (const auto& inst : f.instructions) {
+    if (inst.op == ir::OP_CONST_INT && inst.args == "i0")
+      ++const_i0;
+    if (inst.op == ir::OP_CONST_INT && inst.args == "i1")
+      ++const_i1;
   }
   CHECK(const_i0 >= 2); // 两条出 0 路径（操作数不含 i0 字面量）
   CHECK(const_i1 >= 1); // 至少真路径的 i1（操作数可能本身含 i1 字面量）
@@ -410,8 +391,9 @@ void test_short_circuit() {
                     "    return r\n");
   CHECK(m2);
   bool has_jump_false = false;
-  for (const auto &inst : m2->funcs[0].instructions) {
-    if (inst.op == ir::OP_JUMP_IF_FALSE) has_jump_false = true;
+  for (const auto& inst : m2->funcs[0].instructions) {
+    if (inst.op == ir::OP_JUMP_IF_FALSE)
+      has_jump_false = true;
   }
   CHECK(has_jump_false);
 }
@@ -425,12 +407,15 @@ void test_system_builtins() {
                    "        return 1\n"
                    "    return 0\n");
   CHECK(m);
-  if (!m) return;
+  if (!m)
+    return;
   bool has_call = false;
   bool has_str_eq = false;
-  for (const auto &inst : m->funcs[0].instructions) {
-    if (inst.op == ir::OP_CALL && inst.args == "f;file_read") has_call = true;
-    if (inst.op == ir::OP_STR_EQ) has_str_eq = true;
+  for (const auto& inst : m->funcs[0].instructions) {
+    if (inst.op == ir::OP_CALL && inst.args == "f;file_read")
+      has_call = true;
+    if (inst.op == ir::OP_STR_EQ)
+      has_str_eq = true;
   }
   CHECK(has_call);
   CHECK(has_str_eq);
@@ -440,10 +425,12 @@ void test_system_builtins() {
                     "    var a = sys_argv_get(1)\n"
                     "    return 0\n");
   CHECK(m2);
-  if (!m2) return;
+  if (!m2)
+    return;
   bool has_argv = false;
-  for (const auto &inst : m2->funcs[0].instructions) {
-    if (inst.op == ir::OP_CALL && inst.args == "f;sys_argv_get") has_argv = true;
+  for (const auto& inst : m2->funcs[0].instructions) {
+    if (inst.op == ir::OP_CALL && inst.args == "f;sys_argv_get")
+      has_argv = true;
   }
   CHECK(has_argv);
 }
@@ -454,8 +441,9 @@ void test_string_compare() {
                    "    return \"ab\" == \"ab\"\n");
   CHECK(m);
   bool has_str_eq = false;
-  for (const auto &inst : m->funcs[0].instructions) {
-    if (inst.op == ir::OP_STR_EQ) has_str_eq = true;
+  for (const auto& inst : m->funcs[0].instructions) {
+    if (inst.op == ir::OP_STR_EQ)
+      has_str_eq = true;
   }
   CHECK(has_str_eq);
 
@@ -463,9 +451,11 @@ void test_string_compare() {
                     "    return \"a\" != \"b\"\n");
   CHECK(m2);
   bool has_str_eq2 = false, has_not = false;
-  for (const auto &inst : m2->funcs[0].instructions) {
-    if (inst.op == ir::OP_STR_EQ) has_str_eq2 = true;
-    if (inst.op == ir::OP_BOOL_NOT) has_not = true;
+  for (const auto& inst : m2->funcs[0].instructions) {
+    if (inst.op == ir::OP_STR_EQ)
+      has_str_eq2 = true;
+    if (inst.op == ir::OP_BOOL_NOT)
+      has_not = true;
   }
   CHECK(has_str_eq2);
   CHECK(has_not);
@@ -476,8 +466,9 @@ void test_string_compare() {
                     "    return t == \"x\"\n");
   CHECK(m3);
   bool has_str_eq3 = false;
-  for (const auto &inst : m3->funcs[0].instructions) {
-    if (inst.op == ir::OP_STR_EQ) has_str_eq3 = true;
+  for (const auto& inst : m3->funcs[0].instructions) {
+    if (inst.op == ir::OP_STR_EQ)
+      has_str_eq3 = true;
   }
   CHECK(has_str_eq3);
 }
@@ -487,17 +478,20 @@ void test_power() {
   auto m = gen_src("func p() -> int:\n    return 2 ^ 10\n");
   CHECK(m);
   bool has_pow = false;
-  for (const auto &inst : m->funcs[0].instructions) {
-    if (inst.op == ir::OP_CALL && inst.args == "f;vx_pow_i32") has_pow = true;
+  for (const auto& inst : m->funcs[0].instructions) {
+    if (inst.op == ir::OP_CALL && inst.args == "f;vx_pow_i32")
+      has_pow = true;
   }
   CHECK(has_pow);
   // 嵌套：两侧先求值
   auto m2 = gen_src("func p2(a: int) -> int:\n    return (a + 1) ^ 2\n");
   CHECK(m2);
   bool has_pow2 = false, has_add = false;
-  for (const auto &inst : m2->funcs[0].instructions) {
-    if (inst.op == ir::OP_CALL && inst.args == "f;vx_pow_i32") has_pow2 = true;
-    if (inst.op == ir::OP_I32_ADD) has_add = true;
+  for (const auto& inst : m2->funcs[0].instructions) {
+    if (inst.op == ir::OP_CALL && inst.args == "f;vx_pow_i32")
+      has_pow2 = true;
+    if (inst.op == ir::OP_I32_ADD)
+      has_add = true;
   }
   CHECK(has_pow2);
   CHECK(has_add);
@@ -505,13 +499,13 @@ void test_power() {
   auto m3 = gen_src("func pf() -> float:\n    return 2.0 ^ 3.0\n");
   CHECK(m3);
   bool has_fpow = false;
-  for (const auto &inst : m3->funcs[0].instructions) {
-    if (inst.op == ir::OP_CALL && inst.args == "f;vx_pow_f64") has_fpow = true;
+  for (const auto& inst : m3->funcs[0].instructions) {
+    if (inst.op == ir::OP_CALL && inst.args == "f;vx_pow_f64")
+      has_fpow = true;
   }
   CHECK(has_fpow);
   // int/float 混合幂 → codegen 诊断（不再产出参数类型不符的非法 IR）
-  std::string err =
-      gen_expect_error("func pm() -> float:\n    return 2 ^ 3.0\n");
+  std::string err = gen_expect_error("func pm() -> float:\n    return 2 ^ 3.0\n");
   CHECK(err.find("mixed-type power") != std::string::npos);
 }
 
@@ -541,7 +535,7 @@ void test_bare_return() {
   // 无任何 return 的字符串函数，末尾兜底同样按返回类型（旧版 i0 → 类型不符）
   auto m2 = gen_src("func ns() -> string:\n    var x = 1\n");
   CHECK(m2);
-  const auto &f = m2->funcs[0];
+  const auto& f = m2->funcs[0];
   CHECK(f.instructions.size() >= 2);
   CHECK(f.instructions[f.instructions.size() - 1].op == ir::OP_RETURN);
   CHECK(f.instructions[f.instructions.size() - 2].op == ir::OP_CONST_STRING);
@@ -554,9 +548,11 @@ void test_float_var_propagation() {
                    "    return x * 2.0\n");
   CHECK(m);
   bool has_f64_mul = false, has_i32_mul = false;
-  for (const auto &inst : m->funcs[0].instructions) {
-    if (inst.op == ir::OP_F64_MUL) has_f64_mul = true;
-    if (inst.op == ir::OP_I32_MUL) has_i32_mul = true;
+  for (const auto& inst : m->funcs[0].instructions) {
+    if (inst.op == ir::OP_F64_MUL)
+      has_f64_mul = true;
+    if (inst.op == ir::OP_I32_MUL)
+      has_i32_mul = true;
   }
   CHECK(has_f64_mul);
   CHECK(!has_i32_mul);
@@ -567,8 +563,9 @@ void test_float_var_propagation() {
                     "    return y\n");
   CHECK(m2);
   bool has_f64_add = false;
-  for (const auto &inst : m2->funcs[0].instructions) {
-    if (inst.op == ir::OP_F64_ADD) has_f64_add = true;
+  for (const auto& inst : m2->funcs[0].instructions) {
+    if (inst.op == ir::OP_F64_ADD)
+      has_f64_add = true;
   }
   CHECK(has_f64_add);
   // 整数变量不误判：var n = 1; n * 2 → I32_MUL
@@ -577,17 +574,20 @@ void test_float_var_propagation() {
                     "    return n * 2\n");
   CHECK(m3);
   bool has_i32_mul3 = false;
-  for (const auto &inst : m3->funcs[0].instructions) {
-    if (inst.op == ir::OP_I32_MUL) has_i32_mul3 = true;
+  for (const auto& inst : m3->funcs[0].instructions) {
+    if (inst.op == ir::OP_I32_MUL)
+      has_i32_mul3 = true;
   }
   CHECK(has_i32_mul3);
   // 参数声明类型参与传播：float 参数参与算术选 F64 族（旧版退化 I32 → 后端诊断）
   auto m4 = gen_src("func fp(x: float) -> float:\n    return x * 2.0\n");
   CHECK(m4);
   bool has_f64_mul4 = false, has_i32_mul4 = false;
-  for (const auto &inst : m4->funcs[0].instructions) {
-    if (inst.op == ir::OP_F64_MUL) has_f64_mul4 = true;
-    if (inst.op == ir::OP_I32_MUL) has_i32_mul4 = true;
+  for (const auto& inst : m4->funcs[0].instructions) {
+    if (inst.op == ir::OP_F64_MUL)
+      has_f64_mul4 = true;
+    if (inst.op == ir::OP_I32_MUL)
+      has_i32_mul4 = true;
   }
   CHECK(has_f64_mul4);
   CHECK(!has_i32_mul4);
@@ -595,8 +595,9 @@ void test_float_var_propagation() {
   auto m5 = gen_src("func sp(a: string, b: string) -> int:\n    return a == b\n");
   CHECK(m5);
   bool has_str_eq = false;
-  for (const auto &inst : m5->funcs[0].instructions) {
-    if (inst.op == ir::OP_STR_EQ) has_str_eq = true;
+  for (const auto& inst : m5->funcs[0].instructions) {
+    if (inst.op == ir::OP_STR_EQ)
+      has_str_eq = true;
   }
   CHECK(has_str_eq);
 }

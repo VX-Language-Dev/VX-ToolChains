@@ -12,12 +12,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using vmake::Manifest;
@@ -30,8 +30,7 @@ Manifest must_parse(std::string_view text) {
   auto manifest = vmake::parse_manifest(text, errors);
   CHECK(manifest.has_value());
   if (!manifest && !errors.empty()) {
-    std::fprintf(stderr, "  parse error: line %zu: %s\n", errors[0].line,
-                 errors[0].message.c_str());
+    std::fprintf(stderr, "  parse error: line %zu: %s\n", errors[0].line, errors[0].message.c_str());
   }
   return manifest.value_or(Manifest{});
 }
@@ -40,16 +39,14 @@ bool fails_with(std::string_view text, std::string_view needle) {
   std::vector<ParseError> errors;
   const auto manifest = vmake::parse_manifest(text, errors);
   if (manifest) {
-    std::fprintf(stderr, "  expected failure but parsed: %.*s\n",
-                 static_cast<int>(text.size()), text.data());
+    std::fprintf(stderr, "  expected failure but parsed: %.*s\n", static_cast<int>(text.size()), text.data());
     return false;
   }
   if (errors.empty() || errors[0].line == 0)
     return false;
   const bool match = errors[0].message.find(needle) != std::string::npos;
   if (!match) {
-    std::fprintf(stderr, "  expected '%s', got: %s\n",
-                 std::string(needle).c_str(), errors[0].message.c_str());
+    std::fprintf(stderr, "  expected '%s', got: %s\n", std::string(needle).c_str(), errors[0].message.c_str());
   }
   return match;
 }
@@ -77,7 +74,7 @@ void test_basic_targets() {
 }
 
 void test_multiline_array_and_escapes() {
-  const char *text = "exe(\"app\", sources=[\n"
+  const char* text = "exe(\"app\", sources=[\n"
                      "  \"src/\\u006dain.vx\",  # 入口\n"
                      "  'src/util.vx',\n"
                      "])\n";
@@ -109,7 +106,7 @@ void test_parse_errors() {
 }
 
 void test_plan_order() {
-  const char *text = "exe(\"app\", sources=[\"main.vx\"])\n"
+  const char* text = "exe(\"app\", sources=[\"main.vx\"])\n"
                      "dylib(\"core\", sources=[\"core.vx\"])\n"
                      "exe(\"tool\", sources=[\"tool.vx\"])\n"
                      "dylib(\"extra\", sources=[\"extra.vx\"])\n";
@@ -131,14 +128,10 @@ void test_plan_order() {
 void test_output_names() {
   CHECK(vmake::default_output_name(TargetKind::Exe, "app", "macosx") == "app");
   CHECK(vmake::default_output_name(TargetKind::Exe, "app", "linux") == "app");
-  CHECK(vmake::default_output_name(TargetKind::Exe, "app", "windows") ==
-        "app.exe");
-  CHECK(vmake::default_output_name(TargetKind::Dylib, "m", "macosx") ==
-        "libm.dylib");
-  CHECK(vmake::default_output_name(TargetKind::Dylib, "m", "linux") ==
-        "libm.so");
-  CHECK(vmake::default_output_name(TargetKind::Dylib, "m", "windows") ==
-        "m.dll");
+  CHECK(vmake::default_output_name(TargetKind::Exe, "app", "windows") == "app.exe");
+  CHECK(vmake::default_output_name(TargetKind::Dylib, "m", "macosx") == "libm.dylib");
+  CHECK(vmake::default_output_name(TargetKind::Dylib, "m", "linux") == "libm.so");
+  CHECK(vmake::default_output_name(TargetKind::Dylib, "m", "windows") == "m.dll");
 }
 
 void test_paths() {
@@ -163,10 +156,9 @@ void test_paths() {
 // deps 字段：解析、前向引用、校验错误
 void test_deps() {
   // 基本解析 + 前向引用（deps 引用后声明的目标）
-  const std::string text =
-      "exe(\"app\", sources=[\"main.vx\"], deps=[\"calc\", \"util\"])\n"
-      "dylib(\"calc\", sources=[\"calc.vx\"])\n"
-      "dylib(\"util\", sources=[\"util.vx\"])\n";
+  const std::string text = "exe(\"app\", sources=[\"main.vx\"], deps=[\"calc\", \"util\"])\n"
+                           "dylib(\"calc\", sources=[\"calc.vx\"])\n"
+                           "dylib(\"util\", sources=[\"util.vx\"])\n";
   const Manifest m = must_parse(text);
   CHECK(m.targets.size() == 3);
   if (m.targets.size() == 3) {
@@ -179,16 +171,11 @@ void test_deps() {
   }
 
   // deps 缺失/空元素/重复字段
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"missing\"])\n",
-                   "未声明的目标"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"a\"])\n",
-                   "不能依赖自身"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"\"])\n",
-                   "含空依赖名"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"b\"], deps=[\"b\"])\n",
-                   "字段 deps 重复"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=\"b\")\n",
-                   "deps 期望字符串数组"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"missing\"])\n", "未声明的目标"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"a\"])\n", "不能依赖自身"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"\"])\n", "含空依赖名"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"b\"], deps=[\"b\"])\n", "字段 deps 重复"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=\"b\")\n", "deps 期望字符串数组"));
   CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], deps=[\"b\"])\n"
                    "exe(\"b\", sources=[\"b.vx\"])\n",
                    "必须是 dylib 或 staticlib 目标"));
@@ -196,7 +183,7 @@ void test_deps() {
 
 // plan_order：selected 自动展开依赖闭包（依赖 dylib 先建）
 void test_plan_order_deps() {
-  const char *text = "exe(\"app\", sources=[\"main.vx\"], deps=[\"core\"])\n"
+  const char* text = "exe(\"app\", sources=[\"main.vx\"], deps=[\"core\"])\n"
                      "dylib(\"core\", sources=[\"core.vx\"])\n"
                      "exe(\"tool\", sources=[\"tool.vx\"])\n";
   const Manifest m = must_parse(text);
@@ -213,17 +200,16 @@ void test_plan_order_deps() {
 
 // cflags / defines / ldflags / tests 字段：解析、staticlib 禁用、元素校验
 void test_flags_and_tests() {
-  const std::string text =
-      "exe(\"app\", sources=[\"main.vx\"],\n"
-      "    cflags=[\"-Wall\", \"-Wextra\"],\n"
-      "    defines=[\"NDEBUG\", \"FOO=1\"],\n"
-      "    ldflags=[\"-Wl,-rpath,/opt/lib\"],\n"
-      "    tests=[\"tests/app_test.vx\"])\n"
-      "staticlib(\"util\", sources=[\"util.vx\"])\n";
+  const std::string text = "exe(\"app\", sources=[\"main.vx\"],\n"
+                           "    cflags=[\"-Wall\", \"-Wextra\"],\n"
+                           "    defines=[\"NDEBUG\", \"FOO=1\"],\n"
+                           "    ldflags=[\"-Wl,-rpath,/opt/lib\"],\n"
+                           "    tests=[\"tests/app_test.vx\"])\n"
+                           "staticlib(\"util\", sources=[\"util.vx\"])\n";
   const Manifest m = must_parse(text);
   CHECK(m.targets.size() == 2);
   if (m.targets.size() == 2) {
-    const Target &t = m.targets[0];
+    const Target& t = m.targets[0];
     CHECK(t.cflags.size() == 2);
     if (t.cflags.size() == 2) {
       CHECK(t.cflags[0] == "-Wall");
@@ -242,15 +228,14 @@ void test_flags_and_tests() {
       CHECK(t.tests[0] == "tests/app_test.vx");
   }
 
-  // staticlib：归档阶段不调用编译器/链接器 → 禁止链接期参数，但允许 tests
-  CHECK(fails_with("staticlib(\"u\", sources=[\"u.vx\"], cflags=[\"-O2\"])\n",
-                   "staticlib 目标不允许"));
-  CHECK(fails_with("staticlib(\"u\", sources=[\"u.vx\"], defines=[\"X\"])\n",
-                   "staticlib 目标不允许"));
-  CHECK(fails_with("staticlib(\"u\", sources=[\"u.vx\"], ldflags=[\"-s\"])\n",
-                   "staticlib 目标不允许"));
-  CHECK(must_parse("staticlib(\"u\", sources=[\"u.vx\"], tests=[\"t.vx\"])\n")
-            .targets.size() == 1);
+  // staticlib：无链接阶段 → 禁止 ldflags / libs / lib_dirs / deps；
+  // 但允许 cflags / defines（供其 .c/.cpp 源的 clang -c 编译）与 tests
+  CHECK(fails_with("staticlib(\"u\", sources=[\"u.vx\"], ldflags=[\"-s\"])\n", "staticlib 目标不允许"));
+  CHECK(fails_with("staticlib(\"u\", sources=[\"u.vx\"], libs=[\"m\"])\n", "staticlib 目标不允许"));
+  CHECK(must_parse("staticlib(\"u\", sources=[\"u.vx\"], cflags=[\"-O2\"])\n"
+                   "staticlib(\"v\", sources=[\"v.vx\"], defines=[\"X\"])\n")
+            .targets.size() == 2);
+  CHECK(must_parse("staticlib(\"u\", sources=[\"u.vx\"], tests=[\"t.vx\"])\n").targets.size() == 1);
 
   // 重复字段 / 空元素 / 类型错误 / tests 校验
   CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], cflags=[\"-O2\"],"
@@ -265,22 +250,14 @@ void test_flags_and_tests() {
   CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[\"t.vx\"],"
                    " tests=[\"u.vx\"])\n",
                    "字段 tests 重复"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], cflags=[\"\"])\n",
-                   "含空 cflags 条目"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], defines=[\"\"])\n",
-                   "含空 defines 条目"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], ldflags=[\"\"])\n",
-                   "含空 ldflags 条目"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[])\n",
-                   "tests 不能为空"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[\"\"])\n",
-                   "含空测试文件路径"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[\"t.txt\"])\n",
-                   "测试文件必须是 .vx"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=\"t.vx\")\n",
-                   "tests 期望字符串数组"));
-  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], cflags=\"-Wall\")\n",
-                   "cflags 期望字符串数组"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], cflags=[\"\"])\n", "含空 cflags 条目"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], defines=[\"\"])\n", "含空 defines 条目"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], ldflags=[\"\"])\n", "含空 ldflags 条目"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[])\n", "tests 不能为空"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[\"\"])\n", "含空测试文件路径"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[\"t.txt\"])\n", "测试文件必须是 .vx"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=\"t.vx\")\n", "tests 期望字符串数组"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], cflags=\"-Wall\")\n", "cflags 期望字符串数组"));
 }
 
 // test_target_of：测试目标派生规则（exe 仅测试源；库并入目标源）
@@ -336,6 +313,119 @@ void test_test_target_of() {
   CHECK(!vmake::test_target_of(no_tests).has_value());
 }
 
+// sources 混合 C/C++ 源：.vx/.c/.cpp/.cc/.cxx 均可，其它后缀报错
+void test_native_sources() {
+  const std::string text = "exe(\"app\", sources=[\"main.vx\", \"platform.c\", \"util.cpp\"])\n"
+                           "staticlib(\"u\", sources=[\"a.c\", \"b.cc\"])\n"
+                           "dylib(\"d\", sources=[\"c.cxx\"])\n";
+  const Manifest m = must_parse(text);
+  CHECK(m.targets.size() == 3);
+  if (m.targets.size() == 3) {
+    CHECK(m.targets[0].sources.size() == 3);
+    CHECK(vmake::has_native_source(m.targets[0]));
+    CHECK(vmake::has_native_source(m.targets[1]));
+    CHECK(vmake::has_native_source(m.targets[2]));
+  }
+  // 纯 .vx 目标不含原生源
+  const Manifest pure = must_parse("exe(\"p\", sources=[\"m.vx\"])\n");
+  CHECK(!pure.targets.empty() && !vmake::has_native_source(pure.targets[0]));
+
+  // 非法后缀
+  CHECK(fails_with("exe(\"a\", sources=[\"a.txt\"])\n", "源文件必须是"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.m\"])\n", "源文件必须是"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a\"])\n", "源文件必须是"));
+  // tests 仍仅限 .vx
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[\"t.c\"])\n", "测试文件必须是 .vx"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], tests=[\"t.cpp\"])\n", "测试文件必须是 .vx"));
+}
+
+// ccflags / cxxflags / incs / std：解析、重复、空元素、staticlib 允许
+void test_native_flags() {
+  const std::string text = "exe(\"app\", sources=[\"m.vx\", \"n.cpp\"],\n"
+                           "    ccflags=[\"-Wall\"],\n"
+                           "    cxxflags=[\"-Wall\", \"-Wextra\"],\n"
+                           "    incs=[\"include\", \"third_party/include\"],\n"
+                           "    std=\"c++20\")\n";
+  const Manifest m = must_parse(text);
+  CHECK(m.targets.size() == 1);
+  if (!m.targets.empty()) {
+    const Target& t = m.targets[0];
+    CHECK(t.ccflags.size() == 1 && t.ccflags[0] == "-Wall");
+    CHECK(t.cxxflags.size() == 2);
+    CHECK(t.incs.size() == 2 && t.incs[1] == "third_party/include");
+    CHECK(t.std_.value_or("") == "c++20");
+  }
+
+  // staticlib 也允许编译期字段
+  const Manifest sl = must_parse("staticlib(\"u\", sources=[\"a.c\"], ccflags=[\"-O2\"], incs=[\"inc\"],"
+                                 " std=\"c17\")\n");
+  CHECK(sl.targets.size() == 1);
+  if (!sl.targets.empty()) {
+    CHECK(sl.targets[0].ccflags.size() == 1);
+    CHECK(sl.targets[0].std_.value_or("") == "c17");
+  }
+
+  // 重复字段
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], ccflags=[\"-W\"],"
+                   " ccflags=[\"-g\"])\n",
+                   "字段 ccflags 重复"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], cxxflags=[\"-W\"],"
+                   " cxxflags=[\"-g\"])\n",
+                   "字段 cxxflags 重复"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], incs=[\"i\"],"
+                   " incs=[\"j\"])\n",
+                   "字段 incs 重复"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], std=\"c17\","
+                   " std=\"c++20\")\n",
+                   "字段 std 重复"));
+  // 类型错误
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], std=[\"c17\"])\n", "std 期望字符串"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], ccflags=\"-Wall\")\n", "ccflags 期望字符串数组"));
+  // 空元素
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], ccflags=[\"\"])\n", "含空 ccflags 条目"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], cxxflags=[\"\"])\n", "含空 cxxflags 条目"));
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], incs=[\"\"])\n", "含空 incs 条目"));
+  // 未知字段提示包含新字段名
+  CHECK(fails_with("exe(\"a\", sources=[\"a.vx\"], bogus=1)\n", "ccflags"));
+}
+
+// object_path：.vx → .vxobj；.c/.cpp → .o（同目录同命名规则）
+void test_native_object_paths() {
+  Target t;
+  t.name = "app";
+  t.kind = TargetKind::Exe;
+  const std::filesystem::path build = "/tmp/vmake-build";
+
+  const auto vxobj = vmake::object_path(build, t, 0, "src/main.vx");
+  CHECK(vxobj.filename().string() == "0_main.vxobj");
+  const auto cobj = vmake::object_path(build, t, 1, "src/platform.c");
+  CHECK(cobj.filename().string() == "1_platform.o");
+  const auto cppobj = vmake::object_path(build, t, 2, "src/util.cpp");
+  CHECK(cppobj.filename().string() == "2_util.o");
+  CHECK(cobj.parent_path() == build / "obj" / "app");
+}
+
+// test_target_of：派生测试目标继承编译期字段
+void test_test_target_inherits_native() {
+  Target t;
+  t.name = "app";
+  t.kind = TargetKind::Exe;
+  t.sources = {"src/main.vx", "src/util.cpp"};
+  t.tests = {"tests/app_test.vx"};
+  t.ccflags = {"-Wall"};
+  t.cxxflags = {"-std=c++20"};
+  t.incs = {"include"};
+  t.std_ = "c++20";
+  const auto tt = vmake::test_target_of(t);
+  CHECK(tt.has_value());
+  if (tt) {
+    CHECK(tt->ccflags.size() == 1);
+    CHECK(tt->cxxflags.size() == 1);
+    CHECK(tt->incs.size() == 1);
+    CHECK(tt->std_.value_or("") == "c++20");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -349,6 +439,10 @@ int main() {
   test_paths();
   test_flags_and_tests();
   test_test_target_of();
+  test_native_sources();
+  test_native_flags();
+  test_native_object_paths();
+  test_test_target_inherits_native();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "vmake tests: all passed\n");

@@ -15,12 +15,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using namespace vx::compiler;
@@ -40,8 +40,7 @@ std::optional<ir::ModuleIR> gen_src(std::string_view src) {
   }
   auto mod = generate_module(*prog, "<test>", bag);
   if (!mod) {
-    std::fprintf(stderr, "FAIL codegen:\n%s",
-                 render_all(bag, src, false).c_str());
+    std::fprintf(stderr, "FAIL codegen:\n%s", render_all(bag, src, false).c_str());
     ++g_failures;
     return std::nullopt;
   }
@@ -49,11 +48,9 @@ std::optional<ir::ModuleIR> gen_src(std::string_view src) {
 }
 
 // ---- 辅助：读取大端 u32 ----
-std::uint32_t read_u32_be(const std::string &s, std::size_t pos) {
-  return (static_cast<unsigned char>(s[pos]) << 24) |
-         (static_cast<unsigned char>(s[pos + 1]) << 16) |
-         (static_cast<unsigned char>(s[pos + 2]) << 8) |
-         static_cast<unsigned char>(s[pos + 3]);
+std::uint32_t read_u32_be(const std::string& s, std::size_t pos) {
+  return (static_cast<unsigned char>(s[pos]) << 24) | (static_cast<unsigned char>(s[pos + 1]) << 16) |
+         (static_cast<unsigned char>(s[pos + 2]) << 8) | static_cast<unsigned char>(s[pos + 3]);
 }
 
 // ---- 用例 ----
@@ -82,9 +79,8 @@ void test_magic_header() {
 }
 
 void test_func_count() {
-  auto m = gen_src(
-      "func a():\n    return\n"
-      "func b() -> int:\n    return 1\n");
+  auto m = gen_src("func a():\n    return\n"
+                   "func b() -> int:\n    return 1\n");
   CHECK(m);
   CHECK(m->funcs.size() == 2);
   const std::string data = obj::serialize(*m, "t");
@@ -136,11 +132,10 @@ void test_instruction_encoding() {
 }
 
 void test_extern_linkage() {
-  auto m = gen_src(
-      "extern out(msg: string)\n"
-      "func main():\n"
-      "    out(\"hi\")\n"
-      "    return\n");
+  auto m = gen_src("extern out(msg: string)\n"
+                   "func main():\n"
+                   "    out(\"hi\")\n"
+                   "    return\n");
   CHECK(m);
   CHECK(m->linkage.size() == 1);
   const std::string data = obj::serialize(*m, "t");

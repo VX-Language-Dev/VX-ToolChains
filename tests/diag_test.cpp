@@ -10,23 +10,22 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
-#define CHECK_EQ_STR(actual, expect)                                           \
-  do {                                                                         \
-    const std::string a_ = (actual);                                           \
-    const std::string e_ = (expect);                                           \
-    if (a_ != e_) {                                                            \
-      std::fprintf(stderr, "FAIL %s:%d:\n  实际: %s\n  期望: %s\n", __FILE__,  \
-                   __LINE__, a_.c_str(), e_.c_str());                          \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK_EQ_STR(actual, expect)                                                                                   \
+  do {                                                                                                                 \
+    const std::string a_ = (actual);                                                                                   \
+    const std::string e_ = (expect);                                                                                   \
+    if (a_ != e_) {                                                                                                    \
+      std::fprintf(stderr, "FAIL %s:%d:\n  实际: %s\n  期望: %s\n", __FILE__, __LINE__, a_.c_str(), e_.c_str());       \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using namespace vx::compiler;
@@ -43,8 +42,7 @@ void test_severity() {
 }
 
 void test_constructors() {
-  Diagnostic d = make_diag(diag_code::lex_unknown_char, Severity::Error,
-                           "无法识别的字符 0x40", "foo.vx", 3, 5);
+  Diagnostic d = make_diag(diag_code::lex_unknown_char, Severity::Error, "无法识别的字符 0x40", "foo.vx", 3, 5);
   CHECK(d.code == "E2001");
   CHECK(d.severity == Severity::Error);
   CHECK(d.message == "无法识别的字符 0x40");
@@ -54,8 +52,7 @@ void test_constructors() {
   CHECK(d.end_line == 0);
   CHECK(d.end_col == 0);
 
-  Diagnostic s = make_diag_span(diag_code::parse_expected_token,
-                                Severity::Warning, "期望 )", "a.vx", 1, 2, 1, 5);
+  Diagnostic s = make_diag_span(diag_code::parse_expected_token, Severity::Warning, "期望 )", "a.vx", 1, 2, 1, 5);
   CHECK(s.end_line == 1);
   CHECK(s.end_col == 5);
   CHECK(s.severity == Severity::Warning);
@@ -67,14 +64,12 @@ void test_bag() {
   CHECK(bag.size() == 0);
   CHECK(!bag.has_error());
 
-  bag.add(make_diag(diag_code::lex_unknown_char, Severity::Warning, "w", "a.vx",
-                    1, 1));
+  bag.add(make_diag(diag_code::lex_unknown_char, Severity::Warning, "w", "a.vx", 1, 1));
   CHECK(!bag.empty());
   CHECK(bag.size() == 1);
   CHECK(!bag.has_error());
 
-  bag.add(make_diag(diag_code::lex_unterminated_string, Severity::Error, "e",
-                    "a.vx", 2, 1));
+  bag.add(make_diag(diag_code::lex_unterminated_string, Severity::Error, "e", "a.vx", 2, 1));
   CHECK(bag.size() == 2);
   CHECK(bag.has_error());
 
@@ -89,10 +84,8 @@ void test_bag() {
 
   // items() 暴露内部顺序（添加顺序）
   DiagBag ordered;
-  ordered.add(make_diag(diag_code::lex_unknown_char, Severity::Error, "first",
-                        "z.vx", 9, 9));
-  ordered.add(make_diag(diag_code::lex_unknown_char, Severity::Error, "second",
-                        "z.vx", 9, 9));
+  ordered.add(make_diag(diag_code::lex_unknown_char, Severity::Error, "first", "z.vx", 9, 9));
+  ordered.add(make_diag(diag_code::lex_unknown_char, Severity::Error, "second", "z.vx", 9, 9));
   CHECK(ordered.items().size() == 2);
   CHECK(ordered.items()[0].message == "first");
   CHECK(ordered.items()[1].message == "second");
@@ -107,7 +100,7 @@ void test_sort() {
   bag.add(make_diag("E2", Severity::Error, "a1c", "a.vx", 1, 3));
   bag.sort();
 
-  const auto &v = bag.items();
+  const auto& v = bag.items();
   CHECK(v.size() == 5);
   // a.vx 内部：line 1 col 3 → line 1 col 5(Error) → line 1 col 5(Warning) → line 2
   CHECK(v[0].message == "a1c");
@@ -131,15 +124,13 @@ std::string render_expected_basic() {
 
 void test_render_basic() {
   const std::string src = "var a = 1\nvar x = @\n";
-  Diagnostic d = make_diag(diag_code::lex_unknown_char, Severity::Error,
-                           "无法识别的字符 0x40", "foo.vx", 2, 9);
+  Diagnostic d = make_diag(diag_code::lex_unknown_char, Severity::Error, "无法识别的字符 0x40", "foo.vx", 2, 9);
   CHECK_EQ_STR(render_diagnostic(d, src, false), render_expected_basic());
 }
 
 void test_render_span() {
   const std::string src = "func(";
-  Diagnostic d = make_diag_span(diag_code::parse_expected_token, Severity::Error,
-                                "期望标识符", "a.vx", 1, 1, 1, 4);
+  Diagnostic d = make_diag_span(diag_code::parse_expected_token, Severity::Error, "期望标识符", "a.vx", 1, 1, 1, 4);
   std::string e;
   e += "error[E2010]: 期望标识符\n";
   e += "  --> a.vx:1:1\n";
@@ -152,7 +143,8 @@ void test_render_span() {
 void test_render_gutter_width() {
   // 行号 >= 10 时，gutter 宽度应为 2，使各线段对齐
   std::string src;
-  for (int i = 1; i <= 10; ++i) src += "l" + std::to_string(i) + "\n";
+  for (int i = 1; i <= 10; ++i)
+    src += "l" + std::to_string(i) + "\n";
   Diagnostic d = make_diag("E2010", Severity::Error, "msg", "a.vx", 10, 1);
   std::string e;
   e += "error[E2010]: msg\n";
@@ -227,10 +219,8 @@ void test_render_all_sorts_and_summarizes() {
   const std::string src = "var a = 1\nvar x = @\n";
   DiagBag bag;
   // 逆序添加：render_all 内部排序，且不改动原 bag 的顺序
-  bag.add(make_diag(diag_code::lex_unknown_char, Severity::Error, "第二个错误",
-                    "foo.vx", 2, 9));
-  bag.add(make_diag(diag_code::lex_unknown_char, Severity::Error, "第一个错误",
-                    "foo.vx", 2, 5));
+  bag.add(make_diag(diag_code::lex_unknown_char, Severity::Error, "第二个错误", "foo.vx", 2, 9));
+  bag.add(make_diag(diag_code::lex_unknown_char, Severity::Error, "第一个错误", "foo.vx", 2, 5));
   bag.add(make_diag("", Severity::Warning, "一条警告", "foo.vx", 1, 1));
 
   const std::string out = render_all(bag, src, false);
@@ -246,8 +236,7 @@ void test_render_all_sorts_and_summarizes() {
   CHECK(w < e1 && e1 < e2);
 
   // 末尾汇总行
-  CHECK(out.find("error: 因 2 个错误中止编译（另有 1 个警告）") !=
-        std::string::npos);
+  CHECK(out.find("error: 因 2 个错误中止编译（另有 1 个警告）") != std::string::npos);
 }
 
 void test_render_all_warning_only() {
@@ -273,8 +262,7 @@ void test_render_all_no_summary_when_clean() {
 void test_render_span_multiline() {
   // P1-5：跨行 span 退化——高亮到起始行的行尾，而非只画 1 个 ^
   const std::string src = "abcdef\nghij\n";
-  Diagnostic d =
-      make_diag_span("E2010", Severity::Error, "跨行", "a.vx", 1, 3, 2, 2);
+  Diagnostic d = make_diag_span("E2010", Severity::Error, "跨行", "a.vx", 1, 3, 2, 2);
   std::string e;
   e += "error[E2010]: 跨行\n";
   e += "  --> a.vx:1:3\n";
@@ -300,8 +288,7 @@ void test_render_caret_clamped_to_line_end() {
 void test_render_span_clamped_to_line_end() {
   // P1-6：同行 span 的 end_col 越出行尾时，caret 被夹断到行尾
   const std::string src = "ab\n";
-  Diagnostic d =
-      make_diag_span("E2010", Severity::Error, "越界span", "a.vx", 1, 1, 1, 99);
+  Diagnostic d = make_diag_span("E2010", Severity::Error, "越界span", "a.vx", 1, 1, 1, 99);
   std::string e;
   e += "error[E2010]: 越界span\n";
   e += "  --> a.vx:1:1\n";

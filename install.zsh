@@ -13,10 +13,12 @@ cp ./build/vlnk ~/.local/bin/vlnk
 cp ./build/tools/vxls/vxls ~/.local/bin/vxls
 cp ./build/tools/vmake/vmake ~/.local/bin/vmake
 cp ./build/tools/vmake-lsp/vmake-lsp ~/.local/bin/vmake-lsp
+cp ./build/tools/vfmt/vfmt ~/.local/bin/vfmt
 cp ./build/tools/vx/vx ~/.local/bin/vx
-# Install import-library headers next to the binaries: vxc / vxls resolve
+# Install import-library headers next to the binaries: vxc / vxls / vx resolve
 # @imp/@cppimp libraries from <executable_dir>/headers by default
-# (extra search dirs via -I; library root overridden via VX_HEADERS)
+# (extra search dirs via -I; library root overridden via VX_HEADERS_DIR,
+#  VX_HEADERS kept as legacy alias)
 if [ -d headers ]; then
     rm -rf ~/.local/bin/headers
     cp -R headers ~/.local/bin/headers

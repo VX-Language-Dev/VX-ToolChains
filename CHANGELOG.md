@@ -2,10 +2,29 @@
 
 ## Unreleased — v1.16.0 (开发中)
 
+### 格式化工具（`vfmt` 0.1.0，新增）
+
+- **新增 `tools/vfmt/`**：VX 源码格式化工具，独立 CMake 子项目（主构建经 `tools/*/CMakeLists.txt` 自动发现纳入），产物 `build/tools/vfmt/vfmt`
+- **基于词法 token 流重建格式**，而非「AST → 源码」重写：保留 AST 会丢失的信息——`var` / `mut` / `const` 关键字原文（AST 的 `VarDecl` 仅以 `is_mut` 区分，`const` 与 `var` 不可分）、`import ... as` 别名（AST 的 `Import` 节点不含 `alias`）、字符串原始转义形式（AST 的 `StrLit` 仅存解码后的值）
+- **注释保留**：独立注释行与行尾注释均原样保留并按源码位置插回（词法阶段注释被跳过，故由独立的源码行扫描器按与 Lexer 一致的规则提取：字符串内 `#` 不算注释、字符串可跨行）
+- **规范化规则**：缩进统一为空格（制表符按 4 列折算后转空格）；二元运算符两侧一个空格、一元运算符与操作数紧贴；逗号后一个空格；类型注解冒号前无空格后一个空格；函数调用 / 下标紧贴、控制流关键字后保留空格；`;` 分隔的同物理行多语句拆为独立行；空行块内最多 1 个、顶层最多 2 个，文件首尾空行裁剪
+- **保留多行字面量结构**：列表 / 字典字面量的原有换行不被折叠为单行（与 gofmt 一致），只规范化每行缩进；括号内续行缩进一级、右闭合符与前缀对齐
+- **AST 结构等价性自检**：格式化结果重新经 Lexer + Parser 解析，与原源码比对 AST 结构指纹（`verify.hpp`），结构不一致即判定失败且不产出结果；`--no-verify` 可关闭
+- **CLI**：`vfmt [-w|--write] [-c|--check] [--indent <n>] [--line-length <n>] [--no-verify] <file.vx>...`；`-` 从标准输入读取；退出码 0 = 成功 / 1 = `--check` 检出需格式化 / 2 = 用法或处理失败
+- 源码存在词法 / 语法错误时拒绝格式化，诊断信息与 `vxc` 一致
+- **元命令 `vx`** 新增 `fmt`（别名 `f`）子命令转发到 `vfmt`；`find_sibling` 补充 `<build>/tools/<name>/<name>` 构建树布局探测（此前构建树内的 `vx lsp` 等转发会落到已安装版本）
+- 工具链集成：`install.zsh`、发布包 `install.sh` / `build-release.sh`、uv 包 `stage.py` / `pyproject.toml` / `_dispatch.py` 均纳入 `vfmt`；新增 bash 补全 `vfmt.bash`，`_vx` / `vx.bash` 补全加 `fmt` 子命令
+- **发布包打包路径修复**（既有问题）：Ninja Multi-Config 下工具子项目的可执行文件位于 `<build>/tools/<tool>/<config>/`，而打包脚本按 `<build>/<config>/tools/<tool>/` 查找，导致 `vxls` / `vmake` / `vx` 一直未被打进发布包；现改为两处布局均探测。同时补齐构建目标 `vx_runtime`（`libvxrt.a` 此前未构建，发布包缺失预编译运行时）与 `vmake-lsp`，并把 `[ -f ] && cp` 改为显式 `if`，避免 `set -e` 下末次迭代失败中断脚本
+- 新增 `vfmt_tests` 单测（缩进 / 空格规则 / 注释保留 / 空行裁剪 / const 与 import 别名保留 / 字符串转义往返 / 幂等性 / AST 结构保持 / 语法错误拒绝），CTest 由 18 组增至 **19 组全绿**
+- README 新增 §11「源码格式化（vfmt）」说明；模块表由「🚧 规划中」改为「✅ 基础可用」
+
 ### 编译器（`vxc` 0.5.0）
 - **`--target <triple>` 参数**：显式指定交叉编译目标三元组，优先于自动检测的 host triple；help 同步更新
+- **`VX_HEADERS_DIR` 环境变量**：新增导入库根目录覆盖变量（优先于 `VX_HEADERS`）；`vx` 元命令在分发子进程前会把自身目录下的 `headers/` 通过 `VX_HEADERS_DIR` 传播，便于 `vx compile` 等直接定位库根；`VX_HEADERS` 保留为兼容别名
+- **系统头目录探测不再经 shell**：`importer.cpp` 的 `popen("c++ -E -x c++ -v /dev/null 2>&1")` 改为 `fork` + `execvp` 直接执行编译器驱动（stdout/stderr `dup2` 到管道），消除 PATH/环境变量中 shell 特殊字符的注入面；输出解析逻辑不变
 
 ### 后端（`vlnk`）
+- `llvm_emitter.cpp` 三处 `catch (...)` 精确化为 `catch (const std::invalid_argument&)` / `catch (const std::out_of_range&)`（`OP_NEWZ` / `OP_ARRAY_NEW` / `OP_MAP_NEW` 的数值参数解析），不再吞掉 `bad_alloc` 等意外异常
 - **`--lib <file>` 参数**（可重复）：链接原生库（`.a`/`.dylib`/`.so`，如其他目标构建出的 dylib），原样传给 clang，不参与模块合并
 - **`--cflag <arg>` / `--ldflag <arg>` 参数**（可重复）：额外 clang 参数，`--cflag` 紧随输入文件（作用于 `.ll`/`.c`/`.cpp` 的编译与链接），`--ldflag` 置于命令末尾（链接器参数，如 `-Wl,...`）
 - `link_module` 新增 `native_libs` / `cflags` / `ldflags` 形参（后两者默认空）
@@ -29,6 +48,7 @@
 - 新增 parser 单测（deps 位置/hit/诊断、新字段解析/hit/诊断）
 
 ### LSP 语言服务器（`vxls`）
+- **跨文件语义**：新增 `textDocument/references`（跨文档引用查找）、`textDocument/rename`（跨文件重命名，返回 `WorkspaceEdit`）、`workspace/symbol`（跨文档符号搜索，大小写不敏感子串过滤）；`textDocument/definition` 在当前文档未命中时自动遍历其它打开文档。新增 `analysis.hpp` 中的 `LspLocation` / `LspWorkspaceSymbol` / `LspTextEdit` 结构与对应函数声明，`analysis.cpp` 实现跨文档遍历与标识符定位，`main.cpp` 注册新 capability 与请求处理器
 - `ImportContext` 扩展 `sys_dirs` 字段（系统 C/C++ 头目录），用于 `@cppimp` 的系统头探测；聚合初始化兼容既有调用
 
 ### 内置 `system` 迁移为 `sys` 导入库
@@ -42,15 +62,27 @@
 - `install.zsh` 不再安装 `vx-tidy` 二进制，新增安装 `libvxtidy` 动态库到 `~/.local/lib`（匹配 vxls 安装 RPATH `../lib`）；发布包 `install.sh` / `build-release.sh` 与 uv 包（`stage.py` / console script / `_dispatch`）不再携带 `vx-tidy` 可执行文件，`libvxtidy` 照常分发
 - README（模块表、产物表、安装说明、§8 静态分析、项目结构）同步
 
+### 元命令（`vx`）
+- **新增 `vx write-settings <editor>` 子命令**：把 VX 语言（`.vx`）注册进编辑器设置文件，支持 Neovim（`nvim`/`neovim` → `~/.config/nvim/init.lua`，注册文件类型与注释符）、Vim（`vim` → `~/.vimrc`，`BufRead/BufNewFile *.vx setfiletype vx`）、Helix（`helix`/`hx` → `~/.config/helix/languages.toml`，`[[language]]` 含 `file-types` / `comment-token`）、Emacs（`emacs` → `~/.emacs.d/init.el`，`define-derived-mode vx-mode` + `auto-mode-alist`）
+- 写入幂等：以 `>>> vx write-settings >>>` / `<<< vx write-settings <<<` 标记块定位，重复执行就地更新而不重复追加；既有配置内容原样保留，缺失目录自动创建
+- `--dry-run` 只打印将要写入的完整内容，不改动文件；未知编辑器或多余参数返回用法错误（退出码 2）
+- 新增 `vx_settings_tests` 单测（编辑器名解析、设置文件路径、各编辑器注册块内容、空/非空文件合并、幂等与过期块替换）；bash/zsh 补全同步（含编辑器名补全）
+- README 新增 §10 编辑器语言注册说明
+
 ### 平台支持
 - **移除 Windows 原生（PE/MSVC）支持**：不再生成 PE 可执行文件；Windows 用户请使用 MSYS2 / Git Bash / Cygwin / WSL / WSL2 等 POSIX 环境构建（产物为 POSIX 可执行文件）
 - 删除 `scripts/toolchains/toolchain-windows-x86_64.cmake` 交叉编译模板
 
 ### 工程与安装
+- **CI 构建改为 `make -j$(nproc)`**：`ci/check.sh` 生成器由 Ninja Multi-Config 改为 Unix Makefiles，用 `make -C build -j<NPROC>` 并行构建（NPROC 优先取 `nproc`，缺失时回退 `sysctl -n hw.ncpu`）；不再硬依赖 ninja，多 config 覆盖保留（倒序构建，收尾落在首个 config 的产物上）
+- `tests/import_test.cpp` 三处 `ImportContext` 聚合初始化补齐全部字段（C++20 指定初始化），`-Wmissing-field-initializers` 警告清零
+- `tools/vmake/src/config.cpp` 消除最后一处 `-Wmissing-field-initializers`（`Lexer` 的 `toks` 补默认成员初始化器），全量构建（含 tools/）零警告
 - 根 `CMakeLists.txt` 新增标准 `install()` 规则（`cmake --install`），统一 bin/lib/headers/std/completions 安装
 - 各工具子项目追加各自的 `install(TARGETS ...)`，支持独立构建安装
 - `vxls`/`vx-tidy` 安装 RPATH 设置为 `../lib`，安装后无需 `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH`
 - 新增 `.clang-format` 与 CMake `format`/`check-format`/`lint` 目标；`ci/check.sh` 集成 clang-format 建议性检查
+- **全量源码通过 clang-format**：对 `src/`、`include/`、`tests/`、`tools/`、`headers/cpp/` 共 76 个 C++ 源文件执行一次性格式化，`check-format` 由 7327 处违规降至 0
+- `check-format` 覆盖范围补齐 `headers/cpp/`（`@cppimp` 示例 C++ 源）；`ci/check.sh` 的 clang-format 检查由建议性改为**阻断式**（失败即退出码非 0）
 - `ci/check.sh` 将 clang 作为硬性前置依赖，避免 e2e 测试被跳过
 - `.gitignore` 补充根目录 in-source CMake 产物（`CMakeCache.txt`、`CMakeFiles/` 等），取消其 Git 跟踪
 - `codegen` 移除遗留 `has_return_` 成员（裸 return 默认值逻辑由 v1.14.0 的兜底返回处理）

@@ -1,0 +1,24 @@
+# VX-ToolKit 静态分析配置（clang-tidy）。
+# 保守起步：bugprone / modernize / readability 子集，按需追加并修复存量告警。
+---
+Checks: >
+  bugprone-*,
+  modernize-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -modernize-use-trailing-return-type,
+  -modernize-use-designated-initializers,
+  -modernize-use-std-print,
+  -modernize-use-string-view,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-else-after-return,
+  -readability-braces-around-statements,
+  -readability-use-concise-preprocessor-directives,
+  -altera-*,
+  -modernize-use-nodiscard
+WarningsAsErrors: ''
+HeaderFilterRegex: 'include/vx/.*'
+FormatStyle: file

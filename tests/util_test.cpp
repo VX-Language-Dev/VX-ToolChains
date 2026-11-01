@@ -13,54 +13,54 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 void test_arena() {
   vx::util::Arena arena(64); // 故意用小块容量，覆盖扩容路径
 
   // 基本分配与读写
-  int *a = arena.create<int>(42);
-  int *b = arena.create<int>(7);
+  int* a = arena.create<int>(42);
+  int* b = arena.create<int>(7);
   CHECK(*a == 42);
   CHECK(*b == 7);
   CHECK(a != b);
 
   // 对齐分配
-  void *p = arena.allocate(1, 64);
+  void* p = arena.allocate(1, 64);
   CHECK(p != nullptr);
   CHECK(reinterpret_cast<std::uintptr_t>(p) % 64 == 0);
 
   // 超出单块容量的大分配
-  void *big = arena.allocate(1024);
+  void* big = arena.allocate(1024);
   CHECK(big != nullptr);
   std::memset(big, 0xAB, 1024);
-  CHECK(static_cast<unsigned char *>(big)[1023] == 0xAB);
+  CHECK(static_cast<unsigned char*>(big)[1023] == 0xAB);
 
   // 构造非平凡聚合
   struct Pair {
     int x;
     int y;
   };
-  Pair *pr = arena.create<Pair>(Pair{1, 2});
+  Pair* pr = arena.create<Pair>(Pair{1, 2});
   CHECK(pr->x == 1);
   CHECK(pr->y == 2);
 
   // reset 后可继续分配使用
   arena.reset();
-  int *c = arena.create<int>(99);
+  int* c = arena.create<int>(99);
   CHECK(*c == 99);
 
   // reset 后内存从块头复用（同一地址可再次分配）
   vx::util::Arena fresh(64);
-  void *q1 = fresh.allocate(8);
+  void* q1 = fresh.allocate(8);
   fresh.reset();
-  void *q2 = fresh.allocate(8);
+  void* q2 = fresh.allocate(8);
   CHECK(q1 == q2);
 }
 
@@ -138,10 +138,9 @@ void test_vx_sources() {
 
   // 收集 compiler/、std/、tests/ 下全部 .vx 源码
   std::vector<fs::path> sources;
-  for (const char *dir : {"compiler", "std", "tests"}) {
+  for (const char* dir : {"compiler", "std", "tests"}) {
     std::error_code ec;
-    for (fs::recursive_directory_iterator it(root / dir, ec), end; it != end;
-         it.increment(ec)) {
+    for (fs::recursive_directory_iterator it(root / dir, ec), end; it != end; it.increment(ec)) {
       if (ec) {
         break;
       }
@@ -157,13 +156,13 @@ void test_vx_sources() {
   std::size_t total_lines = 0;
   std::size_t total_lexemes = 0;
 
-  for (const auto &path : sources) {
+  for (const auto& path : sources) {
     auto r = read_file(path);
     CHECK(r.has_value());
     if (!r) {
       continue;
     }
-    const std::string &content = *r;
+    const std::string& content = *r;
     CHECK(!content.empty());
     CHECK(content.size() == fs::file_size(path));
 
@@ -177,7 +176,7 @@ void test_vx_sources() {
         continue;
       }
       // 词素副本放入 Arena（模拟 token 存储），内容必须与源码视图一致
-      auto *copy = arena.create<std::string>(t.substr(0, t.find(' ')));
+      auto* copy = arena.create<std::string>(t.substr(0, t.find(' ')));
       CHECK(!copy->empty());
       CHECK(std::string_view(*copy) == t.substr(0, t.find(' ')));
       ++total_lexemes;
@@ -196,8 +195,8 @@ void test_vx_sources() {
   }
 
   // 最大源码文件回环：write_file → read_file 内容一致
-  const fs::path *largest = &sources.front();
-  for (const auto &p : sources) {
+  const fs::path* largest = &sources.front();
+  for (const auto& p : sources) {
     if (fs::file_size(p) > fs::file_size(*largest)) {
       largest = &p;
     }
@@ -205,8 +204,7 @@ void test_vx_sources() {
   auto big = read_file(*largest);
   CHECK(big.has_value());
   if (big) {
-    const fs::path out =
-        fs::temp_directory_path() / "vx_util_vx_sources" / "roundtrip.vx";
+    const fs::path out = fs::temp_directory_path() / "vx_util_vx_sources" / "roundtrip.vx";
     auto w = write_file(out, *big);
     CHECK(w.has_value());
     auto back = read_file(out);
@@ -227,19 +225,17 @@ void test_platform() {
   const std::string triple = vx::util::host_triple();
 
   // 架构取值在已知集合内
-  CHECK(arch == "arm64" || arch == "x86_64" || arch == "arm" ||
-        arch == "i386" || arch == "riscv64" || arch == "unknown");
+  CHECK(arch == "arm64" || arch == "x86_64" || arch == "arm" || arch == "i386" || arch == "riscv64" ||
+        arch == "unknown");
   // 系统取值在已知集合内
-  CHECK(os == "macosx" || os == "linux" || os == "windows" || os == "unix" ||
-        os == "unknown");
+  CHECK(os == "macosx" || os == "linux" || os == "windows" || os == "unix" || os == "unknown");
 
   // triple = arch-vendor-os 的规范拼接
   if (os == "macosx") {
     CHECK(triple == arch + "-apple-macosx");
   } else if (os == "linux") {
     // Linux 上 arm64 规范名为 aarch64
-    CHECK(triple ==
-          std::string(arch == "arm64" ? "aarch64" : arch) + "-unknown-linux-gnu");
+    CHECK(triple == std::string(arch == "arm64" ? "aarch64" : arch) + "-unknown-linux-gnu");
   } else if (os == "windows") {
     CHECK(triple == arch + "-pc-windows-msvc");
   } else {

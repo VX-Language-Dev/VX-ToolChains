@@ -5,6 +5,6 @@
 或转发给 `VX_TOOLKIT_BIN` / PATH 中已安装的同一套工具。
 """
 
-__version__ = "1.15.0"
+__version__ = "1.16.0"
 
 __all__ = ["__version__"]

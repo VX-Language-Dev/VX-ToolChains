@@ -4,7 +4,7 @@
 // 库查找规则（@imp）：
 //   - 自定义库用相对路径（以 './' 或 '../' 起始），相对被编译源文件所在目录；
 //   - 非相对引用按搜索目录顺序查找：include_dirs（-I 指定，按序）→
-//     headers_root（默认 vxc 可执行文件同级 headers/，VX_HEADERS 可覆盖）；
+//     headers_root（默认 vxc 可执行文件同级 headers/，VX_HEADERS_DIR / VX_HEADERS 可覆盖）；
 //   - headers 根目录的库直接用文件名引用，如 @imp(math) → headers/math.vxh；
 //   - 子目录下的库在库名前加 '/' + 子目录路径，如 @imp(/collections/vec)
 //     → headers/collections/vec.vxh（前导 '/' 可省略，两者等价）。
@@ -59,11 +59,10 @@ struct ImportTable {
   std::vector<std::pair<std::string, std::string>> aliases;
 
   // 按访问前缀（alias / name / 额外别名）查找库；未命中返回 nullptr。
-  const ImportedLib *lib_by_prefix(std::string_view prefix) const;
+  const ImportedLib* lib_by_prefix(std::string_view prefix) const;
 
   // 在某库内按库内名查找符号；未命中返回 nullptr。
-  static const ImportedSymbol *find_symbol(const ImportedLib &lib,
-                                           std::string_view name);
+  static const ImportedSymbol* find_symbol(const ImportedLib& lib, std::string_view name);
 };
 
 // 库解析上下文。
@@ -79,23 +78,28 @@ struct ImportContext {
 // 探测系统 C/C++ 编译器的头文件搜索目录（进程内缓存）。
 // 依次尝试 c++/clang++/g++ 等，解析 `-E -x c++ -v` 输出的
 // "#include <...> search starts here:" 段；全部失败时返回空表。
-const std::vector<std::filesystem::path> &system_include_dirs();
+const std::vector<std::filesystem::path>& system_include_dirs();
 
 // 由可执行文件路径推导其所在目录（用于定位同级 headers/）。
 std::filesystem::path executable_dir(std::string_view argv0);
+
+// 解析导入库根目录（headers 根）：
+//   1. VX_HEADERS_DIR 环境变量（手动指定，优先）
+//   2. VX_HEADERS 环境变量（兼容旧名）
+//   3. <argv0 所在目录>/headers
+//   4. "headers"（当前工作目录）
+// 任一步命中即返回；空环境变量值视为未设置。
+std::filesystem::path resolve_headers_root(std::string_view argv0);
 
 // 解析库引用 → 该库的基准路径（未加扩展名）。
 // 以 '.' 起始 → 相对 source_dir；否则按 include_dirs → headers_root
 // （→ 系统 C/C++ 头目录）顺序查找首个命中项；均未命中时返回按
 // headers_root 计算的默认路径（允许前导 '/'）。
-std::filesystem::path resolve_ref_path(const ImportContext &ctx,
-                                       std::string_view ref);
+std::filesystem::path resolve_ref_path(const ImportContext& ctx, std::string_view ref);
 
 // 扫描程序中的所有 @imp / @cppimp，构建导入表。
 // 出错时把诊断推入 bag（定位到 main_file 的注解行）并返回 std::nullopt。
-std::optional<ImportTable> build_import_table(const Program &prog,
-                                              const ImportContext &ctx,
-                                              std::string_view main_file,
-                                              DiagBag &bag);
+std::optional<ImportTable> build_import_table(const Program& prog, const ImportContext& ctx, std::string_view main_file,
+                                              DiagBag& bag);
 
 } // namespace vx::compiler

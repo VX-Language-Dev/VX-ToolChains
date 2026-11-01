@@ -41,20 +41,20 @@ struct ArrayField {
 // 单个目标声明及其各部分的位置（用于 hover / definition / completion）
 struct VTarget {
   TargetKind kind = TargetKind::Exe;
-  Range kind_range;      // "exe" / "dylib" / "staticlib" 关键字范围
+  Range kind_range; // "exe" / "dylib" / "staticlib" 关键字范围
   std::string name;
-  Range name_range;      // name 字符串值范围（不含引号）
+  Range name_range; // name 字符串值范围（不含引号）
   std::vector<std::string> sources;
-  Range sources_range;   // 整个 [...] 数组范围
-  Range sources_kw_range; // "sources" 字段名范围
+  Range sources_range;              // 整个 [...] 数组范围
+  Range sources_kw_range;           // "sources" 字段名范围
   std::vector<Range> source_ranges; // 每个源字符串值范围
   std::optional<std::string> output;
   Range output_range;    // output 字符串值范围
   Range output_kw_range; // "output" 字段名范围
   std::vector<std::string> deps;
-  bool has_deps = false; // 是否声明了 deps 字段（区分未设置与默认范围）
-  Range deps_range;      // 整个 [...] 数组范围
-  Range deps_kw_range;   // "deps" 字段名范围
+  bool has_deps = false;         // 是否声明了 deps 字段（区分未设置与默认范围）
+  Range deps_range;              // 整个 [...] 数组范围
+  Range deps_kw_range;           // "deps" 字段名范围
   std::vector<Range> dep_ranges; // 每个依赖名字符串值范围
   // libs / lib_dirs：外部库支持
   std::vector<std::string> libs;
@@ -69,7 +69,7 @@ struct VTarget {
   std::vector<Range> lib_dir_ranges;
   // cflags / defines / ldflags / tests：链接期 clang 参数与测试源文件
   std::vector<ArrayField> extra_arrays;
-  Range call_range;      // 整个 exe(...) / dylib(...) / staticlib(...) 调用范围
+  Range call_range; // 整个 exe(...) / dylib(...) / staticlib(...) 调用范围
 };
 
 // 一条诊断
@@ -87,7 +87,7 @@ struct ParseResult {
 };
 
 // 目标类型关键字文本（"exe" / "dylib" / "staticlib"）。
-const char *kind_name(TargetKind kind);
+const char* kind_name(TargetKind kind);
 
 // 解析 VMakeSet.vmake 文本，返回目标列表与诊断。
 ParseResult parse_vmake(std::string_view text);
@@ -98,8 +98,18 @@ ParseResult parse_vmake(std::string_view text);
 struct Hit {
   std::size_t target_index = 0;
   enum class Part {
-    None, Kind, Name, Sources, Output, SourceElem,
-    Deps, DepElem, Libs, LibElem, LibDirs, LibDirElem,
+    None,
+    Kind,
+    Name,
+    Sources,
+    Output,
+    SourceElem,
+    Deps,
+    DepElem,
+    Libs,
+    LibElem,
+    LibDirs,
+    LibDirElem,
     ExtraField, // 附加数组字段名或整个 [...]（cflags/defines/ldflags/tests）
     ExtraElem   // 附加数组字段的元素
   };
@@ -108,6 +118,6 @@ struct Hit {
   std::size_t elem_index = 0;  // ExtraElem 命中的元素下标
 };
 
-Hit hit_test(const std::vector<VTarget> &targets, int line, int character);
+Hit hit_test(const std::vector<VTarget>& targets, int line, int character);
 
 } // namespace vmake_lsp

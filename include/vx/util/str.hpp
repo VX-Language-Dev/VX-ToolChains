@@ -27,7 +27,6 @@ bool ends_with(std::string_view s, std::string_view suffix);
 bool contains(std::string_view s, std::string_view substr);
 
 // 替换所有匹配的子串 from 为 to，返回新字符串
-std::string replace(std::string_view s, std::string_view from,
-                    std::string_view to);
+std::string replace(std::string_view s, std::string_view from, std::string_view to);
 
 } // namespace vx::util

@@ -21,12 +21,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using namespace vx::compiler;
@@ -37,19 +37,20 @@ namespace abi = vx::compiler::abi;
 namespace backend = vx::backend;
 
 // 库查找根：<源码根>/headers
-fs::path headers_root() { return fs::path(VX_SOURCE_DIR) / "headers"; }
+fs::path headers_root() {
+  return fs::path(VX_SOURCE_DIR) / "headers";
+}
 
 // 以 headers 根为上下文装载导入表；失败时打印诊断并返回 nullopt。
-std::optional<ImportTable> load_imports(const Program &prog, DiagBag &bag) {
+std::optional<ImportTable> load_imports(const Program& prog, DiagBag& bag) {
   static Arena dummy;
   (void)dummy;
-  ImportContext ctx{headers_root(), headers_root()};
+  ImportContext ctx{.headers_root = headers_root(), .source_dir = headers_root(), .include_dirs = {}, .sys_dirs = {}};
   return build_import_table(prog, ctx, "<test>", bag);
 }
 
 // 前端流水线（含导入表）：tokenize → parse → build_import_table → codegen
-std::optional<ir::ModuleIR> gen_import(const std::string &src,
-                                       const std::string &file = "<test>") {
+std::optional<ir::ModuleIR> gen_import(const std::string& src, const std::string& file = "<test>") {
   static Arena arena;
   DiagBag bag;
   auto toks = tokenize(src, file, arena, bag);
@@ -61,15 +62,13 @@ std::optional<ir::ModuleIR> gen_import(const std::string &src,
   }
   auto imports = load_imports(*prog, bag);
   if (!imports) {
-    std::fprintf(stderr, "FAIL import:\n%s",
-                 render_all(bag, src, false).c_str());
+    std::fprintf(stderr, "FAIL import:\n%s", render_all(bag, src, false).c_str());
     ++g_failures;
     return std::nullopt;
   }
   auto mod = generate_module(*prog, file, bag, &*imports);
   if (!mod) {
-    std::fprintf(stderr, "FAIL codegen:\n%s",
-                 render_all(bag, src, false).c_str());
+    std::fprintf(stderr, "FAIL codegen:\n%s", render_all(bag, src, false).c_str());
     ++g_failures;
     return std::nullopt;
   }
@@ -93,8 +92,7 @@ void test_abi() {
   CHECK(abi::lib_name_of("a/b/") == "b");
   CHECK(abi::symbol("math", "add") == "_vx_math_add");
   // symbol 的 lib 参数是「库名（末段）」；路径形式先经 lib_name_of 归一
-  CHECK(abi::symbol(abi::lib_name_of("collections/vec"), "sum_to") ==
-        "_vx_vec_sum_to");
+  CHECK(abi::symbol(abi::lib_name_of("collections/vec"), "sum_to") == "_vx_vec_sum_to");
   // 类型映射
   CHECK(abi::c_type_of("int") == "int32_t");
   CHECK(abi::c_type_of("float") == "double");
@@ -111,23 +109,25 @@ void test_abi() {
 
 void test_build_import_table() {
   static Arena arena;
-  const std::string src =
-      "@imp(math)\n"
-      "@imp(/collections/vec)\n"
-      "@cppimp(cpp/greet.hpp)\n";
+  const std::string src = "@imp(math)\n"
+                          "@imp(/collections/vec)\n"
+                          "@cppimp(cpp/greet.hpp)\n";
   DiagBag bag;
   auto toks = tokenize(src, "<test>", arena, bag);
   auto prog = parse(toks, "<test>", arena, bag);
   CHECK(prog.has_value());
-  if (!prog) return;
+  if (!prog)
+    return;
   auto imports = load_imports(*prog, bag);
   CHECK(imports.has_value());
-  if (!imports) return;
+  if (!imports)
+    return;
   CHECK(imports->libs.size() == 3);
-  if (imports->libs.size() != 3) return;
+  if (imports->libs.size() != 3)
+    return;
 
   // @imp(math)：根目录库，直接文件名引用
-  const ImportedLib &math = imports->libs[0];
+  const ImportedLib& math = imports->libs[0];
   CHECK(math.name == "math");
   CHECK(math.from_cpp == false);
   CHECK(ends_with(math.decl_file, "headers/math.vxh"));
@@ -143,7 +143,7 @@ void test_build_import_table() {
   }
 
   // @imp(/collections/vec)：子目录库，库名取末段 vec
-  const ImportedLib &vec = imports->libs[1];
+  const ImportedLib& vec = imports->libs[1];
   CHECK(vec.name == "vec");
   CHECK(ends_with(vec.decl_file, "headers/collections/vec.vxh"));
   CHECK(ends_with(vec.impl_file, "headers/collections/vec.c"));
@@ -151,7 +151,7 @@ void test_build_import_table() {
   CHECK(ImportTable::find_symbol(vec, "nope") == nullptr);
 
   // @cppimp(cpp/greet.hpp)：C++ 头文件 + 伴生 .vxh + .cpp 实现
-  const ImportedLib &greet = imports->libs[2];
+  const ImportedLib& greet = imports->libs[2];
   CHECK(greet.name == "greet");
   CHECK(greet.from_cpp == true);
   CHECK(ends_with(greet.cpp_header, "headers/cpp/greet.hpp"));
@@ -172,21 +172,22 @@ void test_build_import_table() {
 // 整套库（int/float/bool/string/void + 别名 + 子目录 + C++）装载断言
 void test_full_lib_set() {
   static Arena arena;
-  const std::string src =
-      "@imp(math)\n"
-      "@imp(collections/vec)\n"
-      "@imp(text)\n"
-      "@imp(fmath)\n"
-      "@imp(math) as m\n"
-      "@cppimp(cpp/greet.hpp)\n";
+  const std::string src = "@imp(math)\n"
+                          "@imp(collections/vec)\n"
+                          "@imp(text)\n"
+                          "@imp(fmath)\n"
+                          "@imp(math) as m\n"
+                          "@cppimp(cpp/greet.hpp)\n";
   DiagBag bag;
   auto toks = tokenize(src, "<test>", arena, bag);
   auto prog = parse(toks, "<test>", arena, bag);
   CHECK(prog.has_value());
-  if (!prog) return;
+  if (!prog)
+    return;
   auto imports = load_imports(*prog, bag);
   CHECK(imports.has_value());
-  if (!imports) return;
+  if (!imports)
+    return;
   // 别名引用去重：5 个独立库（math 只装载一次）
   CHECK(imports->libs.size() == 5);
   CHECK(imports->aliases.size() == 1);
@@ -195,12 +196,13 @@ void test_full_lib_set() {
     CHECK(imports->aliases[0].second == "math");
   }
   // 别名前缀解析到 math 主条目
-  const ImportedLib *m = imports->lib_by_prefix("m");
+  const ImportedLib* m = imports->lib_by_prefix("m");
   CHECK(m != nullptr);
-  if (m) CHECK(m->ref == "math" && m->name == "math");
+  if (m)
+    CHECK(m->ref == "math" && m->name == "math");
 
   // text 库：string/bool/void 三类签名与 ABI 符号
-  const ImportedLib *text = imports->lib_by_prefix("text");
+  const ImportedLib* text = imports->lib_by_prefix("text");
   CHECK(text != nullptr);
   if (text && text->symbols.size() == 3) {
     CHECK(text->symbols[0].vx_name == "length");
@@ -216,7 +218,7 @@ void test_full_lib_set() {
   }
 
   // fmath 库：float 签名
-  const ImportedLib *fm = imports->lib_by_prefix("fmath");
+  const ImportedLib* fm = imports->lib_by_prefix("fmath");
   CHECK(fm != nullptr);
   if (fm && fm->symbols.size() == 2) {
     CHECK(fm->symbols[0].ret_type == "float");
@@ -234,12 +236,13 @@ void test_missing_lib_diagnostic() {
   auto toks = tokenize(src, "<test>", arena, bag);
   auto prog = parse(toks, "<test>", arena, bag);
   CHECK(prog.has_value());
-  if (!prog) return;
+  if (!prog)
+    return;
   auto imports = load_imports(*prog, bag);
   CHECK(!imports.has_value());
   CHECK(bag.has_error());
   if (bag.has_error()) {
-    const auto &d = bag.items().back();
+    const auto& d = bag.items().back();
     CHECK(d.code == "E0002");
     CHECK(d.line == 1);
     CHECK(d.message.find("nosuchlib") != std::string::npos);
@@ -249,12 +252,12 @@ void test_missing_lib_diagnostic() {
 // ==================== codegen：ABI 调用与 linkage ====================
 
 void test_codegen_abi_call() {
-  auto m = gen_import(
-      "@imp(math)\n"
-      "func main() -> int:\n"
-      "    return math.add(2, 3)\n");
+  auto m = gen_import("@imp(math)\n"
+                      "func main() -> int:\n"
+                      "    return math.add(2, 3)\n");
   CHECK(m.has_value());
-  if (!m) return;
+  if (!m)
+    return;
   // 导入库依赖写入 ModuleIR
   CHECK(m->libs.size() == 1);
   if (m->libs.size() == 1) {
@@ -264,7 +267,7 @@ void test_codegen_abi_call() {
   }
   // linkage 记录导入符号（ABI 名 + 来源库）
   bool has_add = false;
-  for (const ir::LinkEntry &e : m->linkage) {
+  for (const ir::LinkEntry& e : m->linkage) {
     if (e.abi_symbol == "_vx_math_add") {
       has_add = true;
       CHECK(e.lib == "math");
@@ -275,9 +278,9 @@ void test_codegen_abi_call() {
   }
   CHECK(has_add);
   // 调用发射为 ABI 符号名
-  const auto &f = m->funcs[0];
+  const auto& f = m->funcs[0];
   bool abi_call = false;
-  for (const ir::Inst &inst : f.instructions) {
+  for (const ir::Inst& inst : f.instructions) {
     if (inst.op == ir::OP_CALL && inst.args == "f;_vx_math_add") {
       abi_call = true;
     }
@@ -288,18 +291,19 @@ void test_codegen_abi_call() {
 void test_codegen_unknown_symbol() {
   static Arena arena;
   DiagBag bag;
-  const std::string src =
-      "@imp(math)\n"
-      "func main():\n"
-      "    math.nope(1)\n"
-      "    return\n";
+  const std::string src = "@imp(math)\n"
+                          "func main():\n"
+                          "    math.nope(1)\n"
+                          "    return\n";
   auto toks = tokenize(src, "<test>", arena, bag);
   auto prog = parse(toks, "<test>", arena, bag);
   CHECK(prog.has_value());
-  if (!prog) return;
+  if (!prog)
+    return;
   auto imports = load_imports(*prog, bag);
   CHECK(imports.has_value());
-  if (!imports) return;
+  if (!imports)
+    return;
   auto mod = generate_module(*prog, "<test>", bag, &*imports);
   CHECK(!mod.has_value()); // 库未声明该符号 → codegen 失败
   CHECK(bag.has_error());
@@ -308,14 +312,14 @@ void test_codegen_unknown_symbol() {
 // ==================== emitter：外部符号声明 ====================
 
 void test_emitter_declares_import_symbols() {
-  auto m = gen_import(
-      "@imp(math)\n"
-      "@cppimp(cpp/greet.hpp)\n"
-      "func main() -> int:\n"
-      "    out(greet.greet(\"vx\"))\n"
-      "    return math.add(1, 2)\n");
+  auto m = gen_import("@imp(math)\n"
+                      "@cppimp(cpp/greet.hpp)\n"
+                      "func main() -> int:\n"
+                      "    out(greet.greet(\"vx\"))\n"
+                      "    return math.add(1, 2)\n");
   CHECK(m.has_value());
-  if (!m) return;
+  if (!m)
+    return;
   auto r = backend::emit_llvm_ir(*m, "arm64-apple-macosx");
   CHECK(r.ok);
   if (!r.ok) {
@@ -329,7 +333,7 @@ void test_emitter_declares_import_symbols() {
   CHECK(r.ir.find("call ptr @_vx_greet_greet(") != std::string::npos);
   // C++ 库依赖（供链接期生成 shim）被保留
   bool has_cpp = false;
-  for (const ir::LibDep &d : m->libs) {
+  for (const ir::LibDep& d : m->libs) {
     if (d.from_cpp && ends_with(d.cpp_header, "headers/cpp/greet.hpp")) {
       has_cpp = true;
     }
@@ -344,53 +348,46 @@ void test_include_dirs() {
   static Arena arena;
   std::error_code ec;
   const fs::path base = fs::temp_directory_path(ec);
-  if (ec) return;
+  if (ec)
+    return;
   const fs::path inc = base / "vx_import_test_inc";
   const fs::path inc2 = base / "vx_import_test_inc2";
   fs::remove_all(inc, ec);
   fs::remove_all(inc2, ec);
   fs::create_directories(inc / "sub", ec);
   fs::create_directories(inc2, ec);
-  CHECK(vx::util::write_file(inc / "mylib.vxh",
-                             "extern func triple(x: int) -> int\n")
-            .has_value());
+  CHECK(vx::util::write_file(inc / "mylib.vxh", "extern func triple(x: int) -> int\n").has_value());
   // 遮蔽 headers_root 的 math：-I 命中即不再查根
-  CHECK(vx::util::write_file(inc / "math.vxh",
-                             "extern func quad(x: int) -> int\n")
-            .has_value());
-  CHECK(vx::util::write_file(inc / "sub" / "tool.hpp",
-                             "#pragma once\nint tool(int x);\n")
-            .has_value());
-  CHECK(vx::util::write_file(inc / "sub" / "tool.vxh",
-                             "extern func tool(x: int) -> int\n")
-            .has_value());
+  CHECK(vx::util::write_file(inc / "math.vxh", "extern func quad(x: int) -> int\n").has_value());
+  CHECK(vx::util::write_file(inc / "sub" / "tool.hpp", "#pragma once\nint tool(int x);\n").has_value());
+  CHECK(vx::util::write_file(inc / "sub" / "tool.vxh", "extern func tool(x: int) -> int\n").has_value());
   // 模拟系统头：头文件在 inc2，伴生 .vxh 在 inc（跨目录回退查找）
-  CHECK(vx::util::write_file(inc2 / "syslike.hpp", "#pragma once\n")
-            .has_value());
-  CHECK(vx::util::write_file(inc / "syslike.vxh",
-                             "extern func f(x: int) -> int\n")
-            .has_value());
+  CHECK(vx::util::write_file(inc2 / "syslike.hpp", "#pragma once\n").has_value());
+  CHECK(vx::util::write_file(inc / "syslike.vxh", "extern func f(x: int) -> int\n").has_value());
 
-  const std::string src =
-      "@imp(mylib)\n@imp(math)\n@cppimp(sub/tool.hpp)\n@cppimp(syslike.hpp)\n";
+  const std::string src = "@imp(mylib)\n@imp(math)\n@cppimp(sub/tool.hpp)\n@cppimp(syslike.hpp)\n";
   DiagBag bag;
   auto toks = tokenize(src, "<test>", arena, bag);
   auto prog = parse(toks, "<test>", arena, bag);
   CHECK(prog.has_value());
-  if (!prog) return;
-  ImportContext ctx{headers_root(), headers_root(), {inc, inc2}};
+  if (!prog)
+    return;
+  ImportContext ctx{
+      .headers_root = headers_root(), .source_dir = headers_root(), .include_dirs = {inc, inc2}, .sys_dirs = {}};
   auto imports = build_import_table(*prog, ctx, "<test>", bag);
   CHECK(imports.has_value());
-  if (!imports) return;
+  if (!imports)
+    return;
   CHECK(imports->libs.size() == 4);
 
   // 1) 自定义库经 -I 命中
-  const ImportedLib *my = imports->lib_by_prefix("mylib");
+  const ImportedLib* my = imports->lib_by_prefix("mylib");
   CHECK(my != nullptr);
-  if (my) CHECK(ends_with(my->decl_file, "vx_import_test_inc/mylib.vxh"));
+  if (my)
+    CHECK(ends_with(my->decl_file, "vx_import_test_inc/mylib.vxh"));
 
   // 2) -I 遮蔽 headers_root 同名库（quad 而非 add）
-  const ImportedLib *math = imports->lib_by_prefix("math");
+  const ImportedLib* math = imports->lib_by_prefix("math");
   CHECK(math != nullptr);
   if (math) {
     CHECK(ends_with(math->decl_file, "vx_import_test_inc/math.vxh"));
@@ -399,7 +396,7 @@ void test_include_dirs() {
   }
 
   // 3) @cppimp：头与伴生文件同在 -I 目录
-  const ImportedLib *tool = imports->lib_by_prefix("tool");
+  const ImportedLib* tool = imports->lib_by_prefix("tool");
   CHECK(tool != nullptr);
   if (tool) {
     CHECK(tool->from_cpp);
@@ -408,7 +405,7 @@ void test_include_dirs() {
   }
 
   // 4) @cppimp 伴生回退：头在 inc2，.vxh 在 inc
-  const ImportedLib *sys = imports->lib_by_prefix("syslike");
+  const ImportedLib* sys = imports->lib_by_prefix("syslike");
   CHECK(sys != nullptr);
   if (sys) {
     CHECK(ends_with(sys->cpp_header, "vx_import_test_inc2/syslike.hpp"));
@@ -424,7 +421,8 @@ void test_relative_ref_ignores_include_dirs() {
   static Arena arena;
   std::error_code ec;
   const fs::path base = fs::temp_directory_path(ec);
-  if (ec) return;
+  if (ec)
+    return;
   const fs::path src_dir = base / "vx_import_test_rel";
   const fs::path inc = base / "vx_import_test_rel_inc";
   fs::remove_all(src_dir, ec);
@@ -432,16 +430,16 @@ void test_relative_ref_ignores_include_dirs() {
   fs::create_directories(src_dir, ec);
   fs::create_directories(inc, ec);
   // 库放在 inc 中，但引用写成 ./rel —— 相对引用不应命中 -I
-  CHECK(vx::util::write_file(inc / "rel.vxh", "extern func g() -> int\n")
-            .has_value());
+  CHECK(vx::util::write_file(inc / "rel.vxh", "extern func g() -> int\n").has_value());
 
   const std::string src = "@imp(./rel)\n";
   DiagBag bag;
   auto toks = tokenize(src, "<test>", arena, bag);
   auto prog = parse(toks, "<test>", arena, bag);
   CHECK(prog.has_value());
-  if (!prog) return;
-  ImportContext ctx{headers_root(), src_dir, {inc}};
+  if (!prog)
+    return;
+  ImportContext ctx{.headers_root = headers_root(), .source_dir = src_dir, .include_dirs = {inc}, .sys_dirs = {}};
   auto imports = build_import_table(*prog, ctx, "<test>", bag);
   CHECK(!imports.has_value()); // 相对引用只查源文件目录 → 未命中
   fs::remove_all(src_dir, ec);

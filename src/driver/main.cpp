@@ -30,9 +30,10 @@ static constexpr std::string_view VERSION = "0.5.0";
 struct Options {
   std::string source;
   std::string output;
-  std::string target;     // --target <triple>：空则用 host_triple()
-  std::string color = "auto"; // auto | always | never
+  std::string target;                // --target <triple>：空则用 host_triple()
+  std::string color = "auto";        // auto | always | never
   std::vector<std::string> includes; // -I 头文件搜索目录（按序，可多次）
+  std::string std_lib;               // --std-lib <dir>：VX 标准库目录（空则自动检测）
   bool verbose = false;
   bool help = false;
   bool version = false;
@@ -41,36 +42,39 @@ struct Options {
 };
 
 // auto 模式下仅当 stderr 是终端时才上色
-static bool want_color(const Options &opts) {
-  if (opts.color == "always") return true;
-  if (opts.color == "never") return false;
+static bool want_color(const Options& opts) {
+  if (opts.color == "always")
+    return true;
+  if (opts.color == "never")
+    return false;
   return isatty(fileno(stderr)) != 0;
 }
 
 static void print_help() {
-  std::fprintf(
-      stdout,
-      "VX Compiler v%s\n"
-      "Usage: vxc [options] <source.vx>\n"
-      "Stages: read → lex → parse → codegen → vxobj\n"
-      "Options:\n"
-      "  -o <file>       Output VXOBJ file (default: <source>.vxobj)\n"
-      "  -I <dir>        Add header search directory for @imp/@cppimp\n"
-      "                  (repeatable; searched before the default headers/;\n"
-      "                  also accepts -I<dir>)\n"
-      "  --target <tpl>  Cross-compile target triple (e.g. x86_64-linux-gnu)\n"
-      "                  (default: auto-detect host triple)\n"
-      "  --check         Type-check only; do not write output\n"
-      "  --dump          Print module summary to stdout\n"
-      "  -v, --verbose   Verbose output\n"
-      "  --color <when>  Colorize diagnostics: auto|always|never (default auto;\n"
-      "                  also accepts --color=<when>)\n"
-      "  --version       Print version\n"
-      "  -h, --help      Show this help\n",
-      VERSION.data());
+  std::fprintf(stdout,
+               "VX Compiler v%s\n"
+               "Usage: vxc [options] <source.vx>\n"
+               "Stages: read → lex → parse → codegen → vxobj\n"
+               "Options:\n"
+               "  -o <file>       Output VXOBJ file (default: <source>.vxobj)\n"
+               "  -I <dir>        Add header search directory for @imp/@cppimp\n"
+               "                  (repeatable; searched before the default headers/;\n"
+               "                  also accepts -I<dir>)\n"
+               "  --std-lib <dir> VX standard library directory (default: auto-detect\n"
+               "                  std/ next to the executable)\n"
+               "  --target <tpl>  Cross-compile target triple (e.g. x86_64-linux-gnu)\n"
+               "                  (default: auto-detect host triple)\n"
+               "  --check         Type-check only; do not write output\n"
+               "  --dump          Print module summary to stdout\n"
+               "  -v, --verbose   Verbose output\n"
+               "  --color <when>  Colorize diagnostics: auto|always|never (default auto;\n"
+               "                  also accepts --color=<when>)\n"
+               "  --version       Print version\n"
+               "  -h, --help      Show this help\n",
+               VERSION.data());
 }
 
-static int parse_args(int argc, char **argv, Options &opts) {
+static int parse_args(int argc, char** argv, Options& opts) {
   for (int i = 1; i < argc; ++i) {
     std::string_view a = argv[i];
     if (a == "-h" || a == "--help") {
@@ -89,10 +93,8 @@ static int parse_args(int argc, char **argv, Options &opts) {
       } else {
         opts.color = std::string(a.substr(8));
       }
-      if (opts.color != "auto" && opts.color != "always" &&
-          opts.color != "never") {
-        std::fprintf(stderr, "error: invalid --color value: %s\n",
-                     opts.color.c_str());
+      if (opts.color != "auto" && opts.color != "always" && opts.color != "never") {
+        std::fprintf(stderr, "error: invalid --color value: %s\n", opts.color.c_str());
         return 2;
       }
     } else if (a == "--check") {
@@ -146,27 +148,42 @@ struct AstStats {
   int imports = 0;
 };
 
-static AstStats count_toplevel(Program &prog) {
+static AstStats count_toplevel(Program& prog) {
   AstStats s;
   for (auto stmt : prog.stmts) {
     switch (stmt->kind) {
-      case NodeKind::FuncDecl:    ++s.funcs; break;
-      case NodeKind::ClassDecl:   ++s.classes; break;
-      case NodeKind::StructDecl:  ++s.structs; break;
-      case NodeKind::ExternDecl:  ++s.externs; break;
-      case NodeKind::Import:      ++s.imports; break;
-      default: break;
+      case NodeKind::FuncDecl:
+        ++s.funcs;
+        break;
+      case NodeKind::ClassDecl:
+        ++s.classes;
+        break;
+      case NodeKind::StructDecl:
+        ++s.structs;
+        break;
+      case NodeKind::ExternDecl:
+        ++s.externs;
+        break;
+      case NodeKind::Import:
+        ++s.imports;
+        break;
+      default:
+        break;
     }
   }
   return s;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   Options opts;
   int rc = parse_args(argc, argv, opts);
-  if (rc != 0) return rc;
+  if (rc != 0)
+    return rc;
 
-  if (opts.help) { print_help(); return 0; }
+  if (opts.help) {
+    print_help();
+    return 0;
+  }
   if (opts.version) {
     std::fprintf(stdout, "VX Compiler %s\n", VERSION.data());
     return 0;
@@ -181,8 +198,7 @@ int main(int argc, char **argv) {
   // --- 阶段 1: 读文件 ---
   auto src_res = vx::util::read_file(opts.source);
   if (!src_res) {
-    std::fprintf(stderr, "error: cannot read %s: %s\n",
-                 opts.source.c_str(), src_res.error().c_str());
+    std::fprintf(stderr, "error: cannot read %s: %s\n", opts.source.c_str(), src_res.error().c_str());
     return 1;
   }
 
@@ -212,42 +228,35 @@ int main(int argc, char **argv) {
 
   AstStats stats = count_toplevel(*prog);
   if (opts.verbose) {
-    std::fprintf(stderr, "  parser: %zu top-level stmts "
+    std::fprintf(stderr,
+                 "  parser: %zu top-level stmts "
                  "(%d func, %d class, %d struct, %d extern, %d import)\n",
-                 prog->stmts.size(),
-                 stats.funcs, stats.classes, stats.structs,
-                 stats.externs, stats.imports);
+                 prog->stmts.size(), stats.funcs, stats.classes, stats.structs, stats.externs, stats.imports);
   }
 
   // --- 阶段 3.5: 库导入解析（@imp / @cppimp）---
   // 搜索顺序：-I 目录（按序）→ headers 根（VX_HEADERS 或 vxc 同级 headers/）
   // → @cppimp 追加系统 C/C++ 编译器头目录；相对引用只查源文件目录。
-  fs::path headers_root;
-  if (const char *env = std::getenv("VX_HEADERS")) {
-    headers_root = env;
-  } else {
-    const fs::path exe_dir = executable_dir(argv[0]);
-    headers_root = exe_dir.empty() ? fs::path("headers") : exe_dir / "headers";
-  }
+  // 搜索顺序：-I 目录（按序）→ headers 根（VX_HEADERS_DIR / VX_HEADERS 或
+  // vxc 同级 headers/，亦可由 vx 元命令通过 VX_HEADERS_DIR 传入）
+  fs::path headers_root = vx::compiler::resolve_headers_root(argv[0]);
   ImportContext imp_ctx;
   imp_ctx.headers_root = headers_root;
   imp_ctx.source_dir = fs::path(opts.source).parent_path();
   std::error_code ec;
-  for (const std::string &inc : opts.includes) {
+  for (const std::string& inc : opts.includes) {
     fs::path p = fs::absolute(inc, ec);
     imp_ctx.include_dirs.push_back(ec ? fs::path(inc) : p.lexically_normal());
     ec.clear();
   }
-  std::optional<ImportTable> imports =
-      build_import_table(*prog, imp_ctx, opts.source, bag);
+  std::optional<ImportTable> imports = build_import_table(*prog, imp_ctx, opts.source, bag);
   if (!imports) {
     std::fputs(render_all(bag, *src_res, color).c_str(), stderr);
     return 1;
   }
   if (opts.verbose) {
-    std::fprintf(stderr, "  imports: %zu libs (headers root: %s",
-                 imports->libs.size(), headers_root.string().c_str());
-    for (const fs::path &d : imp_ctx.include_dirs) {
+    std::fprintf(stderr, "  imports: %zu libs (headers root: %s", imports->libs.size(), headers_root.string().c_str());
+    for (const fs::path& d : imp_ctx.include_dirs) {
       std::fprintf(stderr, ", -I %s", d.string().c_str());
     }
     std::fprintf(stderr, ")\n");
@@ -261,14 +270,14 @@ int main(int argc, char **argv) {
   }
 
   std::size_t total_insts = 0;
-  for (const auto &f : ir_res->funcs) {
+  for (const auto& f : ir_res->funcs) {
     total_insts += f.instructions.size();
   }
   if (opts.verbose) {
-    std::fprintf(stderr, "  codegen: %zu funcs, %zu insts, %zu externs, "
+    std::fprintf(stderr,
+                 "  codegen: %zu funcs, %zu insts, %zu externs, "
                  "%zu globals\n",
-                 ir_res->funcs.size(), total_insts, ir_res->linkage.size(),
-                 ir_res->global_vars.size());
+                 ir_res->funcs.size(), total_insts, ir_res->linkage.size(), ir_res->global_vars.size());
   }
 
   // --- 阶段 5: VXOBJ writer（vxc003 实现）---
@@ -279,41 +288,37 @@ int main(int argc, char **argv) {
     const std::string dir = (pos == std::string::npos) ? std::string{} : base.substr(0, pos + 1);
     std::string name = (pos == std::string::npos) ? base : base.substr(pos + 1);
     const auto dot = name.find_last_of('.');
-    if (dot != std::string::npos) name.erase(dot);
+    if (dot != std::string::npos)
+      name.erase(dot);
     out_path = dir + name + ".vxobj";
   }
 
   if (opts.dump) {
-    std::fprintf(stdout, "funcs=%zu insts=%zu externs=%zu globals=%zu\n",
-                 ir_res->funcs.size(), total_insts, ir_res->linkage.size(),
-                 ir_res->global_vars.size());
+    std::fprintf(stdout, "funcs=%zu insts=%zu externs=%zu globals=%zu\n", ir_res->funcs.size(), total_insts,
+                 ir_res->linkage.size(), ir_res->global_vars.size());
   }
 
   if (opts.check) {
-    std::fprintf(stdout, "OK %s: %zu funcs, %zu insts, %zu externs\n",
-                 opts.source.c_str(), ir_res->funcs.size(), total_insts,
-                 ir_res->linkage.size());
+    std::fprintf(stdout, "OK %s: %zu funcs, %zu insts, %zu externs\n", opts.source.c_str(), ir_res->funcs.size(),
+                 total_insts, ir_res->linkage.size());
     return 0;
   }
   // 平台三元组：--target <triple> 优先；空则编译期自动检测宿主
-  const std::string target =
-      opts.target.empty() ? vx::util::host_triple() : opts.target;
+  const std::string target = opts.target.empty() ? vx::util::host_triple() : opts.target;
   if (opts.verbose) {
-    std::fprintf(stderr, "  target: %s (%s)\n", target.c_str(),
-                 vx::util::host_name().c_str());
+    std::fprintf(stderr, "  target: %s (%s)\n", target.c_str(), vx::util::host_name().c_str());
   }
   const std::string vxobj_data = vx::compiler::obj::serialize(*ir_res, target);
 
   auto wr = vx::util::write_file(out_path, vxobj_data);
   if (!wr) {
-    std::fprintf(stderr, "error: cannot write %s: %s\n",
-                 out_path.c_str(), wr.error().c_str());
+    std::fprintf(stderr, "error: cannot write %s: %s\n", out_path.c_str(), wr.error().c_str());
     return 1;
   }
 
-  std::fprintf(stdout, "OK %s (%zu funcs, %zu insts, %zu externs)"
+  std::fprintf(stdout,
+               "OK %s (%zu funcs, %zu insts, %zu externs)"
                " → %s\n",
-               opts.source.c_str(), ir_res->funcs.size(), total_insts,
-               ir_res->linkage.size(), out_path.c_str());
+               opts.source.c_str(), ir_res->funcs.size(), total_insts, ir_res->linkage.size(), out_path.c_str());
   return 0;
 }

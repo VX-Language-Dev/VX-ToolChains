@@ -10,7 +10,11 @@
 #include <initializer_list>
 #include <utility>
 
+#include <cerrno>
 #include <cstdio>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -19,26 +23,28 @@ namespace {
 
 // 文件是否存在（普通文件或目录均可）；命名加前缀避免与 std::filesystem::exists
 // 因 ADL 产生重载歧义。
-bool path_exists(const fs::path &p) {
+bool path_exists(const fs::path& p) {
   std::error_code ec;
   return fs::exists(p, ec);
 }
 
 // 依次尝试 stem+ext，返回第一个存在的绝对路径字符串；都不存在返回空。
-std::string probe_first(const fs::path &stem, std::initializer_list<const char *> exts) {
-  for (const char *e : exts) {
+std::string probe_first(const fs::path& stem, std::initializer_list<const char*> exts) {
+  for (const char* e : exts) {
     fs::path p = stem;
     p += e;
-    if (path_exists(p)) return p.lexically_normal().string();
+    if (path_exists(p))
+      return p.lexically_normal().string();
   }
   return {};
 }
 
 // 绝对化 + 规范化（不解析符号链接，避免破坏尚未创建的路径）
-fs::path normalize(const fs::path &p) {
+fs::path normalize(const fs::path& p) {
   std::error_code ec;
   fs::path a = fs::absolute(p, ec);
-  if (ec) a = p;
+  if (ec)
+    a = p;
   return a.lexically_normal();
 }
 
@@ -54,41 +60,47 @@ std::string_view strip_ext(std::string_view r) {
 // 库引用是否相对路径（去掉前导 '/' 后以 '.' 起始）
 bool is_relative_ref(std::string_view ref) {
   std::string_view r = ref;
-  while (!r.empty() && r.front() == '/') r.remove_prefix(1);
+  while (!r.empty() && r.front() == '/')
+    r.remove_prefix(1);
   return !r.empty() && r.front() == '.';
 }
 
 // 在搜索目录中查找第一个使 stem+ext 存在的基准路径；未命中返回空。
 // 相对引用只查 source_dir；非相对引用按 include_dirs → headers_root 顺序，
 // with_sys 时再追加系统 C/C++ 头目录（仅 @cppimp 使用）。
-fs::path find_ref_base(const ImportContext &ctx, std::string_view ref,
-                       std::string_view ext, bool with_sys) {
+fs::path find_ref_base(const ImportContext& ctx, std::string_view ref, std::string_view ext, bool with_sys) {
   std::string_view r = ref;
-  while (!r.empty() && r.front() == '/') r.remove_prefix(1);
-  const auto try_root = [&](const fs::path &root) -> fs::path {
+  while (!r.empty() && r.front() == '/')
+    r.remove_prefix(1);
+  const auto try_root = [&](const fs::path& root) -> fs::path {
     fs::path p = normalize(root / fs::path(r));
     fs::path probe = p;
     probe += ext;
     return path_exists(probe) ? p : fs::path();
   };
-  if (is_relative_ref(ref)) return try_root(ctx.source_dir);
-  for (const fs::path &d : ctx.include_dirs) {
-    if (fs::path p = try_root(d); !p.empty()) return p;
+  if (is_relative_ref(ref))
+    return try_root(ctx.source_dir);
+  for (const fs::path& d : ctx.include_dirs) {
+    if (fs::path p = try_root(d); !p.empty())
+      return p;
   }
-  if (fs::path p = try_root(ctx.headers_root); !p.empty()) return p;
+  if (fs::path p = try_root(ctx.headers_root); !p.empty())
+    return p;
   if (with_sys) {
-    const auto &sys = ctx.sys_dirs.empty() ? system_include_dirs() : ctx.sys_dirs;
-    for (const fs::path &d : sys) {
-      if (fs::path p = try_root(d); !p.empty()) return p;
+    const auto& sys = ctx.sys_dirs.empty() ? system_include_dirs() : ctx.sys_dirs;
+    for (const fs::path& d : sys) {
+      if (fs::path p = try_root(d); !p.empty())
+        return p;
     }
   }
   return {};
 }
 
 // 未命中时用于诊断的默认基准路径（保持旧「相对 headers 根」语义）
-fs::path ref_base(const ImportContext &ctx, std::string_view ref) {
+fs::path ref_base(const ImportContext& ctx, std::string_view ref) {
   std::string_view r = ref;
-  while (!r.empty() && r.front() == '/') r.remove_prefix(1);
+  while (!r.empty() && r.front() == '/')
+    r.remove_prefix(1);
   const bool relative = !r.empty() && r.front() == '.';
   const fs::path base = relative ? ctx.source_dir : ctx.headers_root;
   return normalize(base / fs::path(r));
@@ -99,8 +111,7 @@ std::string_view alias_of(const std::string_view alias, std::string_view fallbac
 }
 
 // 解析 .vxh 声明文件，收集其中的 extern 声明为导入符号。
-bool collect_symbols(const fs::path &decl, std::string_view lib,
-                     std::vector<ImportedSymbol> &out, std::string &err) {
+bool collect_symbols(const fs::path& decl, std::string_view lib, std::vector<ImportedSymbol>& out, std::string& err) {
   auto src = vx::util::read_file(decl);
   if (!src) {
     err = "无法读取库声明文件 " + decl.string() + ": " + src.error();
@@ -111,23 +122,93 @@ bool collect_symbols(const fs::path &decl, std::string_view lib,
   auto toks = tokenize(*src, decl.string(), arena, bag);
   auto prog = parse(toks, decl.string(), arena, bag);
   if (!prog || bag.has_error()) {
-    err = "库声明文件语法错误 " + decl.string() + ":\n" +
-          render_all(bag, *src, false);
+    err = "库声明文件语法错误 " + decl.string() + ":\n" + render_all(bag, *src, false);
     return false;
   }
-  for (const Stmt *s : prog->stmts) {
-    if (s->kind != NodeKind::ExternDecl) continue;
-    const auto *e = static_cast<const ExternDecl *>(s);
+  for (const Stmt* s : prog->stmts) {
+    if (s->kind != NodeKind::ExternDecl)
+      continue;
+    const auto* e = static_cast<const ExternDecl*>(s);
     ImportedSymbol sym;
     sym.vx_name = std::string(e->name);
     sym.abi_symbol = abi::symbol(lib, e->name);
     sym.ret_type = std::string(e->ret_type);
-    for (const Param &p : e->params) {
+    for (const Param& p : e->params) {
       sym.params.push_back(ir::AbiParam{std::string(p.name), std::string(p.type)});
     }
     out.push_back(std::move(sym));
   }
   return true;
+}
+
+// fork+exec 直接运行编译器驱动（不经 /bin/sh，规避 PATH/环境变量中的 shell
+// 特殊字符注入），把 stdout/stderr 合并到管道（`-E -v` 的目录清单走 stderr），
+// 解析 "#include <...> search starts here:" 与 "End of search list." 之间的
+// 目录列表。fork/pipe/exec 任一失败或无输出时返回空表。
+std::vector<fs::path> probe_driver_dirs(const char* cc) {
+  std::vector<fs::path> dirs;
+  int fds[2];
+  if (::pipe(fds) != 0)
+    return dirs;
+  const pid_t pid = ::fork();
+  if (pid < 0) {
+    ::close(fds[0]);
+    ::close(fds[1]);
+    return dirs;
+  }
+  if (pid == 0) {
+    // 子进程：读端关掉、写端复制到 stdout/stderr 后 exec；
+    // exec 失败直接退 127（不落回 shell，父进程按无输出处理）。
+    ::close(fds[0]);
+    ::dup2(fds[1], STDOUT_FILENO);
+    ::dup2(fds[1], STDERR_FILENO);
+    ::close(fds[1]);
+    char* argv[] = {const_cast<char*>(cc),
+                    const_cast<char*>("-E"),
+                    const_cast<char*>("-x"),
+                    const_cast<char*>("c++"),
+                    const_cast<char*>("-v"),
+                    const_cast<char*>("/dev/null"),
+                    nullptr};
+    ::execvp(cc, argv);
+    ::_exit(127);
+  }
+  ::close(fds[1]);
+  FILE* pipe = ::fdopen(fds[0], "r");
+  if (!pipe) {
+    ::close(fds[0]);
+    ::waitpid(pid, nullptr, 0);
+    return dirs;
+  }
+  bool in = false;
+  char buf[4096];
+  while (std::fgets(buf, sizeof(buf), pipe) != nullptr) {
+    std::string_view line(buf);
+    if (!in) {
+      if (line.find("#include <...> search starts here:") != std::string_view::npos)
+        in = true;
+      continue;
+    }
+    if (line.find("End of search list.") != std::string_view::npos)
+      break;
+    const std::size_t b = line.find_first_not_of(" \t");
+    if (b == std::string_view::npos)
+      continue;
+    std::string_view p = line.substr(b);
+    if (const std::size_t e = p.find_last_not_of(" \t\r\n"); e != std::string_view::npos)
+      p = p.substr(0, e + 1);
+    // 框架目录不参与 #include "name" 式探测；clang 行尾带说明文字
+    if (p.empty() || p.find("(framework directory)") != std::string_view::npos)
+      continue;
+    std::error_code ec;
+    if (fs::is_directory(p, ec))
+      dirs.emplace_back(p);
+  }
+  ::fclose(pipe);
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+  return dirs;
 }
 
 } // namespace
@@ -136,114 +217,106 @@ bool collect_symbols(const fs::path &decl, std::string_view lib,
 // 依次尝试常见编译器驱动，运行 `-E -x c++ -v /dev/null`，解析
 // "#include <...> search starts here:" 与 "End of search list." 之间的
 // 目录列表；跳过框架目录与不存在的项。全部失败时返回空表。
-const std::vector<fs::path> &system_include_dirs() {
+const std::vector<fs::path>& system_include_dirs() {
   static const std::vector<fs::path> dirs = [] {
     std::vector<fs::path> out;
-    const char *cands[] = {"c++", "clang++", "g++", "clang", "gcc"};
-    for (const char *cc : cands) {
-      const std::string cmd = std::string(cc) + " -E -x c++ -v /dev/null 2>&1";
-      FILE *pipe = ::popen(cmd.c_str(), "r");
-      if (!pipe) continue;
-      bool in = false;
-      char buf[4096];
-      while (std::fgets(buf, sizeof(buf), pipe) != nullptr) {
-        std::string_view line(buf);
-        if (!in) {
-          if (line.find("#include <...> search starts here:") !=
-              std::string_view::npos)
-            in = true;
-          continue;
-        }
-        if (line.find("End of search list.") != std::string_view::npos) break;
-        const std::size_t b = line.find_first_not_of(" \t");
-        if (b == std::string_view::npos) continue;
-        std::string_view p = line.substr(b);
-        if (const std::size_t e = p.find_last_not_of(" \t\r\n");
-            e != std::string_view::npos)
-          p = p.substr(0, e + 1);
-        // 框架目录不参与 #include "name" 式探测；clang 行尾带说明文字
-        if (p.empty() ||
-            p.find("(framework directory)") != std::string_view::npos)
-          continue;
-        std::error_code ec;
-        if (fs::is_directory(p, ec)) out.emplace_back(p);
-      }
-      ::pclose(pipe);
-      if (!out.empty()) break;
+    const char* cands[] = {"c++", "clang++", "g++", "clang", "gcc"};
+    for (const char* cc : cands) {
+      out = probe_driver_dirs(cc);
+      if (!out.empty())
+        break;
     }
     return out;
   }();
   return dirs;
 }
 
-const ImportedLib *ImportTable::lib_by_prefix(std::string_view prefix) const {
-  for (const ImportedLib &l : libs) {
-    if (l.alias == prefix || l.name == prefix) return &l;
+const ImportedLib* ImportTable::lib_by_prefix(std::string_view prefix) const {
+  for (const ImportedLib& l : libs) {
+    if (l.alias == prefix || l.name == prefix)
+      return &l;
   }
   // 同一库的额外别名（@imp(math) as m）→ 按 ref 反查主条目
-  for (const auto &[al, ref] : aliases) {
-    if (al != prefix) continue;
-    for (const ImportedLib &l : libs) {
-      if (l.ref == ref) return &l;
+  for (const auto& [al, ref] : aliases) {
+    if (al != prefix)
+      continue;
+    for (const ImportedLib& l : libs) {
+      if (l.ref == ref)
+        return &l;
     }
   }
   return nullptr;
 }
 
-const ImportedSymbol *ImportTable::find_symbol(const ImportedLib &lib,
-                                               std::string_view name) {
-  for (const ImportedSymbol &s : lib.symbols) {
-    if (s.vx_name == name) return &s;
+const ImportedSymbol* ImportTable::find_symbol(const ImportedLib& lib, std::string_view name) {
+  for (const ImportedSymbol& s : lib.symbols) {
+    if (s.vx_name == name)
+      return &s;
   }
   return nullptr;
 }
 
 fs::path executable_dir(std::string_view argv0) {
-  if (argv0.empty()) return {};
+  if (argv0.empty())
+    return {};
   fs::path p(argv0);
   std::error_code ec;
   fs::path canon = fs::canonical(p, ec);
-  if (ec || canon.empty()) canon = fs::absolute(p, ec);
+  if (ec || canon.empty())
+    canon = fs::absolute(p, ec);
   return canon.parent_path();
 }
 
-fs::path resolve_ref_path(const ImportContext &ctx, std::string_view ref) {
+fs::path resolve_headers_root(std::string_view argv0) {
+  for (const char* var : {"VX_HEADERS_DIR", "VX_HEADERS"}) {
+    if (const char* env = std::getenv(var)) {
+      if (env[0] != '\0')
+        return fs::path(env);
+    }
+  }
+  const fs::path exe_dir = executable_dir(argv0);
+  if (!exe_dir.empty()) {
+    std::error_code ec;
+    const fs::path cand = exe_dir / "headers";
+    if (fs::is_directory(cand, ec) && !ec)
+      return cand;
+  }
+  return fs::path("headers");
+}
+
+fs::path resolve_ref_path(const ImportContext& ctx, std::string_view ref) {
   if (fs::path base = find_ref_base(ctx, ref, "", true); !base.empty())
     return base;
   return ref_base(ctx, ref);
 }
 
-std::optional<ImportTable> build_import_table(const Program &prog,
-                                              const ImportContext &ctx,
-                                              std::string_view main_file,
-                                              DiagBag &bag) {
+std::optional<ImportTable> build_import_table(const Program& prog, const ImportContext& ctx, std::string_view main_file,
+                                              DiagBag& bag) {
   ImportTable table;
   const auto fail = [&](std::string msg, int line) {
-    bag.add(make_diag(diag_code::sem_import, Severity::Error, std::move(msg),
-                      std::string(main_file), line, 0));
+    bag.add(make_diag(diag_code::sem_import, Severity::Error, std::move(msg), std::string(main_file), line, 0));
   };
 
-  for (const Stmt *s : prog.stmts) {
+  for (const Stmt* s : prog.stmts) {
     if (s->kind == NodeKind::ImpDecl) {
-      const auto *d = static_cast<const ImpDecl *>(s);
+      const auto* d = static_cast<const ImpDecl*>(s);
       const std::string ref(d->lib);
       // 去重：同一引用只加载一次；但重复声明可能带新别名（@imp(math) as m），
       // 别名记入 aliases 以便 lib_by_prefix 解析。
       const std::string_view name = abi::lib_name_of(d->lib);
-      auto dup = std::find_if(table.libs.begin(), table.libs.end(),
-                              [&](const ImportedLib &l) { return l.ref == ref; });
+      auto dup = std::find_if(table.libs.begin(), table.libs.end(), [&](const ImportedLib& l) { return l.ref == ref; });
       if (dup != table.libs.end()) {
         const std::string alias(alias_of(d->alias, name));
         if (alias != dup->alias && alias != dup->name &&
-            !std::any_of(table.aliases.begin(), table.aliases.end(),
-                         [&](const auto &a) { return a.first == alias; })) {
+            !std::any_of(table.aliases.begin(), table.aliases.end(), [&](const auto& a) { return a.first == alias; })) {
           table.aliases.emplace_back(alias, ref);
         }
         continue;
       }
 
       fs::path base = find_ref_base(ctx, d->lib, ".vxh", false);
-      if (base.empty()) base = ref_base(ctx, d->lib); // 未命中：用默认路径报错
+      if (base.empty())
+        base = ref_base(ctx, d->lib); // 未命中：用默认路径报错
       fs::path decl = base;
       decl += ".vxh";
       if (!path_exists(decl)) {
@@ -266,17 +339,14 @@ std::optional<ImportTable> build_import_table(const Program &prog,
       }
       table.libs.push_back(std::move(lib));
     } else if (s->kind == NodeKind::CppImpDecl) {
-      const auto *d = static_cast<const CppImpDecl *>(s);
+      const auto* d = static_cast<const CppImpDecl*>(s);
       const std::string ref(d->header);
-      auto dup = std::find_if(table.libs.begin(), table.libs.end(),
-                              [&](const ImportedLib &l) { return l.ref == ref; });
+      auto dup = std::find_if(table.libs.begin(), table.libs.end(), [&](const ImportedLib& l) { return l.ref == ref; });
       if (dup != table.libs.end()) {
-        const std::string cpp_name =
-            fs::path(ref).stem().string(); // 库名 = 头文件主名
+        const std::string cpp_name = fs::path(ref).stem().string(); // 库名 = 头文件主名
         const std::string alias(alias_of(d->alias, cpp_name));
         if (alias != dup->alias && alias != dup->name &&
-            !std::any_of(table.aliases.begin(), table.aliases.end(),
-                         [&](const auto &a) { return a.first == alias; })) {
+            !std::any_of(table.aliases.begin(), table.aliases.end(), [&](const auto& a) { return a.first == alias; })) {
           table.aliases.emplace_back(alias, ref);
         }
         continue;
@@ -315,8 +385,7 @@ std::optional<ImportTable> build_import_table(const Program &prog,
       lib.decl_file = normalize(decl).string();
       lib.from_cpp = true;
       lib.cpp_header = normalize(header).string();
-      lib.impl_file = probe_first(header.parent_path() / header.stem(),
-                                  {".cpp", ".cc", ".cxx"});
+      lib.impl_file = probe_first(header.parent_path() / header.stem(), {".cpp", ".cc", ".cxx"});
       std::string err;
       if (!collect_symbols(decl, lib_name, lib.symbols, err)) {
         fail(err, d->line);

@@ -3,4 +3,4 @@
 // _vx_greet_greet（见同目录伴生声明 greet.vxh）。
 #pragma once
 
-const char *greet(const char *name);
+const char* greet(const char* name);

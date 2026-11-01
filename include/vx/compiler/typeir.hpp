@@ -140,13 +140,13 @@ struct AbiParam {
 };
 
 struct LinkEntry {
-  std::string name;        // VX 侧可见名（库内原名，如 "add"）
+  std::string name; // VX 侧可见名（库内原名，如 "add"）
   std::vector<AbiParam> params;
   std::string ret_type;
   // ---- VX ABI 元数据（普通 extern 时为空/默认，链接时回退用 name）----
-  std::string abi_symbol;  // VX ABI 符号名（"_vx_math_add"）；空 = 直接用 name
-  std::string lib;         // 来源库名（末段，如 "math"）；空 = 非导入的普通 extern
-  bool from_cpp = false;   // 由 @cppimp 导入（链接期需生成 C++ shim）
+  std::string abi_symbol; // VX ABI 符号名（"_vx_math_add"）；空 = 直接用 name
+  std::string lib;        // 来源库名（末段，如 "math"）；空 = 非导入的普通 extern
+  bool from_cpp = false;  // 由 @cppimp 导入（链接期需生成 C++ shim）
 };
 
 // 一个被导入的库：记录链接期所需的实现文件 / C++ 头文件。

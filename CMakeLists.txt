@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.23)
-
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # VX-ToolKit C++ 重写工程：Util / Compiler / Backend 三层 + vxc002 / vlnk 二进制
 # 构建由 CMake + Ninja 驱动（见 Makefile），同时导出 compile_commands.json 供 clangd 使用
 project(vx-toolkit LANGUAGES CXX C)
@@ -20,8 +20,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
         "Build type: Debug, Release, MinSizeRel, RelWithDebInfo" FORCE)
 endif()
 
-# MinSizeRel：追加 -g（MSR 要求带调试符号）
-if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+if(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     set(CMAKE_CXX_FLAGS_MINSIZE_REL "${CMAKE_CXX_FLAGS_MINSIZE_REL} -g")
     set(CMAKE_C_FLAGS_MINSIZE_REL "${CMAKE_C_FLAGS_MINSIZE_REL} -g")
 endif()
@@ -147,7 +146,8 @@ if(CLANG_FORMAT_EXECUTABLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/**/*.hpp ${CMAKE_CURRENT_SOURCE_DIR}/include/**/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/tools/*/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tools/*/*.hpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/*/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tools/*/*.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/headers/cpp/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/headers/cpp/*.hpp)
     add_custom_target(format
         COMMAND ${CLANG_FORMAT_EXECUTABLE} -i ${VX_FORMAT_SOURCES}
         COMMENT "Running clang-format on sources"
@@ -169,6 +169,28 @@ if(CPPCHECK_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/src
         COMMENT "Running cppcheck on sources"
         VERBATIM)
+endif()
+
+# clang-tidy：依赖 compile_commands.json（CMAKE_EXPORT_COMPILE_COMMANDS 已开启），
+# 从构建目录运行以复用编译数据库
+find_program(CLANG_TIDY_EXECUTABLE NAMES clang-tidy)
+if(CLANG_TIDY_EXECUTABLE)
+    file(GLOB_RECURSE VX_TIDY_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/*/*.cpp)
+    add_custom_target(tidy
+        COMMAND ${CLANG_TIDY_EXECUTABLE}
+            -p ${CMAKE_CURRENT_BINARY_DIR}
+            ${VX_TIDY_SOURCES}
+        COMMENT "Running clang-tidy on sources"
+        VERBATIM)
+    # 未安装 cppcheck 时 lint 目标回退到 clang-tidy，保证静态检查门禁始终可用
+    if(NOT CPPCHECK_EXECUTABLE)
+        add_custom_target(lint
+            COMMAND ${CMAKE_COMMAND} --build ${CMAKE_CURRENT_BINARY_DIR} --target tidy
+            COMMENT "cppcheck not found; running clang-tidy instead"
+            VERBATIM)
+    endif()
 endif()
 
 add_executable(vx_util_tests tests/util_test.cpp)

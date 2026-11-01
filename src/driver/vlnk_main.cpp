@@ -37,36 +37,35 @@ struct Options {
 };
 
 static void print_help() {
-  std::fprintf(
-      stdout,
-      "VX Backend Linker %s\n"
-      "Usage: vlnk [options] <input.vxobj>...\n"
-      "Stages: read → merge → llvm_emitter → link (clang)\n"
-      "Options:\n"
-      "  -o <file>         Output file (default: a.out)\n"
-      "  --shared          Emit a shared library (clang -shared -fPIC;\n"
-      "                    no @main entry wrapper)\n"
-      "  --lib <file>      Link a native library (.a/.dylib/.so), e.g. a dylib\n"
-      "                    built by another target (repeatable; not merged into\n"
-      "                    the module)\n"
-      "  --cflag <arg>     Extra clang argument placed right after the inputs\n"
-      "                    (affects compiling .ll/.c/.cpp; repeatable)\n"
-      "  --ldflag <arg>    Extra clang argument placed at the end of the command\n"
-      "                    (linker flags, e.g. -Wl,-rpath,...; repeatable)\n"
-      "  --target <triple> Target platform triple (default: auto-detect host;\n"
-      "                    non-host targets are cross-compiled via clang -target)\n"
-      "  --emit-ir         Emit LLVM IR to stdout and stop (no link)\n"
-      "  --dump            Print restored ModuleIR summary\n"
-      "  -v, --verbose     Verbose output\n"
-      "  --version         Print version\n"
-      "  -h, --help        Show this help\n"
-      "\n"
-      "Multiple .vxobj inputs are merged into one module (functions, linkage,\n"
-      "library deps), enabling multi-file VX targets.\n",
-      VERSION.data());
+  std::fprintf(stdout,
+               "VX Backend Linker %s\n"
+               "Usage: vlnk [options] <input.vxobj>...\n"
+               "Stages: read → merge → llvm_emitter → link (clang)\n"
+               "Options:\n"
+               "  -o <file>         Output file (default: a.out)\n"
+               "  --shared          Emit a shared library (clang -shared -fPIC;\n"
+               "                    no @main entry wrapper)\n"
+               "  --lib <file>      Link a native library (.a/.dylib/.so), e.g. a dylib\n"
+               "                    built by another target (repeatable; not merged into\n"
+               "                    the module)\n"
+               "  --cflag <arg>     Extra clang argument placed right after the inputs\n"
+               "                    (affects compiling .ll/.c/.cpp; repeatable)\n"
+               "  --ldflag <arg>    Extra clang argument placed at the end of the command\n"
+               "                    (linker flags, e.g. -Wl,-rpath,...; repeatable)\n"
+               "  --target <triple> Target platform triple (default: auto-detect host;\n"
+               "                    non-host targets are cross-compiled via clang -target)\n"
+               "  --emit-ir         Emit LLVM IR to stdout and stop (no link)\n"
+               "  --dump            Print restored ModuleIR summary\n"
+               "  -v, --verbose     Verbose output\n"
+               "  --version         Print version\n"
+               "  -h, --help        Show this help\n"
+               "\n"
+               "Multiple .vxobj inputs are merged into one module (functions, linkage,\n"
+               "library deps), enabling multi-file VX targets.\n",
+               VERSION.data());
 }
 
-static int parse_args(int argc, char **argv, Options &opts) {
+static int parse_args(int argc, char** argv, Options& opts) {
   for (int i = 1; i < argc; ++i) {
     std::string_view a = argv[i];
     if (a == "-h" || a == "--help") {
@@ -112,8 +111,7 @@ static int parse_args(int argc, char **argv, Options &opts) {
       }
       opts.output = argv[++i];
     } else if (a.starts_with("-")) {
-      std::fprintf(stderr, "error: unknown option: %.*s\n",
-                   static_cast<int>(a.size()), a.data());
+      std::fprintf(stderr, "error: unknown option: %.*s\n", static_cast<int>(a.size()), a.data());
       return 2;
     } else {
       opts.inputs.emplace_back(a);
@@ -122,25 +120,21 @@ static int parse_args(int argc, char **argv, Options &opts) {
   return 0;
 }
 
-static void dump_module(const ir::ModuleIR &m, std::string_view target) {
+static void dump_module(const ir::ModuleIR& m, std::string_view target) {
   std::fprintf(stdout, "Module: target=%.*s funcs=%zu structs=%zu linkage=%zu globals=%zu\n",
-               static_cast<int>(target.size()), target.data(), m.funcs.size(),
-               m.structs.size(), m.linkage.size(), m.global_vars.size());
-  for (const ir::FuncIR &f : m.funcs) {
-    std::fprintf(stdout,
-                 "  func %s ret=%s params=%zu locals=%u insts=%zu\n",
-                 f.name.c_str(),
-                 f.ret_type.empty() ? "void" : f.ret_type.c_str(),
-                 f.params.size(), f.local_count, f.instructions.size());
+               static_cast<int>(target.size()), target.data(), m.funcs.size(), m.structs.size(), m.linkage.size(),
+               m.global_vars.size());
+  for (const ir::FuncIR& f : m.funcs) {
+    std::fprintf(stdout, "  func %s ret=%s params=%zu locals=%u insts=%zu\n", f.name.c_str(),
+                 f.ret_type.empty() ? "void" : f.ret_type.c_str(), f.params.size(), f.local_count,
+                 f.instructions.size());
   }
-  for (const ir::LinkEntry &e : m.linkage) {
-    std::fprintf(stdout, "  extern %s%s%s\n", e.name.c_str(),
-                 e.abi_symbol.empty() ? "" : " → ",
+  for (const ir::LinkEntry& e : m.linkage) {
+    std::fprintf(stdout, "  extern %s%s%s\n", e.name.c_str(), e.abi_symbol.empty() ? "" : " → ",
                  e.abi_symbol.empty() ? "" : e.abi_symbol.c_str());
   }
-  for (const ir::LibDep &d : m.libs) {
-    std::fprintf(stdout, "  lib %s (%s)%s impl=%s\n", d.lib.c_str(),
-                 d.ref.c_str(), d.from_cpp ? " [cpp]" : "",
+  for (const ir::LibDep& d : m.libs) {
+    std::fprintf(stdout, "  lib %s (%s)%s impl=%s\n", d.lib.c_str(), d.ref.c_str(), d.from_cpp ? " [cpp]" : "",
                  d.impl_file.empty() ? "-" : d.impl_file.c_str());
   }
 }
@@ -149,49 +143,55 @@ static void dump_module(const ir::ModuleIR &m, std::string_view target) {
 // 函数按输入顺序拼接；重复函数名视为错误（避免静默覆盖入口）。
 // 注意：FuncIR 的 Param string_view 指向各 read result 的 pool，
 // 因此 results 必须在发射期间保持存活，且不得再增删元素。
-static bool merge_inputs(std::vector<vx::backend::VxobjReadResult> &results,
-                         ir::ModuleIR &out, std::string &error) {
+static bool merge_inputs(std::vector<vx::backend::VxobjReadResult>& results, ir::ModuleIR& out, std::string& error) {
   std::set<std::string> func_names;
   std::set<std::string> link_keys;
   std::set<std::string> lib_keys;
   std::set<std::string> globals;
-  for (vx::backend::VxobjReadResult &rt : results) {
-    for (ir::FuncIR &f : rt.module.funcs) {
+  for (vx::backend::VxobjReadResult& rt : results) {
+    for (ir::FuncIR& f : rt.module.funcs) {
       if (!func_names.insert(f.name).second) {
         error = "duplicate function definition '" + f.name + "' (multi-input merge)";
         return false;
       }
       out.funcs.push_back(std::move(f));
     }
-    for (ir::LinkEntry &e : rt.module.linkage) {
+    for (ir::LinkEntry& e : rt.module.linkage) {
       const std::string key = e.abi_symbol.empty() ? e.name : e.abi_symbol;
-      if (link_keys.insert(key).second) out.linkage.push_back(std::move(e));
+      if (link_keys.insert(key).second)
+        out.linkage.push_back(std::move(e));
     }
-    for (ir::LibDep &d : rt.module.libs) {
+    for (ir::LibDep& d : rt.module.libs) {
       // 同一实现文件（含同一声明头）只并入一次，避免 clang 重复符号
-      const std::string key =
-          d.impl_file.empty()
-              ? "lib:" + d.lib + "|" + d.ref
-              : "impl:" + d.impl_file + "|" + d.cpp_header +
-                    (d.from_cpp ? "|cpp" : "|c");
-      if (lib_keys.insert(key).second) out.libs.push_back(std::move(d));
+      const std::string key = d.impl_file.empty()
+                                  ? "lib:" + d.lib + "|" + d.ref
+                                  : "impl:" + d.impl_file + "|" + d.cpp_header + (d.from_cpp ? "|cpp" : "|c");
+      if (lib_keys.insert(key).second)
+        out.libs.push_back(std::move(d));
     }
-    for (std::string &g : rt.module.global_vars) {
-      if (globals.insert(g).second) out.global_vars.push_back(std::move(g));
+    for (std::string& g : rt.module.global_vars) {
+      if (globals.insert(g).second)
+        out.global_vars.push_back(std::move(g));
     }
-  for (ir::StructLayout &s : rt.module.structs) {
-    // 按名称去重
-    bool dup = false;
-    for (const ir::StructLayout &e : out.structs) if (e.name == s.name) { dup = true; break; }
-    if (!dup) out.structs.push_back(std::move(s));
-  }
+    for (ir::StructLayout& s : rt.module.structs) {
+      // 按名称去重
+      bool dup = false;
+      for (const ir::StructLayout& e : out.structs)
+        if (e.name == s.name) {
+          dup = true;
+          break;
+        }
+      if (!dup)
+        out.structs.push_back(std::move(s));
+    }
   }
   return true;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   Options opts;
-  if (const int rc = parse_args(argc, argv, opts); rc != 0) return rc;
+  if (const int rc = parse_args(argc, argv, opts); rc != 0)
+    return rc;
   if (opts.help) {
     print_help();
     return 0;
@@ -210,11 +210,10 @@ int main(int argc, char **argv) {
   std::vector<vx::backend::VxobjReadResult> results;
   results.reserve(opts.inputs.size());
   std::set<std::string> targets;
-  for (const std::string &input : opts.inputs) {
+  for (const std::string& input : opts.inputs) {
     auto data = vx::util::read_file(input);
     if (!data) {
-      std::fprintf(stderr, "error: cannot read '%s': %s\n", input.c_str(),
-                   data.error().c_str());
+      std::fprintf(stderr, "error: cannot read '%s': %s\n", input.c_str(), data.error().c_str());
       return 1;
     }
     auto rt = vx::backend::read_vxobj(*data);
@@ -222,7 +221,8 @@ int main(int argc, char **argv) {
       std::fprintf(stderr, "error: %s: %s\n", input.c_str(), rt.error.c_str());
       return 1;
     }
-    if (!rt.target.empty()) targets.insert(rt.target);
+    if (!rt.target.empty())
+      targets.insert(rt.target);
     results.push_back(std::move(rt));
   }
 
@@ -235,31 +235,28 @@ int main(int argc, char **argv) {
   }
   const std::string src_target = targets.empty() ? std::string{} : *targets.begin();
   if (targets.size() > 1) {
-    std::fprintf(stderr,
-                 "warning: input .vxobj targets are inconsistent (%zu kinds), using first '%s'\n",
+    std::fprintf(stderr, "warning: input .vxobj targets are inconsistent (%zu kinds), using first '%s'\n",
                  targets.size(), src_target.c_str());
   }
-  if (opts.dump) dump_module(module, src_target);
+  if (opts.dump)
+    dump_module(module, src_target);
 
   // 目标平台选择：--target 显式指定 > 自动检测 host
   const std::string host = vx::backend::host_triple();
   const std::string target = opts.target.empty() ? host : opts.target;
   if (opts.verbose) {
-    std::fprintf(stderr, "  host: %s (%s)\n  target: %s\n  inputs: %zu\n",
-                 host.c_str(), vx::util::host_name().c_str(), target.c_str(),
-                 opts.inputs.size());
+    std::fprintf(stderr, "  host: %s (%s)\n  target: %s\n  inputs: %zu\n", host.c_str(), vx::util::host_name().c_str(),
+                 target.c_str(), opts.inputs.size());
   }
   if (!opts.target.empty()) {
     // 显式目标与 vxobj 内记录的编译目标不一致时提示来源差异
     if (!src_target.empty() && src_target != opts.target) {
-      std::fprintf(stderr,
-                   "warning: --target '%s' differs from vxobj compile target '%s'\n",
-                   opts.target.c_str(), src_target.c_str());
+      std::fprintf(stderr, "warning: --target '%s' differs from vxobj compile target '%s'\n", opts.target.c_str(),
+                   src_target.c_str());
     }
   } else if (!src_target.empty() && src_target != host) {
-    std::fprintf(stderr,
-                 "warning: vxobj target '%s' differs from host '%s', emitting for host\n",
-                 src_target.c_str(), host.c_str());
+    std::fprintf(stderr, "warning: vxobj target '%s' differs from host '%s', emitting for host\n", src_target.c_str(),
+                 host.c_str());
   }
 
   // 动态库不生成 @main 入口包装
@@ -276,10 +273,9 @@ int main(int argc, char **argv) {
 
   // target == host 走本机链接；否则给 clang 追加 -target（交叉编译）
   // 使用 link_module：依 vxobj 中的库依赖并入实现文件并生成 @cppimp shim。
-  auto lr = vx::backend::link_module(
-      em.ir, module, opts.output,
-      target == host ? std::string_view{} : std::string_view(target),
-      opts.shared, opts.native_libs, opts.cflags, opts.ldflags);
+  auto lr = vx::backend::link_module(em.ir, module, opts.output,
+                                     target == host ? std::string_view{} : std::string_view(target), opts.shared,
+                                     opts.native_libs, opts.cflags, opts.ldflags);
   if (!lr.ok) {
     std::fprintf(stderr, "error: %s\n", lr.error.c_str());
     return 1;

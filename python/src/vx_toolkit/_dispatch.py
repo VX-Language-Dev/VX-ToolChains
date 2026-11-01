@@ -9,9 +9,9 @@
   2. 包内 _bin/       —— stage.py 复制的工具链（wheel 自带）
   3. PATH            —— 系统里已安装的同一套工具
 
-vxc / vxls 默认从「可执行文件同目录的 headers/」解析 @imp / @cppimp 库，
+vxc / vxls / vx 默认从「可执行文件同目录的 headers/」解析 @imp / @cppimp 库，
 因此 stage.py 会把 headers/ 复制到 _bin/headers；`-I` 追加搜索目录，
-`VX_HEADERS` 覆盖库根，二者仍可用。
+`VX_HEADERS_DIR` 覆盖库根（`VX_HEADERS` 为兼容别名），二者仍可用。
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 # uv 注册的 console script 名称，同时也是二进制文件名
-COMMANDS = ("vxc", "vlnk", "vmake", "vxls", "vmake-lsp", "vx")
+COMMANDS = ("vxc", "vlnk", "vmake", "vxls", "vmake-lsp", "vfmt", "vx")
 
 # 包内自带的工具链目录（stage.py 产出）
 PACKAGE_BIN = Path(__file__).resolve().parent / "_bin"

@@ -15,12 +15,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 using vx::compiler::Tok;
@@ -34,48 +34,42 @@ std::vector<Token> lex(std::string_view src) {
   vx::compiler::DiagBag bag;
   auto toks = tokenize(src, "<test>", arena, bag);
   if (bag.has_error()) {
-    std::fprintf(stderr, "unexpected lex error:\n%s",
-                 vx::compiler::render_all(bag, src, false).c_str());
+    std::fprintf(stderr, "unexpected lex error:\n%s", vx::compiler::render_all(bag, src, false).c_str());
     ++g_failures;
     return {};
   }
   return {toks.begin(), toks.end()};
 }
 
-const Token *tok_at(const std::vector<Token> &toks, std::size_t i) {
+const Token* tok_at(const std::vector<Token>& toks, std::size_t i) {
   return i < toks.size() ? &toks[i] : nullptr;
 }
 
-#define CHECK_TOK(toks, i, kind_, text_)                                       \
-  do {                                                                         \
-    const Token *t = tok_at(toks, i);                                          \
-    if (t == nullptr) {                                                        \
-      std::fprintf(stderr, "FAIL %s:%d: token %zu 不存在\n", __FILE__,          \
-                   __LINE__, static_cast<std::size_t>(i));                     \
-      ++g_failures;                                                            \
-    } else if (t->kind != (kind_) || t->text != (text_)) {                     \
-      std::fprintf(stderr, "FAIL %s:%d: token[%zu] = %s(\"%s\"), 期望 %s(\"%s\")\n", \
-                   __FILE__, __LINE__, static_cast<std::size_t>(i),            \
-                   std::string(vx::compiler::tok_name(t->kind)).c_str(),       \
-                   std::string(t->text).c_str(), #kind_, text_);               \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK_TOK(toks, i, kind_, text_)                                                                               \
+  do {                                                                                                                 \
+    const Token* t = tok_at(toks, i);                                                                                  \
+    if (t == nullptr) {                                                                                                \
+      std::fprintf(stderr, "FAIL %s:%d: token %zu 不存在\n", __FILE__, __LINE__, static_cast<std::size_t>(i));         \
+      ++g_failures;                                                                                                    \
+    } else if (t->kind != (kind_) || t->text != (text_)) {                                                             \
+      std::fprintf(stderr, "FAIL %s:%d: token[%zu] = %s(\"%s\"), 期望 %s(\"%s\")\n", __FILE__, __LINE__,               \
+                   static_cast<std::size_t>(i), std::string(vx::compiler::tok_name(t->kind)).c_str(),                  \
+                   std::string(t->text).c_str(), #kind_, text_);                                                       \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 // 断言 token 的行列位置（越界或行列不符时报告）
-#define CHECK_POS(toks, i, expect_line, expect_col)                            \
-  do {                                                                         \
-    if ((i) >= (toks).size()) {                                                \
-      std::fprintf(stderr, "FAIL %s:%d: token %zu 不存在\n", __FILE__,          \
-                   __LINE__, static_cast<std::size_t>(i));                     \
-      ++g_failures;                                                            \
-    } else if ((toks)[i].line != (expect_line) ||                              \
-               (toks)[i].col != (expect_col)) {                                \
-      std::fprintf(stderr, "FAIL %s:%d: token[%zu] 位置 = %d:%d, 期望 %d:%d\n", \
-                   __FILE__, __LINE__, static_cast<std::size_t>(i),            \
-                   (toks)[i].line, (toks)[i].col, (expect_line), (expect_col));\
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK_POS(toks, i, expect_line, expect_col)                                                                    \
+  do {                                                                                                                 \
+    if ((i) >= (toks).size()) {                                                                                        \
+      std::fprintf(stderr, "FAIL %s:%d: token %zu 不存在\n", __FILE__, __LINE__, static_cast<std::size_t>(i));         \
+      ++g_failures;                                                                                                    \
+    } else if ((toks)[i].line != (expect_line) || (toks)[i].col != (expect_col)) {                                     \
+      std::fprintf(stderr, "FAIL %s:%d: token[%zu] 位置 = %d:%d, 期望 %d:%d\n", __FILE__, __LINE__,                    \
+                   static_cast<std::size_t>(i), (toks)[i].line, (toks)[i].col, (expect_line), (expect_col));           \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 void test_basic() {
@@ -122,7 +116,7 @@ void test_indent_rules() {
   // 缩进加深与连续回退
   auto toks = lex("a = 1\nif a:\n    if a:\n        b = 2\n    c = 3\nd = 4\n");
   std::size_t indents = 0, dedents = 0;
-  for (const auto &t : toks) {
+  for (const auto& t : toks) {
     if (t.kind == Tok::Indent) {
       ++indents;
     }
@@ -136,7 +130,7 @@ void test_indent_rules() {
   // 空行与整行注释不产生 INDENT/DEDENT
   auto blank = lex("if a:\n\n# 注释\n    b = 1\n");
   indents = dedents = 0;
-  for (const auto &t : blank) {
+  for (const auto& t : blank) {
     if (t.kind == Tok::Indent) {
       ++indents;
     }
@@ -162,7 +156,7 @@ void test_operators_numbers() {
                   "h = a -> b\n");
   // 只验证双字符运算符切分正确
   bool saw_arrow = false, saw_and = false, saw_or = false, saw_plus_eq = false;
-  for (const auto &t : toks) {
+  for (const auto& t : toks) {
     if (t.kind == Tok::Arrow && t.text == "->") {
       saw_arrow = true;
     }
@@ -227,7 +221,7 @@ void test_errors() {
     CHECK(toks.back().kind == Tok::Eof); // 流仍可用
     CHECK(bag.size() == 1);
     if (bag.size() == 1) {
-      const auto &d = bag.items()[0];
+      const auto& d = bag.items()[0];
       CHECK(d.code == "E2002");
       CHECK(d.severity == vx::compiler::Severity::Error);
       CHECK(d.file == "<test>");
@@ -246,7 +240,7 @@ void test_errors() {
     CHECK(bag.has_error());
     CHECK(bag.size() == 1);
     if (bag.size() == 1) {
-      const auto &d = bag.items()[0];
+      const auto& d = bag.items()[0];
       CHECK(d.code == "E2001");
       CHECK(d.line == 2);
       CHECK(d.col == 1);
@@ -256,7 +250,7 @@ void test_errors() {
     }
     // 恢复后仍能看到后继标识符 b（位于第 3 行）
     bool found_b = false;
-    for (const auto &t : toks) {
+    for (const auto& t : toks) {
       if (t.kind == Tok::Ident && t.text == "b") {
         found_b = true;
         CHECK(t.line == 3);
@@ -360,10 +354,9 @@ void test_vx_sources() {
 
   std::size_t total_files = 0;
   std::size_t total_tokens = 0;
-  for (const char *dir : {"compiler", "std", "tests"}) {
+  for (const char* dir : {"compiler", "std", "tests"}) {
     std::error_code ec;
-    for (fs::recursive_directory_iterator it(root / dir, ec), end; it != end;
-         it.increment(ec)) {
+    for (fs::recursive_directory_iterator it(root / dir, ec), end; it != end; it.increment(ec)) {
       if (ec) {
         break;
       }
@@ -371,8 +364,7 @@ void test_vx_sources() {
         continue;
       }
       // 跳过旧反编译器输出（旧语法，含分号），不属于当前语法的源码
-      if (it->path().filename().string().find(".decompiled.vx") !=
-          std::string::npos) {
+      if (it->path().filename().string().find(".decompiled.vx") != std::string::npos) {
         continue;
       }
       auto src = vx::util::read_file(it->path());
@@ -386,8 +378,7 @@ void test_vx_sources() {
       auto toks = tokenize(*src, it->path().string(), arena, bag);
       CHECK(!bag.has_error());
       if (bag.has_error()) {
-        std::fprintf(stderr, "FAIL %s:%d: %s\n%s\n", __FILE__, __LINE__,
-                     it->path().string().c_str(),
+        std::fprintf(stderr, "FAIL %s:%d: %s\n%s\n", __FILE__, __LINE__, it->path().string().c_str(),
                      vx::compiler::render_all(bag, *src, false).c_str());
         ++g_failures;
         continue;
@@ -399,7 +390,7 @@ void test_vx_sources() {
       // 流以 Eof 结尾，行号单调不减
       CHECK(toks.back().kind == Tok::Eof);
       int last_line = 1;
-      for (const auto &t : toks) {
+      for (const auto& t : toks) {
         CHECK(t.line >= last_line);
         last_line = t.line;
       }

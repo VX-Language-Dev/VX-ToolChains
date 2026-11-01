@@ -23,7 +23,7 @@ inline constexpr std::string_view SECTION_DEPS = "Deps";
 // 将 ModuleIR 序列化为 VXOBJ v4 字节流。
 // target 为平台三元组字符串（如 "x86_64-apple-darwin"），写入文件头供链接器校验。
 // 返回空字符串表示序列化失败（调用方应先检查 ModuleIR 有效性）。
-std::string serialize(const ir::ModuleIR &mod, std::string_view target);
+std::string serialize(const ir::ModuleIR& mod, std::string_view target);
 
 // 解析 VXOBJ v4 文件头：返回 {magic_ok, version, flags, target, section_count}。
 // 输入为文件原始字节；magic 不匹配或 version 不支持时 magic_ok 为 false。

@@ -16,20 +16,19 @@ namespace {
 
 namespace fs = std::filesystem;
 
-bool needs_quote(const std::string &s) {
+bool needs_quote(const std::string& s) {
   if (s.empty())
     return true;
   for (char c : s) {
-    if (c == ' ' || c == '\t' || c == '\n' || c == '"' || c == '\'' ||
-        c == '\\' || c == '$' || c == '`' || c == '&' || c == '|' || c == ';' ||
-        c == '<' || c == '>') {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '"' || c == '\'' || c == '\\' || c == '$' || c == '`' || c == '&' ||
+        c == '|' || c == ';' || c == '<' || c == '>') {
       return true;
     }
   }
   return false;
 }
 
-std::string quote_arg(const std::string &s) {
+std::string quote_arg(const std::string& s) {
   if (!needs_quote(s))
     return s;
   std::string out = "'";
@@ -46,18 +45,15 @@ std::string quote_arg(const std::string &s) {
 
 } // namespace
 
-std::string format_command(const std::string &program,
-                           const std::vector<std::string> &args) {
+std::string format_command(const std::string& program, const std::vector<std::string>& args) {
   std::string cmd = quote_arg(program);
-  for (const std::string &a : args)
+  for (const std::string& a : args)
     cmd += " " + quote_arg(a);
   return cmd;
 }
 
-ProcessResult
-run_process(const std::string &program, const std::vector<std::string> &args,
-            const std::vector<std::pair<std::string, std::string>> &env,
-            bool always_capture) {
+ProcessResult run_process(const std::string& program, const std::vector<std::string>& args,
+                          const std::vector<std::pair<std::string, std::string>>& env, bool always_capture) {
   ProcessResult r;
 
   // 临时日志文件：stdout/stderr 共用，避免管道死锁并保留输出顺序
@@ -75,9 +71,9 @@ run_process(const std::string &program, const std::vector<std::string> &args,
   cmd.reserve(args.size() + 1);
   cmd.push_back(program);
   cmd.insert(cmd.end(), args.begin(), args.end());
-  std::vector<char *> argv;
+  std::vector<char*> argv;
   argv.reserve(cmd.size() + 1);
-  for (std::string &s : cmd)
+  for (std::string& s : cmd)
     argv.push_back(s.data());
   argv.push_back(nullptr);
 
@@ -92,7 +88,7 @@ run_process(const std::string &program, const std::vector<std::string> &args,
     ::dup2(fd, STDOUT_FILENO);
     ::dup2(fd, STDERR_FILENO);
     ::close(fd);
-    for (const auto &[key, value] : env) {
+    for (const auto& [key, value] : env) {
       ::setenv(key.c_str(), value.c_str(), 1);
     }
     ::execvp(cmd[0].c_str(), argv.data());
@@ -115,8 +111,7 @@ run_process(const std::string &program, const std::vector<std::string> &args,
   if (!r.ok || always_capture) {
     std::ifstream in(log_path, std::ios::binary);
     if (in) {
-      r.output.assign((std::istreambuf_iterator<char>(in)),
-                      std::istreambuf_iterator<char>());
+      r.output.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     if (!r.ok) {
       if (code == 127 && r.output.empty()) {
@@ -130,16 +125,15 @@ run_process(const std::string &program, const std::vector<std::string> &args,
   return r;
 }
 
-int run_process_direct(const std::string &program,
-                       const std::vector<std::string> &args,
-                       const std::vector<std::pair<std::string, std::string>> &env) {
+int run_process_direct(const std::string& program, const std::vector<std::string>& args,
+                       const std::vector<std::pair<std::string, std::string>>& env) {
   std::vector<std::string> cmd;
   cmd.reserve(args.size() + 1);
   cmd.push_back(program);
   cmd.insert(cmd.end(), args.begin(), args.end());
-  std::vector<char *> argv;
+  std::vector<char*> argv;
   argv.reserve(cmd.size() + 1);
-  for (std::string &s : cmd)
+  for (std::string& s : cmd)
     argv.push_back(s.data());
   argv.push_back(nullptr);
 
@@ -147,7 +141,7 @@ int run_process_direct(const std::string &program,
   if (pid < 0)
     return 127;
   if (pid == 0) {
-    for (const auto &[key, value] : env)
+    for (const auto& [key, value] : env)
       ::setenv(key.c_str(), value.c_str(), 1);
     ::execvp(cmd[0].c_str(), argv.data());
     ::_exit(127); // exec 失败

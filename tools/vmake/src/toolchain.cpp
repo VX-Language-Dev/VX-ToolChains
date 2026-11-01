@@ -12,7 +12,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-bool is_executable(const fs::path &p) {
+bool is_executable(const fs::path& p) {
   std::error_code ec;
   if (!fs::is_regular_file(p, ec) || ec)
     return false;
@@ -20,10 +20,9 @@ bool is_executable(const fs::path &p) {
 }
 
 // 在目录列表中按候选名顺序查找可执行文件
-std::string find_in_dirs(const std::vector<std::string> &names,
-                         const std::vector<fs::path> &dirs) {
-  for (const fs::path &dir : dirs) {
-    for (const std::string &name : names) {
+std::string find_in_dirs(const std::vector<std::string>& names, const std::vector<fs::path>& dirs) {
+  for (const fs::path& dir : dirs) {
+    for (const std::string& name : names) {
       const fs::path cand = dir / name;
       if (is_executable(cand))
         return cand.string();
@@ -33,7 +32,7 @@ std::string find_in_dirs(const std::vector<std::string> &names,
 }
 
 // vmake 可执行文件所在目录及至多 3 层上级（覆盖 build/tools/vmake/vmake 布局）
-std::vector<fs::path> exe_relative_dirs(const fs::path &argv0) {
+std::vector<fs::path> exe_relative_dirs(const fs::path& argv0) {
   std::vector<fs::path> dirs;
   if (!argv0.has_parent_path())
     return dirs;
@@ -55,16 +54,14 @@ std::vector<fs::path> exe_relative_dirs(const fs::path &argv0) {
 
 std::vector<fs::path> path_dirs() {
   std::vector<fs::path> dirs;
-  const char *path = std::getenv("PATH");
+  const char* path = std::getenv("PATH");
   if (!path)
     return dirs;
   const std::string text(path);
   std::size_t start = 0;
   while (start <= text.size()) {
     const std::size_t end = text.find(':', start);
-    const std::string dir = end == std::string::npos
-                                ? text.substr(start)
-                                : text.substr(start, end - start);
+    const std::string dir = end == std::string::npos ? text.substr(start) : text.substr(start, end - start);
     if (!dir.empty())
       dirs.emplace_back(dir);
     if (end == std::string::npos)
@@ -75,10 +72,9 @@ std::vector<fs::path> path_dirs() {
 }
 
 // 单个工具查找：环境变量优先；显式指向不可执行文件时报错而非静默回退。
-bool locate(const char *env_name, const std::vector<std::string> &names,
-            const std::vector<fs::path> &dirs, const char *label,
-            std::string &out, std::string &error) {
-  if (const char *env = std::getenv(env_name); env && env[0] != '\0') {
+bool locate(const char* env_name, const std::vector<std::string>& names, const std::vector<fs::path>& dirs,
+            const char* label, std::string& out, std::string& error) {
+  if (const char* env = std::getenv(env_name); env && env[0] != '\0') {
     if (!is_executable(env)) {
       error = std::string(env_name) + " points to a non-executable file: " + env;
       return false;
@@ -88,8 +84,7 @@ bool locate(const char *env_name, const std::vector<std::string> &names,
   }
   out = find_in_dirs(names, dirs);
   if (out.empty()) {
-    error = std::string("not found: ") + label + " (set environment variable " + env_name +
-            " to specify)";
+    error = std::string("not found: ") + label + " (set environment variable " + env_name + " to specify)";
     return false;
   }
   return true;
@@ -97,19 +92,32 @@ bool locate(const char *env_name, const std::vector<std::string> &names,
 
 } // namespace
 
-std::optional<Toolchain> find_toolchain(const fs::path &argv0,
-                                        std::string &error) {
+std::optional<Toolchain> find_toolchain(const fs::path& argv0, std::string& error) {
   std::vector<fs::path> dirs = exe_relative_dirs(argv0);
   const std::vector<fs::path> path = path_dirs();
   dirs.insert(dirs.end(), path.begin(), path.end());
 
   Toolchain tc;
-  if (!locate("VX_VXC", {"vxc", "vxc002"}, dirs, "VX 编译器 (vxc)", tc.vxc,
-              error)) {
+  if (!locate("VX_VXC", {"vxc", "vxc002"}, dirs, "VX 编译器 (vxc)", tc.vxc, error)) {
     return std::nullopt;
   }
   if (!locate("VX_VLNK", {"vlnk"}, dirs, "VX 链接器 (vlnk)", tc.vlnk, error)) {
     return std::nullopt;
+  }
+  // clang：供 .c/.cpp 源文件使用。非严格必需（项目若无 C/C++ 源则不触发），
+  // 此处定位到则记录，找不到不报错——真正编译 C/C++ 时再诊断。
+  // 纯 C 驱动优先（clang++ 会把 .c 按 C++ 编译导致符号修饰不一致）。
+  const std::vector<std::string> clang_names = {"clang", "cc", "gcc", "clang++", "c++", "g++"};
+  if (const char* env = std::getenv("VX_CC"); env && env[0] != '\0') {
+    if (!is_executable(env)) {
+      error = std::string("VX_CC points to a non-executable file: ") + env;
+      return std::nullopt;
+    }
+    tc.clang = env;
+  } else {
+    tc.clang = find_in_dirs(clang_names, dirs);
+    // 未找到 clang 不阻止 toolchain 查找成功；build 阶段遇到 .c/.cpp 源
+    // 时会检查 tc.clang 是否为空并报清晰错误。
   }
   return tc;
 }

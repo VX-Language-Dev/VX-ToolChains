@@ -35,31 +35,29 @@ inline constexpr std::string_view parse_invalid_token_stream = "E2011"; // token
 
 // 一条诊断。位置按 1 起始计数；col=0 表示列未知（渲染时省略插入符）。
 struct Diagnostic {
-  std::string code;              // 错误码，可为空
+  std::string code;                   // 错误码，可为空
   Severity severity = Severity::Info; // 默认最弱级别：宁可弱报，不可误报
-  std::string message;           // 描述主体（不含文件/位置）
-  std::string file;              // 源文件路径，可为空
-  int line = 0;                  // 1 起始；0 表示未知
-  int col = 0;                   // 1 起始；0 表示未知
-  int end_line = 0;              // 可选 span 结束（含）
+  std::string message;                // 描述主体（不含文件/位置）
+  std::string file;                   // 源文件路径，可为空
+  int line = 0;                       // 1 起始；0 表示未知
+  int col = 0;                        // 1 起始；0 表示未知
+  int end_line = 0;                   // 可选 span 结束（含）
   int end_col = 0;
-  std::string note;              // 可选补充说明
+  std::string note; // 可选补充说明
 };
 
 // 构造：仅起点位置
-Diagnostic make_diag(std::string_view code, Severity sev, std::string message,
-                     std::string file, int line, int col);
+Diagnostic make_diag(std::string_view code, Severity sev, std::string message, std::string file, int line, int col);
 
 // 构造：带 span 结束位置（用于多字符高亮）
-Diagnostic make_diag_span(std::string_view code, Severity sev,
-                          std::string message, std::string file, int line,
-                          int col, int end_line, int end_col);
+Diagnostic make_diag_span(std::string_view code, Severity sev, std::string message, std::string file, int line, int col,
+                          int end_line, int end_col);
 
 // 诊断收集器：各阶段共用，聚合后可排序一次性输出。
 class DiagBag {
 public:
   void add(Diagnostic d);
-  void add_all(const DiagBag &other);
+  void add_all(const DiagBag& other);
 
   bool empty() const { return diags_.empty(); }
   std::size_t size() const { return diags_.size(); }
@@ -67,7 +65,7 @@ public:
   // 是否含 Error 级诊断
   bool has_error() const;
 
-  const std::vector<Diagnostic> &items() const { return diags_; }
+  const std::vector<Diagnostic>& items() const { return diags_; }
 
   // 排序：file → line → col → severity（严重者在前）
   void sort();
@@ -85,19 +83,16 @@ private:
 //    3 | var x = @
 //      |         ^
 // source 为空、或 line/col 未知时才省略源码摘录段；color=true 时上 ANSI 颜色。
-std::string render_diagnostic(const Diagnostic &d, std::string_view source,
-                              bool color);
+std::string render_diagnostic(const Diagnostic& d, std::string_view source, bool color);
 
 // 渲染整个 bag（内部先按位置排序，不改动原 bag），并在末尾追加一行汇总：
 //   error: 因 2 个错误中止编译（另有 1 个警告）
 // source 为 bag 中诊断所对应文件的源码文本（单文件编译场景）。
-std::string render_all(const DiagBag &bag, std::string_view source, bool color);
+std::string render_all(const DiagBag& bag, std::string_view source, bool color);
 
 // 多文件渲染：source_of(file) 返回指定文件的源码文本，文件不存在时返回空。
 // 适用于编译器/链接器/LSP 等多文件场景；每条诊断按自身的 file 字段取源码。
-std::string render_all(
-    const DiagBag &bag,
-    std::function<std::string_view(std::string_view file)> source_of,
-    bool color);
+std::string render_all(const DiagBag& bag, std::function<std::string_view(std::string_view file)> source_of,
+                       bool color);
 
 } // namespace vx::compiler

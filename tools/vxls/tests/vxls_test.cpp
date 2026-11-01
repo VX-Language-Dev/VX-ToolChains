@@ -16,12 +16,12 @@ namespace {
 
 int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
-      ++g_failures;                                                            \
-    }                                                                          \
+#define CHECK(cond)                                                                                                    \
+  do {                                                                                                                 \
+    if (!(cond)) {                                                                                                     \
+      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                                             \
+      ++g_failures;                                                                                                    \
+    }                                                                                                                  \
   } while (0)
 
 namespace json = vx::json;
@@ -34,7 +34,7 @@ void test_json_roundtrip() {
     CHECK(v->type() == json::Value::Type::Object);
     CHECK(v->int_or("a", 0) == 1);
     CHECK(v->str_or("b") == "x");
-    const json::Value *c = v->find("c");
+    const json::Value* c = v->find("c");
     CHECK(c != nullptr && c->type() == json::Value::Type::Array);
     if (c && c->as_array().size() == 3) {
       CHECK(c->as_array()[0].as_bool());
@@ -45,13 +45,15 @@ void test_json_roundtrip() {
     const std::string text = v->dump();
     auto v2 = json::parse(text);
     CHECK(v2.has_value());
-    if (v2) CHECK(v2->dump() == text);
+    if (v2)
+      CHECK(v2->dump() == text);
   }
   // 转义与 Unicode
   CHECK(json::parse(R"("a\"b\nc")").has_value());
   auto u = json::parse(R"("\u4e16\u754c")");
   CHECK(u.has_value());
-  if (u) CHECK(u->as_string() == "世界");
+  if (u)
+    CHECK(u->as_string() == "世界");
   // 非法输入
   CHECK(!json::parse("{").has_value());
   CHECK(!json::parse("[1,]").has_value());
@@ -60,14 +62,13 @@ void test_json_roundtrip() {
 }
 
 void test_analysis_clean() {
-  const std::string src =
-      "func add(a: int, b: int) -> int:\n"
-      "    return a + b\n"
-      "\n"
-      "class Point:\n"
-      "    x: int\n"
-      "    func get() -> int:\n"
-      "        return self.x\n";
+  const std::string src = "func add(a: int, b: int) -> int:\n"
+                          "    return a + b\n"
+                          "\n"
+                          "class Point:\n"
+                          "    x: int\n"
+                          "    func get() -> int:\n"
+                          "        return self.x\n";
   auto a = vxls::analyze(src);
   CHECK(a.parse_ok);
   CHECK(a.diags.empty());
@@ -106,17 +107,15 @@ void test_position_conversion() {
 }
 
 void test_hover_and_definition() {
-  const std::string src =
-      "func add(a: int, b: int) -> int:\n"
-      "    return a + b\n"
-      "\n"
-      "func main() -> int:\n"
-      "    return add(1, 2)\n";
+  const std::string src = "func add(a: int, b: int) -> int:\n"
+                          "    return a + b\n"
+                          "\n"
+                          "func main() -> int:\n"
+                          "    return add(1, 2)\n";
   // 悬停在 main 体内 add 调用上（第 5 行 "add" 位于 col 12-14）
   const std::string hover = vxls::hover_at(src, 4, 13);
   // 富化 hover：签名 + 参数表 + 返回类型
-  CHECK(hover.find("```vx\nfunc add(a: int, b: int) -> int\n```") !=
-        std::string::npos);
+  CHECK(hover.find("```vx\nfunc add(a: int, b: int) -> int\n```") != std::string::npos);
   CHECK(hover.find("**参数**") != std::string::npos);
   CHECK(hover.find("- `a: int`") != std::string::npos);
   CHECK(hover.find("- `b: int`") != std::string::npos);
@@ -133,21 +132,20 @@ void test_hover_and_definition() {
 
 // hover 丰富度：文档注释 / 局部变量 / 参数 / 类成员 / 内置运行时
 void test_hover_rich() {
-  const std::string src =
-      "# 求两数之和\n"
-      "func add(a: int, b: int) -> int:\n"
-      "    return a + b\n"
-      "\n"
-      "class Point:\n"
-      "    x: int\n"
-      "    func get_x() -> int:\n"
-      "        return self.x\n"
-      "\n"
-      "func main() -> int:\n"
-      "    var unused = 1\n"
-      "    out_int(add(1, 2))\n"
-      "    var content = file_read(\"a.txt\")\n"
-      "    return 0\n";
+  const std::string src = "# 求两数之和\n"
+                          "func add(a: int, b: int) -> int:\n"
+                          "    return a + b\n"
+                          "\n"
+                          "class Point:\n"
+                          "    x: int\n"
+                          "    func get_x() -> int:\n"
+                          "        return self.x\n"
+                          "\n"
+                          "func main() -> int:\n"
+                          "    var unused = 1\n"
+                          "    out_int(add(1, 2))\n"
+                          "    var content = file_read(\"a.txt\")\n"
+                          "    return 0\n";
   // 文档注释进入 hover（第 12 行 out_int(add(...)) 的 add，0 起始 L11）
   const std::string h_add = vxls::hover_at(src, 11, 13);
   CHECK(h_add.find("> 求两数之和") != std::string::npos);
@@ -178,15 +176,14 @@ void test_hover_rich() {
 
 // vx-tidy 诊断合并：VXTIDY 规则转 LSP，900 语法错误跳过
 void test_tidy_diagnostics() {
-  const std::string src =
-      "func main() -> int:\n"
-      "    var unused = 1\n"
-      "    nosuch(1)\n"
-      "    return 0\n";
+  const std::string src = "func main() -> int:\n"
+                          "    var unused = 1\n"
+                          "    nosuch(1)\n"
+                          "    return 0\n";
   auto ds = vxls::tidy_diagnostics(src, "t.vx");
   CHECK(ds.size() == 2);
   bool has_unused = false, has_nosuch = false;
-  for (const auto &d : ds) {
+  for (const auto& d : ds) {
     CHECK(d.source == "vx-tidy");
     if (d.code == "VXTIDY002") {
       has_unused = true;
@@ -195,7 +192,8 @@ void test_tidy_diagnostics() {
       CHECK(d.range.start.character == 0);
       CHECK(d.range.end.character > 0);
     }
-    if (d.code == "VXTIDY001") has_nosuch = true;
+    if (d.code == "VXTIDY001")
+      has_nosuch = true;
   }
   CHECK(has_unused);
   CHECK(has_nosuch);
@@ -206,19 +204,18 @@ void test_tidy_diagnostics() {
 
 // 补全：作用域 + 前缀过滤 + 排序
 void test_completion_scope() {
-  const std::string src =
-      "func add(a: int, b: int) -> int:\n"
-      "    return a + b\n"
-      "\n"
-      "func main() -> int:\n"
-      "    var total = 1\n"
-      "    var name = \"x\"\n"
-      "    return add(total, 2)\n";
+  const std::string src = "func add(a: int, b: int) -> int:\n"
+                          "    return a + b\n"
+                          "\n"
+                          "func main() -> int:\n"
+                          "    var total = 1\n"
+                          "    var name = \"x\"\n"
+                          "    return add(total, 2)\n";
   // 第 5 行 "    var total = 1"：光标在 "to" 之后（列 10）
   auto items = vxls::completion_at(src, 4, 10);
   CHECK(!items.empty());
   bool has_total = false;
-  for (const auto &c : items) {
+  for (const auto& c : items) {
     if (c.label == "total") {
       has_total = true;
       CHECK(c.kind == 6); // Variable
@@ -227,7 +224,7 @@ void test_completion_scope() {
   }
   CHECK(has_total);
   // 前缀过滤：只保留 "to" 开头的项
-  for (const auto &c : items) {
+  for (const auto& c : items) {
     CHECK(c.label.rfind("to", 0) == 0);
   }
   // 局部变量优先（sortText 分档更靠前）
@@ -235,7 +232,7 @@ void test_completion_scope() {
   // 无前缀时给出顶层函数
   auto funcs = vxls::completion_at(src, 4, 4);
   bool has_add = false;
-  for (const auto &c : funcs) {
+  for (const auto& c : funcs) {
     if (c.label == "add") {
       has_add = true;
       CHECK(c.kind == 3); // Function
@@ -246,7 +243,7 @@ void test_completion_scope() {
   // 参数在函数体内可见
   auto in_func = vxls::completion_at(src, 1, 12); // "    return a + b" 的 a 之后
   bool has_param = false;
-  for (const auto &c : in_func) {
+  for (const auto& c : in_func) {
     if (c.label == "a") {
       has_param = true;
       CHECK(c.detail.find("参数") != std::string::npos);
@@ -256,29 +253,30 @@ void test_completion_scope() {
   // 内置运行时与关键字
   auto general = vxls::completion_at(src, 4, 4);
   bool has_builtin = false, has_kw = false;
-  for (const auto &c : general) {
-    if (c.label == "out_int") has_builtin = true;
-    if (c.label == "return") has_kw = true;
+  for (const auto& c : general) {
+    if (c.label == "out_int")
+      has_builtin = true;
+    if (c.label == "return")
+      has_kw = true;
   }
   CHECK(has_builtin && has_kw);
 }
 
 // 补全：成员位置（变量. / self.）
 void test_completion_member() {
-  const std::string src =
-      "class Point:\n"
-      "    x: int\n"
-      "    y: int\n"
-      "    func get_x() -> int:\n"
-      "        return self.x\n"
-      "\n"
-      "func main() -> int:\n"
-      "    var p: Point = new Point()\n"
-      "    p.\n";
+  const std::string src = "class Point:\n"
+                          "    x: int\n"
+                          "    y: int\n"
+                          "    func get_x() -> int:\n"
+                          "        return self.x\n"
+                          "\n"
+                          "func main() -> int:\n"
+                          "    var p: Point = new Point()\n"
+                          "    p.\n";
   // 第 9 行 "    p."：光标紧跟 '.'（列 6）
   auto items = vxls::completion_at(src, 8, 6);
   bool has_x = false, has_get = false, has_unrelated = false;
-  for (const auto &c : items) {
+  for (const auto& c : items) {
     if (c.label == "x") {
       has_x = true;
       CHECK(c.kind == 5); // Field
@@ -289,63 +287,67 @@ void test_completion_member() {
       CHECK(c.kind == 2); // Method
       CHECK(c.detail.find("func get_x()") != std::string::npos);
     }
-    if (c.label == "add" || c.label == "out_int") has_unrelated = true;
+    if (c.label == "add" || c.label == "out_int")
+      has_unrelated = true;
   }
   CHECK(has_x && has_get);
   CHECK(!has_unrelated); // 成员位置不混入全局符号
   // self. 在方法体内给出同类成员
   auto self_items = vxls::completion_at(src, 4, 20); // "        return self." 末尾
   bool has_self_x = false;
-  for (const auto &c : self_items) {
-    if (c.label == "x") has_self_x = true;
+  for (const auto& c : self_items) {
+    if (c.label == "x")
+      has_self_x = true;
   }
   CHECK(has_self_x);
 }
 
 // 补全：类型位置（var x: / 形参注解 / 返回类型）
 void test_completion_type() {
-  const std::string src =
-      "class Point:\n"
-      "    x: int\n"
-      "\n"
-      "func main() -> int:\n"
-      "    var p: Point = new Point()\n"
-      "    var q: \n";
+  const std::string src = "class Point:\n"
+                          "    x: int\n"
+                          "\n"
+                          "func main() -> int:\n"
+                          "    var p: Point = new Point()\n"
+                          "    var q: \n";
   // 第 5 行 "    var q: "：光标在冒号后（列 10）
   auto items = vxls::completion_at(src, 4, 10);
   bool has_int = false, has_point = false, has_func = false;
-  for (const auto &c : items) {
-    if (c.label == "int") has_int = true;
-    if (c.label == "Point") has_point = true;
-    if (c.label == "func") has_func = true;
+  for (const auto& c : items) {
+    if (c.label == "int")
+      has_int = true;
+    if (c.label == "Point")
+      has_point = true;
+    if (c.label == "func")
+      has_func = true;
   }
   CHECK(has_int && has_point);
   CHECK(!has_func); // 类型位置不混入语句关键字
   // 形参注解位置
   auto param = vxls::completion_at("func f(a: ", 0, 10);
   bool has_bool = false;
-  for (const auto &c : param) {
-    if (c.label == "bool") has_bool = true;
+  for (const auto& c : param) {
+    if (c.label == "bool")
+      has_bool = true;
   }
   CHECK(has_bool);
 }
 
 // 补全：导入库成员（@imp(math) → math. 给出库内符号）
 void test_completion_import_lib() {
-  const std::string src =
-      "@imp(math)\n"
-      "extern out_int(v: int)\n"
-      "func main() -> int:\n"
-      "    math.\n";
-  auto items = vxls::completion_at(src, 3, 9, std::filesystem::path(VX_SOURCE_DIR) /
-                                                  "headers");
+  const std::string src = "@imp(math)\n"
+                          "extern out_int(v: int)\n"
+                          "func main() -> int:\n"
+                          "    math.\n";
+  auto items = vxls::completion_at(src, 3, 9, std::filesystem::path(VX_SOURCE_DIR) / "headers");
   bool has_add = false, has_mul = false;
-  for (const auto &c : items) {
+  for (const auto& c : items) {
     if (c.label == "add") {
       has_add = true;
       CHECK(c.detail.find("math.add") != std::string::npos);
     }
-    if (c.label == "mul") has_mul = true;
+    if (c.label == "mul")
+      has_mul = true;
   }
   CHECK(has_add && has_mul);
 }
@@ -353,23 +355,21 @@ void test_completion_import_lib() {
 // 补全：-I 搜索目录中的自定义库（@imp(mylib) → mylib. 给出库内符号）
 void test_completion_include_dirs() {
   std::error_code ec;
-  const std::filesystem::path inc =
-      std::filesystem::temp_directory_path(ec) / "vxls_test_inc";
-  if (ec) return;
+  const std::filesystem::path inc = std::filesystem::temp_directory_path(ec) / "vxls_test_inc";
+  if (ec)
+    return;
   std::filesystem::remove_all(inc, ec);
   std::filesystem::create_directories(inc, ec);
   {
     std::ofstream f(inc / "mylib.vxh");
     f << "extern func triple(x: int) -> int\n";
   }
-  const std::string src =
-      "@imp(mylib)\n"
-      "func main() -> int:\n"
-      "    mylib.\n";
-  auto items = vxls::completion_at(
-      src, 2, 10, std::filesystem::path(VX_SOURCE_DIR) / "headers", {inc});
+  const std::string src = "@imp(mylib)\n"
+                          "func main() -> int:\n"
+                          "    mylib.\n";
+  auto items = vxls::completion_at(src, 2, 10, std::filesystem::path(VX_SOURCE_DIR) / "headers", {inc});
   bool has_triple = false;
-  for (const auto &c : items) {
+  for (const auto& c : items) {
     if (c.label == "triple") {
       has_triple = true;
       CHECK(c.detail.find("mylib.triple") != std::string::npos);
@@ -384,7 +384,7 @@ void test_completion_snippet() {
   const std::string src = "func add(a: int, b: int) -> int:\n    return a + b\n";
   auto items = vxls::completion_at(src, 0, 6, {}, {}, true);
   bool found = false;
-  for (const auto &c : items) {
+  for (const auto& c : items) {
     if (c.label == "add") {
       found = true;
       CHECK(c.is_snippet);
@@ -395,8 +395,9 @@ void test_completion_snippet() {
   CHECK(found);
   // 客户端不支持 snippet 时不给出插入文本
   auto plain = vxls::completion_at(src, 0, 6, {}, {}, false);
-  for (const auto &c : plain) {
-    if (c.label == "add") CHECK(!c.is_snippet && c.insert_text.empty());
+  for (const auto& c : plain) {
+    if (c.label == "add")
+      CHECK(!c.is_snippet && c.insert_text.empty());
   }
 }
 

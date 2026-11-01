@@ -26,12 +26,12 @@ public:
 
   bool as_bool(bool fallback = false) const;
   double as_number(double fallback = 0.0) const;
-  const std::string &as_string() const;
-  const std::vector<Value> &as_array() const;
-  const std::vector<std::pair<std::string, Value>> &as_object() const;
+  const std::string& as_string() const;
+  const std::vector<Value>& as_array() const;
+  const std::vector<std::pair<std::string, Value>>& as_object() const;
 
   // 对象成员查找；不存在或非对象返回 nullptr
-  const Value *find(std::string_view key) const;
+  const Value* find(std::string_view key) const;
 
   // 取字符串成员（不存在或非字符串返回 fallback）
   std::string_view str_or(std::string_view key, std::string_view fallback = {}) const;
@@ -49,7 +49,7 @@ private:
   std::vector<Value> arr_;
   std::vector<std::pair<std::string, Value>> obj_;
 
-  void dump_to(std::string &out) const;
+  void dump_to(std::string& out) const;
 };
 
 // 解析 JSON 文本；失败返回 std::nullopt（供 LSP 判定非法消息）

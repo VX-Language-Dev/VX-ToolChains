@@ -28,55 +28,52 @@ namespace fs = std::filesystem;
 
 namespace {
 
-using vxls::json::Value;
 using vxls::Analysis;
 using vxls::LspMessage;
+using vxls::json::Value;
 
-constexpr const char *kVersion = "0.4.0";
+constexpr const char* kVersion = "0.4.0";
 
 // 打开的文档集合（uri → 全文）
 std::map<std::string, std::string> g_docs;
 
 // 全局选项
-bool g_tidy = true;              // 默认启用 vx-tidy 静态检查（--no-tidy 关闭）
-bool g_snippet = false;          // 客户端 completionItem.snippetSupport
-fs::path g_headers_root;         // @imp 库根（hover/补全解析导入符号用）
+bool g_tidy = true;      // 默认启用 vx-tidy 静态检查（--no-tidy 关闭）
+bool g_snippet = false;  // 客户端 completionItem.snippetSupport
+fs::path g_headers_root; // @imp 库根（hover/补全解析导入符号用）
 // -I 头文件搜索目录（优先于 g_headers_root；与 vxc 查找规则一致）
 std::vector<fs::path> g_include_dirs;
 
 // 对单个文档跑分析
-Analysis analyze_doc(const std::string &uri) {
+Analysis analyze_doc(const std::string& uri) {
   auto it = g_docs.find(uri);
-  if (it == g_docs.end()) return vxls::analyze("");
+  if (it == g_docs.end())
+    return vxls::analyze("");
   return vxls::analyze(it->second);
 }
 
-Value range_value(const vxls::LspRange &r) {
+Value range_value(const vxls::LspRange& r) {
   return Value::object(
       {{"start",
-        Value::object({{"line", Value::number(r.start.line)},
-                       {"character", Value::number(r.start.character)}})},
-       {"end",
-        Value::object({{"line", Value::number(r.end.line)},
-                       {"character", Value::number(r.end.character)}})}});
+        Value::object({{"line", Value::number(r.start.line)}, {"character", Value::number(r.start.character)}})},
+       {"end", Value::object({{"line", Value::number(r.end.line)}, {"character", Value::number(r.end.character)}})}});
 }
 
-Value diag_value(const vxls::LspDiagnostic &d) {
-  return Value::object(
-      {{"range", range_value(d.range)},
-       {"severity", Value::number(d.severity)},
-       {"code", Value::string(d.code)},
-       {"source", Value::string(d.source)},
-       {"message", Value::string(d.message)}});
+Value diag_value(const vxls::LspDiagnostic& d) {
+  return Value::object({{"range", range_value(d.range)},
+                        {"severity", Value::number(d.severity)},
+                        {"code", Value::string(d.code)},
+                        {"source", Value::string(d.source)},
+                        {"message", Value::string(d.message)}});
 }
 
 // 发布诊断通知（textDocument/publishDiagnostics）
 // 诊断源：前端诊断（lexer/parser）+ 可选 vx-tidy 静态检查（默认启用）
-void publish_diagnostics(const std::string &uri) {
+void publish_diagnostics(const std::string& uri) {
   Analysis a = analyze_doc(uri);
   const std::string text = g_docs.count(uri) ? g_docs[uri] : std::string();
   std::vector<vxls::LspDiagnostic> all;
-  for (const auto &d : a.diags) {
+  for (const auto& d : a.diags) {
     all.push_back(vxls::to_lsp_diagnostic(d, text));
   }
   if (g_tidy) {
@@ -84,87 +81,89 @@ void publish_diagnostics(const std::string &uri) {
     all.insert(all.end(), tidy_diags.begin(), tidy_diags.end());
   }
   std::vector<Value> diags;
-  for (const auto &d : all) diags.push_back(diag_value(d));
+  for (const auto& d : all)
+    diags.push_back(diag_value(d));
   LspMessage n;
   n.method = "textDocument/publishDiagnostics";
-  n.params = Value::object(
-      {{"uri", Value::string(uri)}, {"diagnostics", Value::array(diags)}});
+  n.params = Value::object({{"uri", Value::string(uri)}, {"diagnostics", Value::array(diags)}});
   vxls::send_message(n);
 }
 
-void handle_initialize(const LspMessage &req) {
+void handle_initialize(const LspMessage& req) {
   // 客户端补全能力：snippetSupport 决定是否给出 $1 占位的可调用项插入
-  if (const Value *caps = req.params.find("capabilities")) {
-    if (const Value *tdc = caps->find("textDocument")) {
-      if (const Value *comp = tdc->find("completion")) {
-        if (const Value *ci = comp->find("completionItem")) {
-          if (const Value *sn = ci->find("snippetSupport")) {
+  if (const Value* caps = req.params.find("capabilities")) {
+    if (const Value* tdc = caps->find("textDocument")) {
+      if (const Value* comp = tdc->find("completion")) {
+        if (const Value* ci = comp->find("completionItem")) {
+          if (const Value* sn = ci->find("snippetSupport")) {
             g_snippet = sn->as_bool();
           }
         }
       }
     }
   }
-  Value caps = Value::object(
-      {{"textDocumentSync",
-        Value::number(1)}, // Full：didChange 全量替换
-       {"hoverProvider", Value::boolean(true)},
-       {"definitionProvider", Value::boolean(true)},
-       {"documentSymbolProvider", Value::boolean(true)},
-       {"completionProvider",
-        Value::object({{"triggerCharacters", Value::array({Value::string(".")})},
-                       {"resolveProvider", Value::boolean(false)}})}});
+  Value caps =
+      Value::object({{"textDocumentSync", Value::number(1)}, // Full：didChange 全量替换
+                     {"hoverProvider", Value::boolean(true)},
+                     {"definitionProvider", Value::boolean(true)},
+                     {"documentSymbolProvider", Value::boolean(true)},
+                     {"referencesProvider", Value::boolean(true)},
+                     {"renameProvider", Value::boolean(true)},
+                     {"workspaceSymbolProvider", Value::boolean(true)},
+                     {"completionProvider", Value::object({{"triggerCharacters", Value::array({Value::string(".")})},
+                                                           {"resolveProvider", Value::boolean(false)}})}});
   Value result = Value::object(
       {{"capabilities", caps},
-       {"serverInfo",
-        Value::object({{"name", Value::string("vxls")},
-                       {"version", Value::string(kVersion)}})}});
+       {"serverInfo", Value::object({{"name", Value::string("vxls")}, {"version", Value::string(kVersion)}})}});
   vxls::send_response(req, result);
 }
 
-void handle_did_open(const Value &params) {
-  const Value *td = params.find("textDocument");
-  if (td == nullptr) return;
+void handle_did_open(const Value& params) {
+  const Value* td = params.find("textDocument");
+  if (td == nullptr)
+    return;
   const std::string uri(td->str_or("uri"));
   g_docs[uri] = std::string(td->str_or("text"));
   publish_diagnostics(uri);
 }
 
-void handle_did_change(const Value &params) {
-  const Value *td = params.find("textDocument");
-  const Value *changes = params.find("contentChanges");
-  if (td == nullptr || changes == nullptr) return;
+void handle_did_change(const Value& params) {
+  const Value* td = params.find("textDocument");
+  const Value* changes = params.find("contentChanges");
+  if (td == nullptr || changes == nullptr)
+    return;
   const std::string uri(td->str_or("uri"));
   // Full 同步：取最后一个变更的全文
-  const auto &arr = changes->as_array();
+  const auto& arr = changes->as_array();
   if (!arr.empty()) {
     g_docs[uri] = std::string(arr.back().str_or("text"));
   }
   publish_diagnostics(uri);
 }
 
-void handle_did_close(const Value &params) {
-  const Value *td = params.find("textDocument");
-  if (td == nullptr) return;
+void handle_did_close(const Value& params) {
+  const Value* td = params.find("textDocument");
+  if (td == nullptr)
+    return;
   const std::string uri(td->str_or("uri"));
   g_docs.erase(uri);
   publish_diagnostics(uri); // 清空诊断
 }
 
 // 取 params.textDocument.uri 与 params.position.{line,character}
-bool doc_and_pos(const Value &params, std::string &uri, int &line,
-                 int &character) {
-  const Value *td = params.find("textDocument");
-  const Value *pos = params.find("position");
-  if (td == nullptr || pos == nullptr) return false;
+bool doc_and_pos(const Value& params, std::string& uri, int& line, int& character) {
+  const Value* td = params.find("textDocument");
+  const Value* pos = params.find("position");
+  if (td == nullptr || pos == nullptr)
+    return false;
   uri = std::string(td->str_or("uri"));
   line = pos->int_or("line", 0);
   character = pos->int_or("character", 0);
   return true;
 }
 
-void handle_document_symbol(const LspMessage &req) {
-  const Value *td = req.params.find("textDocument");
+void handle_document_symbol(const LspMessage& req) {
+  const Value* td = req.params.find("textDocument");
   if (td == nullptr) {
     vxls::send_response(req, Value::array({}));
     return;
@@ -172,18 +171,17 @@ void handle_document_symbol(const LspMessage &req) {
   const std::string uri(td->str_or("uri"));
   Analysis a = analyze_doc(uri);
   std::vector<Value> syms;
-  for (const auto &s : a.symbols) {
-    syms.push_back(Value::object(
-        {{"name", Value::string(s.name)},
-         {"detail", Value::string(s.detail)},
-         {"kind", Value::number(s.kind)},
-         {"range", range_value(s.range)},
-         {"selectionRange", range_value(s.selection_range)}}));
+  for (const auto& s : a.symbols) {
+    syms.push_back(Value::object({{"name", Value::string(s.name)},
+                                  {"detail", Value::string(s.detail)},
+                                  {"kind", Value::number(s.kind)},
+                                  {"range", range_value(s.range)},
+                                  {"selectionRange", range_value(s.selection_range)}}));
   }
   vxls::send_response(req, Value::array(syms));
 }
 
-void handle_hover(const LspMessage &req) {
+void handle_hover(const LspMessage& req) {
   std::string uri;
   int line = 0, character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
@@ -196,21 +194,16 @@ void handle_hover(const LspMessage &req) {
     return;
   }
   // hover_at 返回富化 Markdown（参数表/成员/文档注释/内置/导入库 ABI）
-  const std::string md =
-      vxls::hover_at(it->second, line, character, g_headers_root,
-                     g_include_dirs);
+  const std::string md = vxls::hover_at(it->second, line, character, g_headers_root, g_include_dirs);
   if (md.empty()) {
     vxls::send_response(req, Value{});
     return;
   }
-  vxls::send_response(
-      req, Value::object(
-               {{"contents",
-                 Value::object({{"kind", Value::string("markdown")},
-                                {"value", Value::string(md)}})}}));
+  vxls::send_response(req, Value::object({{"contents", Value::object({{"kind", Value::string("markdown")},
+                                                                      {"value", Value::string(md)}})}}));
 }
 
-void handle_definition(const LspMessage &req) {
+void handle_definition(const LspMessage& req) {
   std::string uri;
   int line = 0, character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
@@ -222,17 +215,15 @@ void handle_definition(const LspMessage &req) {
     vxls::send_response(req, Value{});
     return;
   }
-  const vxls::LspRange r = vxls::definition_at(it->second, line, character);
-  if (r.start.line < 0) {
+  const vxls::LspLocation loc = vxls::definition_at_cross(uri, it->second, line, character, g_docs);
+  if (loc.range.start.line < 0) {
     vxls::send_response(req, Value{});
     return;
   }
-  vxls::send_response(
-      req, Value::object({{"uri", Value::string(uri)},
-                          {"range", range_value(r)}}));
+  vxls::send_response(req, Value::object({{"uri", Value::string(loc.uri)}, {"range", range_value(loc.range)}}));
 }
 
-void handle_completion(const LspMessage &req) {
+void handle_completion(const LspMessage& req) {
   std::string uri;
   int line = 0, character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
@@ -245,20 +236,18 @@ void handle_completion(const LspMessage &req) {
     return;
   }
   // 按光标上下文（成员/类型/作用域）给出候选，prefix 已过滤、sortText 已分档
-  const std::vector<vxls::LspCompletion> items = vxls::completion_at(
-      it->second, line, character, g_headers_root, g_include_dirs, g_snippet);
+  const std::vector<vxls::LspCompletion> items =
+      vxls::completion_at(it->second, line, character, g_headers_root, g_include_dirs, g_snippet);
   std::vector<Value> out;
   out.reserve(items.size());
-  for (const auto &c : items) {
+  for (const auto& c : items) {
     std::vector<std::pair<std::string, Value>> fields;
     fields.emplace_back("label", Value::string(c.label));
     fields.emplace_back("kind", Value::number(c.kind));
     fields.emplace_back("detail", Value::string(c.detail));
     if (!c.documentation.empty()) {
-      fields.emplace_back(
-          "documentation",
-          Value::object({{"kind", Value::string("markdown")},
-                         {"value", Value::string(c.documentation)}}));
+      fields.emplace_back("documentation", Value::object({{"kind", Value::string("markdown")},
+                                                          {"value", Value::string(c.documentation)}}));
     }
     if (c.is_snippet && !c.insert_text.empty()) {
       fields.emplace_back("insertText", Value::string(c.insert_text));
@@ -275,64 +264,141 @@ void handle_completion(const LspMessage &req) {
   vxls::send_response(req, Value::array(out));
 }
 
+void handle_references(const LspMessage& req) {
+  std::string uri;
+  int line = 0, character = 0;
+  if (!doc_and_pos(req.params, uri, line, character)) {
+    vxls::send_response(req, Value::array({}));
+    return;
+  }
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    vxls::send_response(req, Value::array({}));
+    return;
+  }
+  bool include_decl = true;
+  if (const Value* ctx = req.params.find("context")) {
+    if (const Value* id = ctx->find("includeDeclaration")) {
+      include_decl = id->as_bool();
+    }
+  }
+  const auto locs = vxls::references_at(uri, it->second, line, character, g_docs, include_decl);
+  std::vector<Value> out;
+  for (const auto& l : locs) {
+    out.push_back(Value::object({{"uri", Value::string(l.uri)}, {"range", range_value(l.range)}}));
+  }
+  vxls::send_response(req, Value::array(out));
+}
+
+void handle_rename(const LspMessage& req) {
+  std::string uri;
+  int line = 0, character = 0;
+  if (!doc_and_pos(req.params, uri, line, character)) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  std::string new_name;
+  if (const Value* nn = req.params.find("newName")) {
+    new_name = std::string(nn->as_string());
+  }
+  if (new_name.empty()) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  const auto edits = vxls::rename_at(uri, it->second, line, character, new_name, g_docs);
+  // Build WorkspaceEdit
+  std::vector<std::pair<std::string, Value>> changes;
+  for (const auto& [euri, te_list] : edits) {
+    std::vector<Value> text_edits;
+    for (const auto& te : te_list) {
+      text_edits.push_back(Value::object({{"range", range_value(te.range)}, {"newText", Value::string(te.new_text)}}));
+    }
+    changes.emplace_back(euri, Value::array(text_edits));
+  }
+  Value changes_obj = Value::object(changes);
+  vxls::send_response(req, Value::object({{"changes", changes_obj}}));
+}
+
+void handle_workspace_symbol(const LspMessage& req) {
+  std::string query;
+  if (const Value* q = req.params.find("query")) {
+    query = std::string(q->as_string());
+  }
+  const auto syms = vxls::workspace_symbols(query, g_docs);
+  std::vector<Value> out;
+  for (const auto& s : syms) {
+    out.push_back(
+        Value::object({{"name", Value::string(s.name)},
+                       {"kind", Value::number(s.kind)},
+                       {"location", Value::object({{"uri", Value::string(s.uri)}, {"range", range_value(s.range)}})}}));
+  }
+  vxls::send_response(req, Value::array(out));
+}
+
 void print_help() {
-  std::fputs(
-      "vxls — VX 语言服务器（LSP over stdio）\n"
-      "Usage: vxls [options] [--only-tidy <file.vx>...]\n"
-      "Options:\n"
-      "  --stdio          标准 LSP 传输（默认，供编辑器配置兼容）\n"
-      "  --no-tidy        不启用 vx-tidy 静态检查（默认启用并合并发布诊断）\n"
-      "  --only-tidy      仅运行 vx-tidy 静态检查后退出，不启动 LSP\n"
-      "  --format=text|json  --only-tidy 的输出格式（默认 text）\n"
-      "  -I <dir>         @imp/@cppimp 头文件搜索目录（可多次，优先于 headers 根；\n"
-      "                   亦接受 -I<dir>；查找规则与 vxc 一致）\n"
-      "  -V, --version    打印版本\n"
-      "  -h, --help       显示本帮助\n",
-      stdout);
+  std::fputs("vxls — VX 语言服务器（LSP over stdio）\n"
+             "Usage: vxls [options] [--only-tidy <file.vx>...]\n"
+             "Options:\n"
+             "  --stdio          标准 LSP 传输（默认，供编辑器配置兼容）\n"
+             "  --no-tidy        不启用 vx-tidy 静态检查（默认启用并合并发布诊断）\n"
+             "  --only-tidy      仅运行 vx-tidy 静态检查后退出，不启动 LSP\n"
+             "  --format=text|json  --only-tidy 的输出格式（默认 text）\n"
+             "  -I <dir>         @imp/@cppimp 头文件搜索目录（可多次，优先于 headers 根；\n"
+             "                   亦接受 -I<dir>；查找规则与 vxc 一致）\n"
+             "  -V, --version    打印版本\n"
+             "  -h, --help       显示本帮助\n",
+             stdout);
 }
 
 // --only-tidy：对给定文件运行 vx-tidy 并打印（退出码 0=无 error，1=有 error）
-int run_only_tidy(const std::vector<std::string> &files,
-                  const std::string &format) {
+int run_only_tidy(const std::vector<std::string>& files, const std::string& format) {
   if (files.empty()) {
     std::fputs("error: --only-tidy 需要至少一个 .vx 文件\n", stderr);
     return 2;
   }
   bool any_error = false;
   bool first_json = true;
-  if (format == "json") std::fputs("[", stdout);
-  for (const std::string &f : files) {
+  if (format == "json")
+    std::fputs("[", stdout);
+  for (const std::string& f : files) {
     auto src = vx::util::read_file(f);
     if (!src) {
-      std::fprintf(stderr, "error: cannot read %s: %s\n", f.c_str(),
-                   src.error().c_str());
+      std::fprintf(stderr, "error: cannot read %s: %s\n", f.c_str(), src.error().c_str());
       any_error = true;
       continue;
     }
     const auto findings = vxtidy::check(*src, f);
-    for (const auto &fd : findings) {
-      if (fd.severity == 1) any_error = true;
+    for (const auto& fd : findings) {
+      if (fd.severity == 1)
+        any_error = true;
     }
     if (format == "json") {
       std::string arr = vxtidy::format_json(findings, f);
       if (arr.size() > 2) {
-        if (!first_json) std::fputs(",", stdout);
+        if (!first_json)
+          std::fputs(",", stdout);
         std::fputs(arr.substr(1, arr.size() - 2).c_str(), stdout);
         first_json = false;
       }
     } else {
-      for (const auto &fd : findings) {
+      for (const auto& fd : findings) {
         std::puts(vxtidy::format_text(fd, f).c_str());
       }
     }
   }
-  if (format == "json") std::fputs("]\n", stdout);
+  if (format == "json")
+    std::fputs("]\n", stdout);
   return any_error ? 1 : 0;
 }
 
 } // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   std::vector<std::string> tidy_files;
   std::string format = "text";
   bool only_tidy = false;
@@ -386,20 +452,15 @@ int main(int argc, char **argv) {
       continue;
     }
     if (a.starts_with("-")) {
-      std::fprintf(stderr, "error: unknown option: %s (try --help)\n",
-                   argv[i]);
+      std::fprintf(stderr, "error: unknown option: %s (try --help)\n", argv[i]);
       return 2;
     }
     tidy_files.emplace_back(a); // 位置参数仅 --only-tidy 时使用
   }
 
-  // headers 根：VX_HEADERS 环境变量 或 可执行文件同级 headers/（导入库 hover）
-  if (const char *env = std::getenv("VX_HEADERS")) {
-    g_headers_root = env;
-  } else {
-    const fs::path exe_dir = vx::compiler::executable_dir(argv[0]);
-    g_headers_root = exe_dir.empty() ? fs::path("headers") : exe_dir / "headers";
-  }
+  // headers 根：VX_HEADERS_DIR / VX_HEADERS 环境变量 或 可执行文件同级 headers/
+  // （导入库 hover）；vx 元命令会通过 VX_HEADERS_DIR 传入
+  g_headers_root = vx::compiler::resolve_headers_root(argv[0]);
 
   if (only_tidy) {
     return run_only_tidy(tidy_files, format);
@@ -411,8 +472,9 @@ int main(int argc, char **argv) {
 
   while (true) {
     auto msg = vxls::read_message();
-    if (!msg) break; // EOF 或帧错误 → 退出
-    const LspMessage &m = *msg;
+    if (!msg)
+      break; // EOF 或帧错误 → 退出
+    const LspMessage& m = *msg;
 
     if (m.method == "initialize") {
       handle_initialize(m);
@@ -436,6 +498,12 @@ int main(int argc, char **argv) {
       handle_definition(m);
     } else if (m.method == "textDocument/completion") {
       handle_completion(m);
+    } else if (m.method == "textDocument/references") {
+      handle_references(m);
+    } else if (m.method == "textDocument/rename") {
+      handle_rename(m);
+    } else if (m.method == "workspace/symbol") {
+      handle_workspace_symbol(m);
     } else if (m.method == "$/cancelRequest" || m.method == "$/setTrace") {
       // 忽略
     } else if (m.has_id) {

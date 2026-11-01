@@ -27,16 +27,16 @@ struct RuleInfo {
 };
 
 // 全部规则列表
-const std::vector<RuleInfo> &all_rules();
+const std::vector<RuleInfo>& all_rules();
 
 // 运行静态分析；filename 仅用于发现的文件字段回填（Finding 不含文件，
 // 由调用方打印时附加）。词法/语法错误同样以 VXTIDY900 收录（报文件错误）。
 std::vector<Finding> check(std::string_view text, std::string_view filename);
 
 // 文本格式渲染单条：file:line:col: severity: message [rule]
-std::string format_text(const Finding &f, std::string_view filename);
+std::string format_text(const Finding& f, std::string_view filename);
 
 // JSON 数组渲染（供 CI 消费）
-std::string format_json(const std::vector<Finding> &fs, std::string_view filename);
+std::string format_json(const std::vector<Finding>& fs, std::string_view filename);
 
 } // namespace vxtidy
