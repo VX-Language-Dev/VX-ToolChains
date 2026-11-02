@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased — v1.16.0 (开发中)
+## Unreleased — v1.16.2 (开发中)
 
 ### 格式化工具（`vfmt` 0.1.0，新增）
 
@@ -19,6 +19,12 @@
 - README 新增 §11「源码格式化（vfmt）」说明；模块表由「🚧 规划中」改为「✅ 基础可用」
 
 ### 编译器（`vxc` 0.5.0）
+- **独立语义分析层（semantics）**：新增 `src/compiler/semantics.cpp` + `include/vx/compiler/semantics.hpp`，编译管线插入 lex → parse → imports → **semantics** → codegen 阶段；codegen 前置门禁（语义错误时不再进入代码生成）
+  - **符号表**：Scope 栈（函数/块/循环作用域）、函数表（含 extern 与 `Class.method` 具名方法）、类/结构布局表（实例字段 / 类常量 / 方法）
+  - **类型环境**：变量名 → TypeTag + 可变性标记，由初始化表达式与显式标注推断（推断规则与 codegen 发射选择一致）
+  - **检查与诊断（多错误聚合，不再首错即停）**：未定义变量/类/字段/方法/导入符号（E0010）、重复定义（E0011）、未知类型标注（E0003）、break/continue/return 位置（E0005）、已声明函数与内置函数的参数个数（E0006）；错误码集中在 `diag.hpp`
+  - 跨编译单元函数调用不报错：vmake 多文件工程允许跨文件调用，符号在链接期解析
+- **新增 `semantics_tests` 单测**（合法程序 / 未定义变量 / 重复定义 / 作用域遮蔽 / 未知类型 / 控制流位置 / 调用参数个数 / 类字段与方法检查），CTest 由 19 组增至 **20 组全绿**
 - **`--target <triple>` 参数**：显式指定交叉编译目标三元组，优先于自动检测的 host triple；help 同步更新
 - **`VX_HEADERS_DIR` 环境变量**：新增导入库根目录覆盖变量（优先于 `VX_HEADERS`）；`vx` 元命令在分发子进程前会把自身目录下的 `headers/` 通过 `VX_HEADERS_DIR` 传播，便于 `vx compile` 等直接定位库根；`VX_HEADERS` 保留为兼容别名
 - **系统头目录探测不再经 shell**：`importer.cpp` 的 `popen("c++ -E -x c++ -v /dev/null 2>&1")` 改为 `fork` + `execvp` 直接执行编译器驱动（stdout/stderr `dup2` 到管道），消除 PATH/环境变量中 shell 特殊字符的注入面；输出解析逻辑不变

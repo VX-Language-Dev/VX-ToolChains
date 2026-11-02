@@ -30,13 +30,18 @@ if(NOT TARGET vxjson)
                      "${CMAKE_CURRENT_BINARY_DIR}/json")
 endif()
 
+# 共享 LSP 传输层库（主构建已纳入；独立配置时补引入）
+if(NOT TARGET vxlsp)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../lsp"
+                     "${CMAKE_CURRENT_BINARY_DIR}/lsp")
+endif()
+
 add_executable(vxls
     src/main.cpp
     src/analysis.cpp
-    src/transport.cpp
 )
 target_include_directories(vxls PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(vxls PRIVATE vx_compiler vxtidy vxjson)
+target_link_libraries(vxls PRIVATE vx_compiler vxtidy vxlsp)
 target_compile_options(vxls PRIVATE -Wall -Wextra -Wpedantic)
 # 安装后定位 ../lib 下的 libvxtidy，避免依赖 DYLD_LIBRARY_PATH/LD_LIBRARY_PATH
 # （构建树 RPATH 由 CMake 自动注入，不覆盖，以免破坏开发期运行）

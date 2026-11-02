@@ -18,6 +18,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 # 核心库：配置解析 / 工具链定位 / 子进程执行 / 构建编排（供单元测试复用）
+# 词法 + 校验规则来自共享库 vmake_shared（与 vmake-lsp 共用同一套 .vmake 底层）
+if(NOT TARGET vmake_shared)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../vmake-shared"
+                     "${CMAKE_CURRENT_BINARY_DIR}/vmake-shared")
+endif()
+
 add_library(vmake_core STATIC
     src/config.cpp
     src/toolchain.cpp
@@ -25,7 +31,7 @@ add_library(vmake_core STATIC
     src/build.cpp
 )
 target_include_directories(vmake_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(vmake_core PUBLIC vx_util)
+target_link_libraries(vmake_core PUBLIC vx_util vmake_shared)
 target_compile_options(vmake_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(vmake src/main.cpp)

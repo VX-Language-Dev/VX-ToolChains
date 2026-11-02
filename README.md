@@ -1,7 +1,7 @@
 # VX-ToolKit
 
 ![Language](https://img.shields.io/badge/language-C++23-blue)
-![Version](https://img.shields.io/badge/version-v1.16.0-blue)
+![Version](https://img.shields.io/badge/version-v1.16.2-blue)
 ![Tests](https://img.shields.io/badge/tests-19%20suites%20100%25%20passing-brightgreen)
 ![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
@@ -17,7 +17,7 @@
 - **零第三方依赖** — 编译器与后端只依赖 C++23 标准库，链接期调用宿主 clang
 - **全家桶开箱即用** — `vxc` 编译器 · `vlnk` 链接器 · `vmake` 增量构建 · `vxls` 语言服务器 · `vx-tidy` 静态分析引擎（动态库）· `vfmt` 源码格式化
 - **混合语言互操作** — `@imp` 导入 C 库，`@cppimp` 一行接入 C++ 头文件（链接期自动生成 ABI shim）
-- **19 组自动化测试全绿** — 单元 + 端到端，`ctest` / `cmake --build build --target test` 一键调度
+- **20 组自动化测试全绿** — 单元 + 端到端，`ctest` / `cmake --build build --target test` 一键调度
 
 > 语言版本: v1.7.0 · 协议: [AGPL-3.0](LICENSE)
 > 当前实现: **C++ 工具链核心可用**（编译前端 vxc 0.5.0、后端 vlnk、构建编排 vmake、
@@ -80,6 +80,7 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **C++23** 实现（CMa
   ↓ Lexer → Token 流
   ↓ Parser → AST
   ↓ @imp / @cppimp 导入表（VX ABI 符号 + 链接依赖）
+  ↓ Semantics → 符号表 + 类型环境检查（未定义/重复定义/调用与字段访问，多错误聚合）
   ↓ Codegen → TypeIR（栈机指令序列）
   ↓ serialize → VXOBJ v4 跨平台文件
   ↓ vlnk 解析 VXOBJ → LLVM IR（.ll 文本）
@@ -156,7 +157,7 @@ cmake --build build --config MinSizeRel
 
 | 产物                          | 说明                                    |
 | ----------------------------- | --------------------------------------- |
-| `vxc`                         | 编译器前端 CLI（CMake 目标 `vxc002`；`--version` 显示 0.5.0：lex → parse → codegen → .vxobj，支持 `--check` / `--dump` / `-I` / `--target`） |
+| `vxc`                         | 编译器前端 CLI（CMake 目标 `vxc002`；`--version` 显示 0.5.0：lex → parse → imports → semantics → codegen → .vxobj，支持 `--check` / `--dump` / `-I` / `--target`） |
 | `vlnk`                        | 原生链接器 CLI（.vxobj → LLVM IR → clang 链接） |
 | `tools/vxls/vxls`             | LSP 语言服务器（`--only-tidy` 兼作 vx-tidy 命令行入口） |
 | `tools/vmake/vmake`           | 项目构建编排器（VMakeSet.vmake）        |
@@ -166,7 +167,7 @@ cmake --build build --config MinSizeRel
 | `libvxrt.a`                   | 预编译 VX 运行时（vlnk 链接期直接并入） |
 | `tools/vx-tidy/libvxtidy.dylib` | vx-tidy 静态分析引擎（纯动态库，无 CLI；vxls 链接使用） |
 
-> 另有 19 组测试可执行文件（`vx_*_tests`、`vmake*`、`vmake-lsp` 与 `vfmt` 相关），
+> 另有 20 组测试可执行文件（`vx_*_tests`、`vmake*`、`vmake-lsp` 与 `vfmt` 相关），
 > 由 CTest 统一调度。
 
 ### 安装到系统
@@ -216,7 +217,7 @@ uv tool install ./python                   # 装齐 vxc / vlnk / vmake / vxls / 
 ### 运行测试
 
 ```bash
-# 运行全部 C++ 单元/端到端测试（19 组，CTest 统一调度）
+# 运行全部 C++ 单元/端到端测试（20 组，CTest 统一调度）
 cmake --build build --target test
 # 或等价：ctest --test-dir build --output-on-failure
 ```
@@ -282,7 +283,8 @@ Hello, VX!
 1. **词法分析** (Lexer) → Token 流
 2. **语法分析** (Parser) → AST
 3. **库导入解析** (@imp / @cppimp) → 导入表（VX ABI 符号签名 + 链接依赖）
-4. **Codegen** → TypeIR 栈机指令 + 序列化 → VXOBJ v4
+4. **Semantics** → 符号表（Scope 栈 / 函数表 / 类布局表）+ 类型环境检查，多错误聚合输出
+5. **Codegen** → TypeIR 栈机指令 + 序列化 → VXOBJ v4
 
 > 所有权/借用检查（OwnershipChecker）为规划特性，尚未实现。
 
@@ -725,7 +727,7 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 .
 ├── src/                      # C++ 源码目录
 │   ├── util/                 # Util 层：arena / str / fs / platform
-│   ├── compiler/             # Compiler 层：diag / vxabi / lexer / parser / importer / codegen / vxobj
+│   ├── compiler/             # Compiler 层：diag / vxabi / lexer / parser / importer / semantics / codegen / vxobj
 │   ├── backend/              # Backend 层：vxobj_reader / llvm_emitter / link_driver
 │   ├── runtime/              # vxrt.c：预编译为 libvxrt.a（vlnk 链接期并入）
 │   └── driver/               # vxc（前端 CLI）与 vlnk（后端 CLI）入口
@@ -736,10 +738,12 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 │   ├── collections/vec.*     # 子目录库（@imp(/collections/vec)）
 │   └── cpp/greet.{hpp,vxh,cpp} # @cppimp 样例（C++ 头文件 + 伴生声明 + 实现）
 ├── tests/                    # C++ 单元测试 + .vx 端到端样例
-│   ├── *_test.cpp            # util/diag/lexer/parser/codegen/vxobj/e2e/backend/import 测试
+│   ├── *_test.cpp            # util/diag/lexer/parser/codegen/semantics/vxobj/e2e/backend/import 测试
 │   └── test_*.vx             # e2e 样例（simple/void/return/math/prime）
 ├── tools/                    # 独立工具子项目（主构建自动检测 tools/*/CMakeLists.txt）
 │   ├── json/                 # 极简 JSON 编解码静态库（vxls / vmake-lsp 共享，vx::json）
+│   ├── lsp/                  # LSP 传输层共享静态库（Content-Length 帧协议，vxls / vmake-lsp 共用）
+│   ├── vmake-shared/         # .vmake 共享词法 + 校验规则（vmake / vmake-lsp 共用同一套底层）
 │   ├── vmake/                # 项目构建编排器（VMakeSet.vmake → vxc/vlnk）
 │   ├── vmake-lsp/            # VMakeSet.vmake 语言服务器（诊断/补全/悬停/跳转/格式化）
 │   ├── vxls/                 # VX 语言服务器（LSP over stdio，集成 vx-tidy）
@@ -890,7 +894,7 @@ func main():
 ### 开发环境
 
 ```bash
-# 克隆后运行测试确保环境正常（19 组测试）
+# 克隆后运行测试确保环境正常（20 组测试）
 cmake --build build --target test
 
 # 默认构建（MinSizeRel）

@@ -7,11 +7,11 @@
 //       incs=["include"], std="c++20",
 //       cflags=["-g"], defines=["NDEBUG"])
 // 支持注释、尾随逗号、括号内换行。sources 接受 .vx / .c / .cpp 混合。
+// 词法层与校验规则复用 tools/vmake-shared（与 vmake-lsp 共用同一套 .vmake 底层）。
 #include "config.hpp"
 
-#include <cctype>
-#include <cstdint>
-#include <cstdio>
+#include "vmake_shared.hpp"
+
 #include <filesystem>
 #include <map>
 #include <string>
@@ -23,21 +23,13 @@ namespace {
 
 namespace fs = std::filesystem;
 
-bool is_ident_char(char c) {
-  const auto u = static_cast<unsigned char>(c);
-  return std::isalnum(u) != 0 || c == '_';
-}
-
-bool valid_target_name(std::string_view name) {
-  if (name.empty())
-    return false;
-  for (char c : name) {
-    const auto u = static_cast<unsigned char>(c);
-    if (!(std::isalnum(u) != 0 || c == '_' || c == '-'))
-      return false;
-  }
-  return true;
-}
+using vmake_shared::is_c_source;
+using vmake_shared::is_cxx_source;
+using vmake_shared::is_vx_source;
+using vmake_shared::has_dotdot_component;
+using vmake_shared::is_absolute_path;
+using vmake_shared::valid_target_name;
+namespace Tok = vmake_shared; // 词法常量别名：Tok::Str / Tok::LBracket / ...
 
 // 允许的源文件后缀：.vx（vxc）、.c（clang -c C）、.cpp/.cc/.cxx（clang -c C++）
 bool is_valid_source(std::string_view s) {
@@ -48,176 +40,10 @@ bool is_valid_test_source(std::string_view s) {
   return is_vx_source(s);
 }
 
-// ---- 词法 ----
-enum class TokType { Ident, Str, LBracket, RBracket, LParen, RParen, Comma, Equals, Newline, End };
-
-struct Token {
-  TokType type = TokType::End;
-  std::string text;
-  std::size_t line = 1;
-};
-
-struct Lexer {
-  std::string_view text;
-  std::size_t pos = 0;
-  std::size_t line = 1;
-  std::vector<Token> toks{};
-
-  bool eof() const { return pos >= text.size(); }
-  char peek() const { return eof() ? '\0' : text[pos]; }
-
-  void append_utf8(std::string& out, std::uint32_t cp) {
-    if (cp < 0x80)
-      out += static_cast<char>(cp);
-    else if (cp < 0x800) {
-      out += static_cast<char>(0xC0 | (cp >> 6));
-      out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-      out += static_cast<char>(0xE0 | (cp >> 12));
-      out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-      out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-      out += static_cast<char>(0xF0 | (cp >> 18));
-      out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-      out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-      out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
-  }
-
-  bool parse_string(std::string& out) {
-    const char quote = text[pos++];
-    while (pos < text.size()) {
-      char c = text[pos++];
-      if (c == quote)
-        return true;
-      if (c == '\n')
-        return false;
-      if (quote == '"' && c == '\\') {
-        if (pos >= text.size())
-          return false;
-        char esc = text[pos++];
-        switch (esc) {
-          case 'n':
-            out += '\n';
-            break;
-          case 't':
-            out += '\t';
-            break;
-          case 'r':
-            out += '\r';
-            break;
-          case '"':
-            out += '"';
-            break;
-          case '\\':
-            out += '\\';
-            break;
-          case 'u': {
-            std::uint32_t cp = 0;
-            for (int i = 0; i < 4; ++i) {
-              if (pos >= text.size())
-                return false;
-              char h = text[pos++];
-              if (std::isxdigit(static_cast<unsigned char>(h)) == 0)
-                return false;
-              cp = cp * 16 + (std::isdigit(static_cast<unsigned char>(h))
-                                  ? h - '0'
-                                  : (std::tolower(static_cast<unsigned char>(h)) - 'a' + 10));
-            }
-            append_utf8(out, cp);
-            break;
-          }
-          default:
-            return false;
-        }
-      } else {
-        out += c;
-      }
-    }
-    return false;
-  }
-
-  void run() {
-    while (pos < text.size()) {
-      char c = text[pos];
-      if (c == ' ' || c == '\t' || c == '\r') {
-        ++pos;
-        continue;
-      }
-      if (c == '\n') {
-        toks.push_back({TokType::Newline, "\n", line});
-        ++pos;
-        ++line;
-        continue;
-      }
-      if (c == '#') {
-        while (pos < text.size() && text[pos] != '\n')
-          ++pos;
-        continue;
-      }
-      if (c == '"' || c == '\'') {
-        std::string s;
-        std::size_t sl = line;
-        if (!parse_string(s)) {
-          toks.push_back({TokType::End, "unterminated string", sl});
-          return;
-        }
-        toks.push_back({TokType::Str, std::move(s), sl});
-        continue;
-      }
-      if (c == '[') {
-        toks.push_back({TokType::LBracket, "[", line});
-        ++pos;
-        continue;
-      }
-      if (c == ']') {
-        toks.push_back({TokType::RBracket, "]", line});
-        ++pos;
-        continue;
-      }
-      if (c == '(') {
-        toks.push_back({TokType::LParen, "(", line});
-        ++pos;
-        continue;
-      }
-      if (c == ')') {
-        toks.push_back({TokType::RParen, ")", line});
-        ++pos;
-        continue;
-      }
-      if (c == ',') {
-        toks.push_back({TokType::Comma, ",", line});
-        ++pos;
-        continue;
-      }
-      if (c == '=') {
-        toks.push_back({TokType::Equals, "=", line});
-        ++pos;
-        continue;
-      }
-      if (is_ident_char(c)) {
-        std::string id;
-        std::size_t sl = line;
-        while (pos < text.size() && is_ident_char(text[pos]))
-          id += text[pos++];
-        toks.push_back({TokType::Ident, std::move(id), sl});
-        continue;
-      }
-      // unknown char: skip
-      ++pos;
-    }
-    toks.push_back({TokType::End, "", line});
-  }
-};
-
 // ---- 解析器 ----
 class Parser {
 public:
-  explicit Parser(std::string_view text) {
-    Lexer lex{.text = text};
-    lex.run();
-    toks_ = std::move(lex.toks);
-  }
+  explicit Parser(std::string_view text) : toks_(vmake_shared::lex(text)) {}
 
   std::optional<Manifest> run() {
     if (!parse_document())
@@ -265,17 +91,24 @@ private:
     bool seen_tests = false;
   };
 
-  std::vector<Token> toks_;
-  std::size_t pos_ = 0;
-  std::vector<Pending> pending_;
-  std::vector<Target> targets_;
-  ParseError error_;
+  // 共享词法产出 0 起始行号；Parser 内统一 +1 到 1 起始（与历史报错行号一致）
+  std::size_t cur_line_1() const { return static_cast<std::size_t>(cur().line) + 1; }
 
-  const Token& cur() const { return toks_[pos_ < toks_.size() ? pos_ : toks_.size() - 1]; }
-  bool eof() const { return pos_ >= toks_.size() || cur().type == TokType::End; }
+  const vmake_shared::Token& cur() const {
+    static const vmake_shared::Token k_end = []() {
+      vmake_shared::Token t;
+      t.type = vmake_shared::TokType::End;
+      return t;
+    }();
+    return (pos_ < toks_.size()) ? toks_[pos_] : k_end;
+  }
+  bool eof() const {
+    return pos_ >= toks_.size() || cur().type == vmake_shared::TokType::End ||
+           cur().type == vmake_shared::TokType::Bad;
+  }
 
   void skip_newlines() {
-    while (pos_ < toks_.size() && cur().type == TokType::Newline)
+    while (pos_ < toks_.size() && cur().type == vmake_shared::TokType::Newline)
       ++pos_;
   }
 
@@ -287,34 +120,32 @@ private:
 
   // 解析字符串数组字面量（[...], 支持换行与尾随逗号）；失败时写 error_。
   bool parse_string_array(const char* field, std::vector<std::string>& out) {
-    if (cur().type != TokType::LBracket) {
-      return fail(cur().line, std::string(field) + " 期望字符串数组");
+    if (cur().type != vmake_shared::TokType::LBracket) {
+      return fail(cur_line_1(), std::string(field) + " 期望字符串数组");
     }
     ++pos_;
     while (true) {
       // 跳过括号内的换行与空白
-      while (cur().type == TokType::Newline)
-        ++pos_;
-      if (cur().type == TokType::RBracket)
+      skip_newlines();
+      if (cur().type == vmake_shared::TokType::RBracket)
         break;
       if (eof())
-        return fail(cur().line, std::string(field) + " 数组未闭合");
-      if (cur().type != TokType::Str)
-        return fail(cur().line, "数组元素必须是字符串");
-      out.push_back(cur().text);
+        return fail(cur_line_1(), std::string(field) + " 数组未闭合");
+      if (cur().type != vmake_shared::TokType::Str)
+        return fail(cur_line_1(), "数组元素必须是字符串");
+      out.push_back(cur().value);
       ++pos_;
-      while (cur().type == TokType::Newline)
-        ++pos_;
-      if (cur().type == TokType::Comma) {
+      skip_newlines();
+      if (cur().type == vmake_shared::TokType::Comma) {
         ++pos_;
         continue;
       }
-      if (cur().type == TokType::RBracket)
+      if (cur().type == vmake_shared::TokType::RBracket)
         break;
-      return fail(cur().line, "数组元素之间缺少 ','");
+      return fail(cur_line_1(), "数组元素之间缺少 ','");
     }
-    if (cur().type != TokType::RBracket)
-      return fail(cur().line, std::string(field) + " 数组未闭合");
+    if (cur().type != vmake_shared::TokType::RBracket)
+      return fail(cur_line_1(), std::string(field) + " 数组未闭合");
     ++pos_;
     return true;
   }
@@ -331,58 +162,57 @@ private:
   }
 
   bool parse_statement() {
-    if (cur().type != TokType::Ident) {
-      return fail(cur().line, "期望目标声明 exe(...) / dylib(...) / staticlib(...)");
+    if (cur().type != vmake_shared::TokType::Ident) {
+      return fail(cur_line_1(), "期望目标声明 exe(...) / dylib(...) / staticlib(...)");
     }
     std::string kindname = cur().text;
     if (kindname != "exe" && kindname != "dylib" && kindname != "staticlib") {
-      return fail(cur().line, "未知目标类型 '" + kindname + "'（支持 exe / dylib / staticlib）");
+      return fail(cur_line_1(), "未知目标类型 '" + kindname + "'（支持 exe / dylib / staticlib）");
     }
-    std::size_t line = cur().line;
+    std::size_t line = cur_line_1();
     ++pos_;
-    if (cur().type != TokType::LParen) {
+    if (cur().type != vmake_shared::TokType::LParen) {
       return fail(line, "目标声明需要 '('");
     }
     ++pos_;
+
     Pending p;
     p.kind = (kindname == "exe") ? TargetKind::Exe : (kindname == "dylib") ? TargetKind::Dylib : TargetKind::StaticLib;
     p.line = line;
 
     // name: positional string or name=...
-    if (cur().type == TokType::Str) {
-      p.name = cur().text;
+    if (cur().type == vmake_shared::TokType::Str) {
+      p.name = cur().value;
       p.seen_name = true;
       ++pos_;
-      if (cur().type == TokType::Comma)
+      if (cur().type == vmake_shared::TokType::Comma)
         ++pos_;
     }
-    while (cur().type == TokType::Newline)
-      ++pos_;
+    skip_newlines();
 
     // keyword args
-    while (cur().type != TokType::RParen && !eof()) {
-      while (cur().type == TokType::Newline)
-        ++pos_;
-      if (cur().type == TokType::RParen)
+    while (cur().type != vmake_shared::TokType::RParen && !eof()) {
+      skip_newlines();
+      if (cur().type == vmake_shared::TokType::RParen)
         break;
-      if (cur().type != TokType::Ident) {
-        return fail(cur().line, "期望字段名 (name/sources/output/deps/libs/lib_dirs/"
-                                "ccflags/cxxflags/incs/std/"
-                                "cflags/defines/ldflags/tests)");
+      if (cur().type != vmake_shared::TokType::Ident) {
+        return fail(cur_line_1(), "期望字段名 (name/sources/output/deps/libs/lib_dirs/"
+                                  "ccflags/cxxflags/incs/std/"
+                                  "cflags/defines/ldflags/tests)");
       }
       std::string key = cur().text;
-      std::size_t kline = cur().line;
+      std::size_t kline = cur_line_1();
       ++pos_;
-      if (cur().type != TokType::Equals) {
+      if (cur().type != vmake_shared::TokType::Equals) {
         return fail(kline, "字段 '" + key + "' 后缺少 '='");
       }
       ++pos_;
       if (key == "name") {
         if (p.seen_name)
           return fail(kline, "字段 name 重复");
-        if (cur().type != TokType::Str)
-          return fail(cur().line, "name 期望字符串");
-        p.name = cur().text;
+        if (cur().type != vmake_shared::TokType::Str)
+          return fail(cur_line_1(), "name 期望字符串");
+        p.name = cur().value;
         p.seen_name = true;
         ++pos_;
       } else if (key == "sources") {
@@ -396,9 +226,9 @@ private:
       } else if (key == "output") {
         if (p.seen_output)
           return fail(kline, "字段 output 重复");
-        if (cur().type != TokType::Str)
-          return fail(cur().line, "output 期望字符串");
-        p.output = cur().text;
+        if (cur().type != vmake_shared::TokType::Str)
+          return fail(cur_line_1(), "output 期望字符串");
+        p.output = cur().value;
         p.seen_output = true;
         ++pos_;
       } else if (key == "deps") {
@@ -452,9 +282,9 @@ private:
       } else if (key == "std") {
         if (p.seen_std)
           return fail(kline, "字段 std 重复");
-        if (cur().type != TokType::Str)
-          return fail(cur().line, "std 期望字符串");
-        p.std_ = cur().text;
+        if (cur().type != vmake_shared::TokType::Str)
+          return fail(cur_line_1(), "std 期望字符串");
+        p.std_ = cur().value;
         p.seen_std = true;
         ++pos_;
       } else if (key == "cflags") {
@@ -495,14 +325,13 @@ private:
                                " lib_dirs / ccflags / cxxflags / incs / std /"
                                " cflags / defines / ldflags / tests）");
       }
-      if (cur().type == TokType::Comma)
+      if (cur().type == vmake_shared::TokType::Comma)
         ++pos_;
-      while (cur().type == TokType::Newline)
-        ++pos_;
+      skip_newlines();
     }
 
-    if (cur().type != TokType::RParen) {
-      return fail(cur().line, "目标声明缺少 ')'");
+    if (cur().type != vmake_shared::TokType::RParen) {
+      return fail(cur_line_1(), "目标声明缺少 ')'");
     }
     ++pos_;
 
@@ -515,7 +344,7 @@ private:
       return fail(1, "未声明任何目标（使用 exe(...) / dylib(...) / staticlib(...)）");
     }
     std::map<std::string, std::size_t> names;
-    for (const Pending& p : pending_) {
+    for (const auto& p : pending_) {
       if (!p.name)
         return fail(p.line, "目标缺少 name 字段");
       if (!valid_target_name(*p.name))
@@ -677,6 +506,12 @@ private:
     }
     return nullptr;
   }
+
+  std::vector<vmake_shared::Token> toks_;
+  std::size_t pos_ = 0;
+  std::vector<Pending> pending_;
+  std::vector<Target> targets_;
+  ParseError error_;
 };
 
 } // namespace

@@ -6,6 +6,7 @@
 #include "vx/compiler/importer.hpp"
 #include "vx/compiler/lexer.hpp"
 #include "vx/compiler/parser.hpp"
+#include "vx/compiler/semantics.hpp"
 #include "vx/compiler/vxobj.hpp"
 #include "vx/util/fs.hpp"
 #include "vx/util/platform.hpp"
@@ -54,7 +55,7 @@ static void print_help() {
   std::fprintf(stdout,
                "VX Compiler v%s\n"
                "Usage: vxc [options] <source.vx>\n"
-               "Stages: read → lex → parse → codegen → vxobj\n"
+               "Stages: read → lex → parse → imports → semantics → codegen → vxobj\n"
                "Options:\n"
                "  -o <file>       Output VXOBJ file (default: <source>.vxobj)\n"
                "  -I <dir>        Add header search directory for @imp/@cppimp\n"
@@ -262,7 +263,17 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, ")\n");
   }
 
-  // --- 阶段 4: TypeIR 代码生成 ---
+  // --- 阶段 4: 语义分析（符号表 + 类型环境检查）---
+  // codegen 的前置门禁：语义错误时不再进入代码生成（codegen 只消费已验证的 AST）
+  if (!check_module(*prog, opts.source, bag, &*imports)) {
+    std::fputs(render_all(bag, *src_res, color).c_str(), stderr);
+    return 1;
+  }
+  if (opts.verbose) {
+    std::fprintf(stderr, "  semantics: ok\n");
+  }
+
+  // --- 阶段 5: TypeIR 代码生成 ---
   auto ir_res = generate_module(*prog, opts.source, bag, &*imports);
   if (!ir_res) {
     std::fputs(render_all(bag, *src_res, color).c_str(), stderr);
@@ -280,7 +291,7 @@ int main(int argc, char** argv) {
                  ir_res->funcs.size(), total_insts, ir_res->linkage.size(), ir_res->global_vars.size());
   }
 
-  // --- 阶段 5: VXOBJ writer（vxc003 实现）---
+  // --- 阶段 6: VXOBJ writer（vxc003 实现）---
   std::string out_path = opts.output;
   if (out_path.empty()) {
     std::string base = opts.source;

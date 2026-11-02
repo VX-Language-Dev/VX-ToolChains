@@ -1,12 +1,13 @@
-// transport.cpp — LSP 传输层实现：Content-Length 帧的读写。
-#include "transport.hpp"
+// lsp.cpp — LSP 传输层实现：Content-Length 帧的读写。
+#include "lsp.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-#include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
-namespace vxls {
+namespace vx::lsp {
 
 namespace {
 
@@ -23,10 +24,22 @@ bool read_line(std::string& line) {
 }
 
 void write_frame(const std::string& body) {
-  std::string head = "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n";
+  const std::string head = "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n";
   std::fwrite(head.data(), 1, head.size(), stdout);
   std::fwrite(body.data(), 1, body.size(), stdout);
   std::fflush(stdout);
+}
+
+// 构造响应骨架：回显 id + jsonrpc 版本
+std::vector<std::pair<std::string, json::Value>> response_members(const LspMessage& req) {
+  std::vector<std::pair<std::string, json::Value>> members;
+  if (!req.id_text.empty()) {
+    members.emplace_back("id", json::Value::string(req.id_text));
+  } else {
+    members.emplace_back("id", json::Value::number(req.id));
+  }
+  members.emplace_back("jsonrpc", json::Value::string("2.0"));
+  return members;
 }
 
 } // namespace
@@ -115,13 +128,7 @@ void send_message(const LspMessage& msg) {
 }
 
 void send_response(const LspMessage& req, json::Value result) {
-  std::vector<std::pair<std::string, json::Value>> members;
-  if (!req.id_text.empty()) {
-    members.emplace_back("id", json::Value::string(req.id_text));
-  } else {
-    members.emplace_back("id", json::Value::number(req.id));
-  }
-  members.emplace_back("jsonrpc", json::Value::string("2.0"));
+  auto members = response_members(req);
   members.emplace_back("result", std::move(result));
   write_frame(json::Value::object(std::move(members)).dump());
 }
@@ -130,15 +137,9 @@ void send_error(const LspMessage& req, int code, const std::string& message) {
   std::vector<std::pair<std::string, json::Value>> err;
   err.emplace_back("code", json::Value::number(code));
   err.emplace_back("message", json::Value::string(message));
-  std::vector<std::pair<std::string, json::Value>> members;
-  if (!req.id_text.empty()) {
-    members.emplace_back("id", json::Value::string(req.id_text));
-  } else {
-    members.emplace_back("id", json::Value::number(req.id));
-  }
-  members.emplace_back("jsonrpc", json::Value::string("2.0"));
+  auto members = response_members(req);
   members.emplace_back("error", json::Value::object(std::move(err)));
   write_frame(json::Value::object(std::move(members)).dump());
 }
 
-} // namespace vxls
+} // namespace vx::lsp

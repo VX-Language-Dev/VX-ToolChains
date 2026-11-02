@@ -26,6 +26,12 @@ std::uint8_t severity_rank(Severity s);
 namespace diag_code {
 inline constexpr std::string_view sem_codegen = "E0001";                // 代码生成期语义错误
 inline constexpr std::string_view sem_import = "E0002";                 // 库导入解析错误（@imp/@cppimp）
+inline constexpr std::string_view sem_unknown_type = "E0003";           // 未知类型标注
+inline constexpr std::string_view sem_immutable = "E0004";              // 对不可变变量赋值
+inline constexpr std::string_view sem_flow = "E0005";                   // break/continue/return 位置不合法
+inline constexpr std::string_view sem_arity = "E0006";                  // 调用参数个数不匹配
+inline constexpr std::string_view sem_undefined = "E0010";              // 未定义变量/函数/类型/字段
+inline constexpr std::string_view sem_redefined = "E0011";              // 重复定义
 inline constexpr std::string_view lex_unknown_char = "E2001";           // 无法识别的字符
 inline constexpr std::string_view lex_unterminated_string = "E2002";    // 字符串未闭合
 inline constexpr std::string_view lex_incomplete_escape = "E2003";      // 转义序列不完整

@@ -12,7 +12,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vx-toolkit"
-version = "1.16.0"
+version = "1.16.2"
 description = "VX language toolchain (vxc, vlnk, vmake, vxls) installed through uv"
 requires-python = ">=3.9"
 license = "AGPL-3.0-only"

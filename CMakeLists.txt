@@ -43,6 +43,7 @@ add_library(vx_compiler
     src/compiler/lexer.cpp
     src/compiler/parser.cpp
     src/compiler/importer.cpp
+    src/compiler/semantics.cpp
     src/compiler/codegen.cpp
     src/compiler/vxobj.cpp
 )
@@ -217,6 +218,12 @@ add_executable(vx_codegen_tests tests/codegen_test.cpp)
 target_link_libraries(vx_codegen_tests PRIVATE vx_compiler)
 target_compile_options(vx_codegen_tests PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME codegen_tests COMMAND vx_codegen_tests)
+
+# 语义分析：符号表 / 类型环境 / 未定义与重复定义 / 调用与字段检查
+add_executable(vx_semantics_tests tests/semantics_test.cpp)
+target_link_libraries(vx_semantics_tests PRIVATE vx_compiler)
+target_compile_options(vx_semantics_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME semantics_tests COMMAND vx_semantics_tests)
 
 add_executable(vx_vxobj_tests tests/vxobj_test.cpp)
 target_link_libraries(vx_vxobj_tests PRIVATE vx_compiler vx_util)

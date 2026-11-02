@@ -91,7 +91,7 @@ void handle_pull_diagnostics(const LspMessage& req) {
 void handle_initialize(const LspMessage& req) {
   Value caps =
       Value::object({{"textDocumentSync", Value::object({{"openClose", Value::boolean(true)},
-                                                         {"change", Value::number(1)}, // Full：didChange 全量替换
+                                                         {"change", Value::number(2)}, // Incremental：didChange 增量编辑
                                                          {"save", Value::object({})}})},
                      // 拉取式诊断（textDocument/diagnostic），同时保留推送式 publishDiagnostics
                      {"diagnosticProvider", Value::object({{"identifier", Value::string("vmake")},
@@ -123,15 +123,86 @@ void handle_did_open(const Value& params) {
   publish_diagnostics(uri);
 }
 
+// LSP 位置（0 起始，字节偏移）→ 全文偏移
+static std::size_t vmake_pos_to_offset(const std::string& text, int line, int character) {
+  std::size_t off = 0;
+  int cur = 0;
+  std::size_t start = 0;
+  // find start of target line
+  std::size_t i = 0;
+  int ln = 0;
+  // iterate lines
+  std::size_t pos = 0;
+  // compute offset of line start
+  std::size_t line_start = 0;
+  int l = 0;
+  while (l < line && line_start < text.size()) {
+    std::size_t nl = text.find('\n', line_start);
+    if (nl == std::string::npos) {
+      line_start = text.size();
+      break;
+    }
+    line_start = nl + 1;
+    ++l;
+  }
+  off = line_start;
+  // find line end
+  std::size_t line_end = text.find('\n', line_start);
+  if (line_end == std::string::npos)
+    line_end = text.size();
+  std::size_t len = line_end - line_start;
+  int c = character;
+  if (c < 0)
+    c = 0;
+  if ((std::size_t)c > len)
+    c = (int)len;
+  off += (std::size_t)c;
+  if (off > text.size())
+    off = text.size();
+  (void)start;
+  (void)pos;
+  (void)i;
+  (void)ln;
+  (void)cur;
+  return off;
+}
+
 void handle_did_change(const Value& params) {
   const Value* td = params.find("textDocument");
   const Value* changes = params.find("contentChanges");
   if (td == nullptr || changes == nullptr)
     return;
   const std::string uri(td->str_or("uri"));
-  const auto& arr = changes->as_array();
-  if (!arr.empty()) {
-    g_docs[uri] = std::string(arr.back().str_or("text"));
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    const auto& arr = changes->as_array();
+    if (!arr.empty())
+      g_docs[uri] = std::string(arr.back().str_or("text"));
+    publish_diagnostics(uri);
+    return;
+  }
+  std::string& doc = it->second;
+  for (const Value& ch : changes->as_array()) {
+    if (const Value* r = ch.find("range")) {
+      int sl = 0, sc = 0, el = 0, ec = 0;
+      if (const Value* st = r->find("start")) {
+        sl = st->int_or("line", 0);
+        sc = st->int_or("character", 0);
+      }
+      if (const Value* en = r->find("end")) {
+        el = en->int_or("line", 0);
+        ec = en->int_or("character", 0);
+      }
+      std::size_t so = vmake_pos_to_offset(doc, sl, sc);
+      std::size_t eo = vmake_pos_to_offset(doc, el, ec);
+      std::string text(ch.str_or("text"));
+      if (eo >= so && eo <= doc.size())
+        doc.replace(so, eo - so, text);
+      else
+        doc = text;
+    } else {
+      doc = std::string(ch.str_or("text"));
+    }
   }
   publish_diagnostics(uri);
 }

@@ -13,6 +13,8 @@
 //   tests                                  （测试源文件，仅 .vx）
 #pragma once
 
+#include "vmake_shared.hpp"
+
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -28,20 +30,10 @@ const char* kind_name(TargetKind kind);
 
 // ---- 源文件分类（config 解析与 build 分流共用）----
 // .vx → vxc；.c → clang -c（C）；.cpp/.cc/.cxx → clang -c（C++）
-inline bool is_vx_source(std::string_view s) {
-  return s.size() >= 3 && s.compare(s.size() - 3, 3, ".vx") == 0;
-}
-inline bool is_c_source(std::string_view s) {
-  return s.size() >= 2 && s.back() == 'c' && s[s.size() - 2] == '.';
-}
-inline bool is_cxx_source(std::string_view s) {
-  constexpr std::string_view exts[] = {".cpp", ".cc", ".cxx"};
-  for (std::string_view e : exts) {
-    if (s.size() >= e.size() && s.compare(s.size() - e.size(), e.size(), e) == 0)
-      return true;
-  }
-  return false;
-}
+// 底层实现来自共享库 tools/vmake-shared（与 vmake-lsp 共用）。
+using vmake_shared::is_c_source;
+using vmake_shared::is_cxx_source;
+using vmake_shared::is_vx_source;
 
 struct Target {
   std::string name;

@@ -69,6 +69,9 @@ Analysis analyze(std::string_view text);
 // 位置换算：诊断行列（1 起始，Unicode 码点）→ LSP 位置（0 起始，UTF-16）
 LspPosition diag_pos_to_lsp(std::string_view text, int line, int col);
 
+// LSP 位置（0 起始，UTF-16）→ 字节偏移（用于增量编辑应用）
+std::size_t lsp_pos_to_offset(std::string_view text, LspPosition pos);
+
 // 诊断 → LSP 诊断
 LspDiagnostic to_lsp_diagnostic(const vx::compiler::Diagnostic& d, std::string_view text);
 
@@ -87,6 +90,28 @@ std::string hover_at(std::string_view text, int line, int character, const std::
 // 跳转定义：给定位置，返回目标声明的范围（找不到返回空范围 start.line<0）
 LspRange definition_at(std::string_view text, int line, int character);
 
+// 光标处标识符的范围（用于 prepareRename）；未命中返回 start.line<0
+LspRange ident_range_at(std::string_view text, int line, int character);
+
+// 光标处标识符名称（用于 prepareRename placeholder）；未命中返回空
+std::string ident_name_at(std::string_view text, int line, int character);
+
+// 文档内所有同名标识符位置（用于 documentHighlight）
+std::vector<LspRange> document_highlights(std::string_view text, int line, int character);
+
+// 签名帮助
+struct LspParameterInformation { std::string label; };
+struct LspSignatureInformation {
+  std::string label;
+  std::vector<LspParameterInformation> parameters;
+  std::string documentation;
+};
+struct LspSignatureHelp {
+  std::vector<LspSignatureInformation> signatures;
+  int active_signature = 0;
+  int active_parameter = 0;
+};
+
 // 位置补全：按光标上下文给出候选（0 起始位置）。
 // 上下文判定（基于光标前行文本，parse 失败时自动修补/降级）：
 //   - `库前缀.` 或 `变量.` → 成员补全（导入库符号 / 类字段与方法）；
@@ -101,6 +126,11 @@ std::vector<LspCompletion> completion_at(std::string_view text, int line, int ch
                                          const std::filesystem::path& headers_root = {},
                                          const std::vector<std::filesystem::path>& include_dirs = {},
                                          bool snippet_support = false);
+
+// 签名帮助：光标在调用内时返回函数签名与活动参数
+LspSignatureHelp signature_help_at(std::string_view text, int line, int character,
+                                  const std::filesystem::path& headers_root = {},
+                                  const std::vector<std::filesystem::path>& include_dirs = {});
 
 // vx-tidy 静态检查结果 → LSP 诊断（经 vxtidy 动态库）。
 // VXTIDY900（语法错误透传）会被跳过：该类问题由前端诊断负责，避免重复。

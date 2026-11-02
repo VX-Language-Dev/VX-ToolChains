@@ -197,6 +197,52 @@ LspPosition diag_pos_to_lsp(std::string_view text, int line, int col) {
   return {line - 1, static_cast<int>(utf16_len(l.substr(0, i)))};
 }
 
+std::size_t lsp_pos_to_offset(std::string_view text, LspPosition pos) {
+  // 定位到 pos.line 行首
+  std::size_t start = 0;
+  int cur = 0;
+  while (cur < pos.line) {
+    const std::size_t nl = text.find('\n', start);
+    if (nl == std::string_view::npos) {
+      start = text.size();
+      break;
+    }
+    start = nl + 1;
+    ++cur;
+  }
+  if (start > text.size())
+    start = text.size();
+  // 行尾
+  std::size_t line_end = text.find('\n', start);
+  if (line_end == std::string_view::npos)
+    line_end = text.size();
+  // 在行内推进 pos.character 个 UTF-16 码元
+  std::size_t i = start;
+  int utf16 = 0;
+  while (i < line_end && utf16 < pos.character) {
+    const unsigned char c = static_cast<unsigned char>(text[i]);
+    std::size_t cp_len = 1;
+    if ((c & 0x80) == 0)
+      cp_len = 1;
+    else if ((c & 0xE0) == 0xC0)
+      cp_len = 2;
+    else if ((c & 0xF0) == 0xE0)
+      cp_len = 3;
+    else if ((c & 0xF8) == 0xF0)
+      cp_len = 4;
+    int add = (cp_len == 4) ? 2 : 1;
+    if (utf16 + add > pos.character)
+      break;
+    if (i + cp_len > line_end)
+      break;
+    i += cp_len;
+    utf16 += add;
+  }
+  if (i > line_end)
+    i = line_end;
+  return i;
+}
+
 LspDiagnostic to_lsp_diagnostic(const Diagnostic& d, std::string_view text) {
   LspDiagnostic out;
   out.severity = d.severity == Severity::Error ? 1 : d.severity == Severity::Warning ? 2 : 3;
@@ -1942,6 +1988,220 @@ std::map<std::string, std::vector<LspTextEdit>> rename_at(const std::string& uri
     }
   }
   return edits;
+}
+
+// ==== P1 新增公共辅助 ====
+
+LspRange ident_range_at(std::string_view text, int line, int character) {
+  LspRange bad{{-1, 0}, {-1, 0}};
+  vx::util::Arena arena;
+  vx::compiler::DiagBag bag;
+  auto toks = vx::compiler::tokenize(text, "<document>", arena, bag);
+  for (const auto& t : toks) {
+    if (t.kind != Tok::Ident && t.kind != Tok::Kw)
+      continue;
+    const LspPosition start = diag_pos_to_lsp(text, t.line, t.col);
+    const LspPosition end = diag_pos_to_lsp(text, t.line, t.col + static_cast<int>(utf8_len(t.text)));
+    if (line != start.line && line != end.line)
+      continue;
+    const int from = line == start.line ? start.character : 0;
+    const int to = line == end.line ? end.character : 1 << 20;
+    if (character >= from && character <= to) {
+      LspRange r;
+      r.start = start;
+      r.end = end;
+      return r;
+    }
+  }
+  return bad;
+}
+
+std::string ident_name_at(std::string_view text, int line, int character) {
+  vx::util::Arena arena;
+  vx::compiler::DiagBag bag;
+  auto toks = vx::compiler::tokenize(text, "<document>", arena, bag);
+  for (const auto& t : toks) {
+    if (t.kind != Tok::Ident && t.kind != Tok::Kw)
+      continue;
+    const LspPosition start = diag_pos_to_lsp(text, t.line, t.col);
+    const LspPosition end = diag_pos_to_lsp(text, t.line, t.col + static_cast<int>(utf8_len(t.text)));
+    if (line != start.line && line != end.line)
+      continue;
+    const int from = line == start.line ? start.character : 0;
+    const int to = line == end.line ? end.character : 1 << 20;
+    if (character >= from && character <= to) {
+      return std::string(t.text);
+    }
+  }
+  return {};
+}
+
+std::vector<LspRange> document_highlights(std::string_view text, int line, int character) {
+  std::vector<LspRange> out;
+  std::string name = ident_name_at(text, line, character);
+  if (name.empty())
+    return out;
+  vx::util::Arena arena;
+  vx::compiler::DiagBag bag;
+  auto toks = vx::compiler::tokenize(text, "<document>", arena, bag);
+  for (const auto& t : toks) {
+    if ((t.kind != Tok::Ident && t.kind != Tok::Kw) || t.text != name)
+      continue;
+    LspRange r;
+    r.start = diag_pos_to_lsp(text, t.line, t.col);
+    r.end = diag_pos_to_lsp(text, t.line, t.col + static_cast<int>(utf8_len(t.text)));
+    out.push_back(r);
+  }
+  return out;
+}
+
+LspSignatureHelp signature_help_at(std::string_view text, int line, int character,
+                                  const std::filesystem::path& /*headers_root*/,
+                                  const std::vector<std::filesystem::path>& /*include_dirs*/) {
+  LspSignatureHelp help;
+  LspPosition pos{line, character};
+  std::size_t off = lsp_pos_to_offset(text, pos);
+  std::size_t open_pos = std::string_view::npos;
+  int depth = 0;
+  bool in_str = false;
+  for (std::size_t k = off; k-- > 0;) {
+    char c = text[k];
+    if (in_str) {
+      if (c == '"' || c == '\'')
+        in_str = false;
+      continue;
+    }
+    if (c == '"' || c == '\'') {
+      in_str = true;
+      continue;
+    }
+    if (c == ')')
+      ++depth;
+    else if (c == '(') {
+      if (depth == 0) {
+        open_pos = k;
+        break;
+      }
+      --depth;
+    }
+  }
+  if (open_pos == std::string_view::npos)
+    return help;
+  std::size_t p = open_pos;
+  while (p > 0 && (text[p - 1] == ' ' || text[p - 1] == '\t'))
+    --p;
+  std::size_t end = p;
+  while (p > 0 && (std::isalnum(static_cast<unsigned char>(text[p - 1])) || text[p - 1] == '_'))
+    --p;
+  std::string fname(text.substr(p, end - p));
+  if (fname.empty())
+    return help;
+  int active = 0;
+  int d2 = 0;
+  for (std::size_t k = open_pos + 1; k < off && k < text.size(); ++k) {
+    char c = text[k];
+    if (c == '(')
+      ++d2;
+    else if (c == ')') {
+      if (d2 > 0)
+        --d2;
+    } else if (c == ',' && d2 == 0) {
+      ++active;
+    }
+  }
+  vx::util::Arena arena;
+  vx::compiler::DiagBag bag;
+  auto toks = vx::compiler::tokenize(text, "<document>", arena, bag);
+  auto prog = vx::compiler::parse(toks, "<document>", arena, bag);
+  if (prog) {
+    std::function<void(const vx::compiler::Stmt*)> walk = nullptr;
+    walk = [&](const vx::compiler::Stmt* s) {
+      if (s == nullptr)
+        return;
+      using namespace vx::compiler;
+      if (s->kind == NodeKind::FuncDecl) {
+        const auto* f = static_cast<const FuncDecl*>(s);
+        if (f->name == fname) {
+          std::string label = std::string(fname) + "(";
+          for (std::size_t i = 0; i < f->params.size(); ++i) {
+            if (i)
+              label += ", ";
+            label += std::string(f->params[i].name);
+            if (!f->params[i].type.empty())
+              label += ": " + std::string(f->params[i].type);
+          }
+          label += ")";
+          if (!f->ret_type.empty() && f->ret_type != "void")
+            label += " -> " + std::string(f->ret_type);
+          LspSignatureInformation sig;
+          sig.label = label;
+          for (const auto& pm : f->params) {
+            LspParameterInformation pi;
+            pi.label = std::string(pm.name);
+            if (!pm.type.empty())
+              pi.label += ": " + std::string(pm.type);
+            sig.parameters.push_back(pi);
+          }
+          help.signatures.push_back(sig);
+        }
+      } else if (s->kind == NodeKind::ExternDecl) {
+        const auto* e = static_cast<const ExternDecl*>(s);
+        if (e->name == fname) {
+          std::string label = std::string(fname) + "(";
+          for (std::size_t i = 0; i < e->params.size(); ++i) {
+            if (i)
+              label += ", ";
+            label += std::string(e->params[i].name);
+            if (!e->params[i].type.empty())
+              label += ": " + std::string(e->params[i].type);
+          }
+          label += ")";
+          if (!e->ret_type.empty() && e->ret_type != "void")
+            label += " -> " + std::string(e->ret_type);
+          LspSignatureInformation sig;
+          sig.label = label;
+          for (const auto& pm : e->params) {
+            LspParameterInformation pi;
+            pi.label = std::string(pm.name);
+            if (!pm.type.empty())
+              pi.label += ": " + std::string(pm.type);
+            sig.parameters.push_back(pi);
+          }
+          help.signatures.push_back(sig);
+        }
+      }
+      if (s->kind == NodeKind::FuncDecl) {
+        const auto* f = static_cast<const FuncDecl*>(s);
+        for (const auto* st : f->body)
+          walk(st);
+      } else if (s->kind == NodeKind::If) {
+        const auto* i_ = static_cast<const vx::compiler::If*>(s);
+        for (const auto* st : i_->then_body)
+          walk(st);
+        for (const auto& arm : i_->elifs)
+          for (const auto* st : arm.body)
+            walk(st);
+        for (const auto* st : i_->else_body)
+          walk(st);
+      } else if (s->kind == NodeKind::While) {
+        const auto* w = static_cast<const vx::compiler::While*>(s);
+        for (const auto* st : w->body)
+          walk(st);
+      } else if (s->kind == NodeKind::For) {
+        const auto* f = static_cast<const vx::compiler::For*>(s);
+        for (const auto* st : f->body)
+          walk(st);
+      }
+    };
+    for (const auto* s : prog->stmts)
+      walk(s);
+  }
+  if (!help.signatures.empty()) {
+    help.active_parameter = active;
+    if (active >= 0 && active < (int)help.signatures[0].parameters.size())
+      help.active_parameter = active;
+  }
+  return help;
 }
 
 } // namespace vxls

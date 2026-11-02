@@ -21,13 +21,24 @@ if(NOT TARGET vxjson)
                      "${CMAKE_CURRENT_BINARY_DIR}/json")
 endif()
 
-# 核心库：传输层 / 解析器（供主程序与单元测试复用）；JSON 来自共享 vxjson
+# 共享 LSP 传输层库（主构建已纳入；独立配置时补引入）
+if(NOT TARGET vxlsp)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../lsp"
+                     "${CMAKE_CURRENT_BINARY_DIR}/lsp")
+endif()
+
+# 共享 vmake 词法 + 校验规则（与 vmake 共用同一套 .vmake 底层）
+if(NOT TARGET vmake_shared)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../vmake-shared"
+                     "${CMAKE_CURRENT_BINARY_DIR}/vmake-shared")
+endif()
+
+# 核心库：解析器（供主程序与单元测试复用）；JSON / 传输层来自共享库
 add_library(vmake_lsp_core STATIC
-    src/transport.cpp
     src/parser.cpp
 )
 target_include_directories(vmake_lsp_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(vmake_lsp_core PUBLIC vxjson)
+target_link_libraries(vmake_lsp_core PUBLIC vxlsp vmake_shared)
 target_compile_options(vmake_lsp_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(vmake-lsp src/main.cpp)

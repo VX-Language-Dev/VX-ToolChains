@@ -15,6 +15,8 @@
 #include "tidy.hpp"
 #include "transport.hpp"
 #include "vx/compiler/importer.hpp"
+#include "vx/compiler/lexer.hpp"
+#include "vx/util/arena.hpp"
 #include "vx/util/fs.hpp"
 
 #include <cstdio>
@@ -30,6 +32,8 @@ namespace {
 
 using vxls::Analysis;
 using vxls::LspMessage;
+using vxls::LspPosition;
+using vxls::LspRange;
 using vxls::json::Value;
 
 constexpr const char* kVersion = "0.4.0";
@@ -103,12 +107,17 @@ void handle_initialize(const LspMessage& req) {
     }
   }
   Value caps =
-      Value::object({{"textDocumentSync", Value::number(1)}, // Full：didChange 全量替换
+      Value::object({{"textDocumentSync", Value::number(2)}, // Incremental：didChange 增量编辑
                      {"hoverProvider", Value::boolean(true)},
                      {"definitionProvider", Value::boolean(true)},
                      {"documentSymbolProvider", Value::boolean(true)},
                      {"referencesProvider", Value::boolean(true)},
                      {"renameProvider", Value::boolean(true)},
+                     {"prepareRenameProvider", Value::boolean(true)},
+                     {"documentHighlightProvider", Value::boolean(true)},
+                     {"signatureHelpProvider", Value::object({{"triggerCharacters", Value::array({Value::string("("), Value::string(",")})}})},
+                     {"semanticTokensProvider", Value::object({{"legend", Value::object({{"tokenTypes", Value::array({Value::string("keyword"), Value::string("function"), Value::string("variable"), Value::string("type"), Value::string("string"), Value::string("number"), Value::string("comment"), Value::string("operator")})}, {"tokenModifiers", Value::array({})}})}, {"range", Value::boolean(false)}, {"full", Value::boolean(true)}})},
+                     {"codeActionProvider", Value::boolean(true)},
                      {"workspaceSymbolProvider", Value::boolean(true)},
                      {"completionProvider", Value::object({{"triggerCharacters", Value::array({Value::string(".")})},
                                                            {"resolveProvider", Value::boolean(false)}})}});
@@ -133,10 +142,39 @@ void handle_did_change(const Value& params) {
   if (td == nullptr || changes == nullptr)
     return;
   const std::string uri(td->str_or("uri"));
-  // Full 同步：取最后一个变更的全文
-  const auto& arr = changes->as_array();
-  if (!arr.empty()) {
-    g_docs[uri] = std::string(arr.back().str_or("text"));
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    // 未 open 过：按全文处理
+    const auto& arr = changes->as_array();
+    if (!arr.empty())
+      g_docs[uri] = std::string(arr.back().str_or("text"));
+    publish_diagnostics(uri);
+    return;
+  }
+  std::string& doc = it->second;
+  for (const Value& ch : changes->as_array()) {
+    if (const Value* r = ch.find("range")) {
+      // 增量编辑
+      LspPosition s, e;
+      if (const Value* st = r->find("start")) {
+        s.line = st->int_or("line", 0);
+        s.character = st->int_or("character", 0);
+      }
+      if (const Value* en = r->find("end")) {
+        e.line = en->int_or("line", 0);
+        e.character = en->int_or("character", 0);
+      }
+      const std::size_t so = vxls::lsp_pos_to_offset(doc, s);
+      const std::size_t eo = vxls::lsp_pos_to_offset(doc, e);
+      const std::string text(ch.str_or("text"));
+      if (eo >= so && eo <= doc.size())
+        doc.replace(so, eo - so, text);
+      else
+        doc = text; // 范围非法 → 回退全文
+    } else {
+      // 全文替换
+      doc = std::string(ch.str_or("text"));
+    }
   }
   publish_diagnostics(uri);
 }
@@ -181,6 +219,36 @@ void handle_document_symbol(const LspMessage& req) {
   vxls::send_response(req, Value::array(syms));
 }
 
+void handle_signature_help(const LspMessage& req) {
+  std::string uri;
+  int line = 0, character = 0;
+  if (!doc_and_pos(req.params, uri, line, character)) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  const auto help = vxls::signature_help_at(it->second, line, character, g_headers_root, g_include_dirs);
+  if (help.signatures.empty()) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  std::vector<Value> sigs;
+  for (const auto& s : help.signatures) {
+    std::vector<Value> params;
+    for (const auto& p : s.parameters)
+      params.push_back(Value::object({{"label", Value::string(p.label)}}));
+    sigs.push_back(Value::object({{"label", Value::string(s.label)},
+                                  {"parameters", Value::array(params)}}));
+  }
+  vxls::send_response(req, Value::object({{"signatures", Value::array(sigs)},
+                                          {"activeSignature", Value::number(help.active_signature)},
+                                          {"activeParameter", Value::number(help.active_parameter)}}));
+}
+
 void handle_hover(const LspMessage& req) {
   std::string uri;
   int line = 0, character = 0;
@@ -201,6 +269,93 @@ void handle_hover(const LspMessage& req) {
   }
   vxls::send_response(req, Value::object({{"contents", Value::object({{"kind", Value::string("markdown")},
                                                                       {"value", Value::string(md)}})}}));
+}
+
+void handle_document_highlight(const LspMessage& req) {
+  std::string uri;
+  int line = 0, character = 0;
+  if (!doc_and_pos(req.params, uri, line, character)) {
+    vxls::send_response(req, Value::array({}));
+    return;
+  }
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    vxls::send_response(req, Value::array({}));
+    return;
+  }
+  auto ranges = vxls::document_highlights(it->second, line, character);
+  std::vector<Value> out;
+  for (const auto& r : ranges) {
+    out.push_back(Value::object({{"range", range_value(r)}, {"kind", Value::number(1)}}));
+  }
+  vxls::send_response(req, Value::array(out));
+}
+
+void handle_semantic_tokens(const LspMessage& req) {
+  std::string uri;
+  const Value* td = req.params.find("textDocument");
+  if (td != nullptr)
+    uri = std::string(td->str_or("uri"));
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    vxls::send_response(req, Value::object({{"data", Value::array({})}}));
+    return;
+  }
+  const std::string& text = it->second;
+  vx::util::Arena arena;
+  vx::compiler::DiagBag bag;
+  auto toks = vx::compiler::tokenize(text, "<document>", arena, bag);
+  auto utf8_len = [](std::string_view s) {
+    std::size_t n = 0;
+    for (char c : s)
+      if ((static_cast<unsigned char>(c) & 0xC0) != 0x80)
+        ++n;
+    return n;
+  };
+  std::vector<int> data;
+  int prev_line = 0, prev_char = 0;
+  for (const auto& t : toks) {
+    using vx::compiler::Tok;
+    if (t.kind == Tok::Eof || t.kind == Tok::Nl || t.kind == Tok::Semi || t.kind == Tok::Indent ||
+        t.kind == Tok::Dedent)
+      continue;
+    int type = -1;
+    if (t.kind == Tok::Kw)
+      type = 0;
+    else if (t.kind == Tok::Ident)
+      type = 2;
+    else if (t.kind == Tok::Int || t.kind == Tok::Float)
+      type = 5;
+    else if (t.kind == Tok::Str)
+      type = 4;
+    else if (t.kind == Tok::Plus || t.kind == Tok::Minus || t.kind == Tok::Star || t.kind == Tok::Slash ||
+             t.kind == Tok::Percent || t.kind == Tok::Power || t.kind == Tok::Eq || t.kind == Tok::Ne ||
+             t.kind == Tok::Lt || t.kind == Tok::Gt || t.kind == Tok::Le || t.kind == Tok::Ge ||
+             t.kind == Tok::Assign || t.kind == Tok::PlusEq || t.kind == Tok::MinusEq || t.kind == Tok::StarEq ||
+             t.kind == Tok::SlashEq || t.kind == Tok::Arrow || t.kind == Tok::And || t.kind == Tok::Or ||
+             t.kind == Tok::Not || t.kind == Tok::Dot || t.kind == Tok::At)
+      type = 7;
+    if (type < 0)
+      continue;
+    LspPosition s = vxls::diag_pos_to_lsp(text, t.line, t.col);
+    LspPosition e = vxls::diag_pos_to_lsp(text, t.line, t.col + static_cast<int>(utf8_len(t.text)));
+    int len = e.character - s.character;
+    if (len <= 0)
+      len = 1;
+    int delta_line = s.line - prev_line;
+    int delta_char = (delta_line == 0) ? (s.character - prev_char) : s.character;
+    data.push_back(delta_line);
+    data.push_back(delta_char);
+    data.push_back(len);
+    data.push_back(type);
+    data.push_back(0);
+    prev_line = s.line;
+    prev_char = s.character;
+  }
+  std::vector<Value> arr;
+  for (int v : data)
+    arr.push_back(Value::number(v));
+  vxls::send_response(req, Value::object({{"data", Value::array(arr)}}));
 }
 
 void handle_definition(const LspMessage& req) {
@@ -322,6 +477,27 @@ void handle_rename(const LspMessage& req) {
   }
   Value changes_obj = Value::object(changes);
   vxls::send_response(req, Value::object({{"changes", changes_obj}}));
+}
+
+void handle_prepare_rename(const LspMessage& req) {
+  std::string uri;
+  int line = 0, character = 0;
+  if (!doc_and_pos(req.params, uri, line, character)) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  LspRange r = vxls::ident_range_at(it->second, line, character);
+  if (r.start.line < 0) {
+    vxls::send_response(req, Value{});
+    return;
+  }
+  const std::string name = vxls::ident_name_at(it->second, line, character);
+  vxls::send_response(req, Value::object({{"range", range_value(r)}, {"placeholder", Value::string(name)}}));
 }
 
 void handle_workspace_symbol(const LspMessage& req) {
@@ -494,14 +670,24 @@ int main(int argc, char** argv) {
       handle_document_symbol(m);
     } else if (m.method == "textDocument/hover") {
       handle_hover(m);
+    } else if (m.method == "textDocument/signatureHelp") {
+      handle_signature_help(m);
     } else if (m.method == "textDocument/definition") {
       handle_definition(m);
+    } else if (m.method == "textDocument/documentHighlight") {
+      handle_document_highlight(m);
+    } else if (m.method == "textDocument/semanticTokens/full") {
+      handle_semantic_tokens(m);
+    } else if (m.method == "textDocument/codeAction") {
+      vxls::send_response(m, Value::array({}));
     } else if (m.method == "textDocument/completion") {
       handle_completion(m);
     } else if (m.method == "textDocument/references") {
       handle_references(m);
     } else if (m.method == "textDocument/rename") {
       handle_rename(m);
+    } else if (m.method == "textDocument/prepareRename") {
+      handle_prepare_rename(m);
     } else if (m.method == "workspace/symbol") {
       handle_workspace_symbol(m);
     } else if (m.method == "$/cancelRequest" || m.method == "$/setTrace") {
