@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased — v1.16.2 (开发中)
+## v1.16.4 (2026-11-03)
 
 ### 格式化工具（`vfmt` 0.1.0，新增）
 
@@ -42,10 +42,16 @@
 - **`VX_HEADERS_DIR` 环境变量**：新增导入库根目录覆盖变量（优先于 `VX_HEADERS`）；`vx` 元命令在分发子进程前会把自身目录下的 `headers/` 通过 `VX_HEADERS_DIR` 传播，便于 `vx compile` 等直接定位库根；`VX_HEADERS` 保留为兼容别名
 - **系统头目录探测不再经 shell**：`importer.cpp` 的 `popen("c++ -E -x c++ -v /dev/null 2>&1")` 改为 `fork` + `execvp` 直接执行编译器驱动（stdout/stderr `dup2` 到管道），消除 PATH/环境变量中 shell 特殊字符的注入面；输出解析逻辑不变
 
-### 后端（`vlnk`）
+### 后端（`vlnk` 0.2.1）
+- **链接链路重构：clang 单驱动 → llc + cc/c++ + lld 分段流水线**
+  - `link_driver.cpp` 拆为两段式执行：优先 llc（`.ll → .o`）+ 系统 cc（`.c → .o`）/c++（`.cpp → .o`）+ lld 链接；llc/cc/linker 任一缺失或链路失败时自动回退 clang 驱动，维持旧行为作为保底
+  - **自动探测工具**：`find_llc` / `find_cc` / `find_cxx` / `find_linker` 从 PATH 定位，支持 `VX_LLC` / `VX_CC` / `VX_CXX` / `VX_LINKER` 环境变量覆盖；macOS 链接器优先级 `ld64.lld → ld`，Linux `ld.lld → ld.gold → ld.bfd → ld`
+  - **跨平台 lld 参数适配**：macOS 自动调 `xcrun --show-sdk-path` 拿 `-syslibroot`，链接 `-lSystem`（系统库合并包）+ 默认 `-rpath @loader_path`（同目录 dylib 可执行）；Linux 显式链 `-lc -lm`
+  - **子进程执行抽象**：`run_subprocess(exe, args, log_path)` 统一 fork + execvp，stdout/stderr `dup2` 到日志文件，失败时自动捕获错误输出
+  - 对外 API 完全不变（`LinkResult` / `link_executable` / `link_module` / `generate_cpp_shim`），`link_result.command` 现在反映多步命令链
 - `llvm_emitter.cpp` 三处 `catch (...)` 精确化为 `catch (const std::invalid_argument&)` / `catch (const std::out_of_range&)`（`OP_NEWZ` / `OP_ARRAY_NEW` / `OP_MAP_NEW` 的数值参数解析），不再吞掉 `bad_alloc` 等意外异常
-- **`--lib <file>` 参数**（可重复）：链接原生库（`.a`/`.dylib`/`.so`，如其他目标构建出的 dylib），原样传给 clang，不参与模块合并
-- **`--cflag <arg>` / `--ldflag <arg>` 参数**（可重复）：额外 clang 参数，`--cflag` 紧随输入文件（作用于 `.ll`/`.c`/`.cpp` 的编译与链接），`--ldflag` 置于命令末尾（链接器参数，如 `-Wl,...`）
+- **`--lib <file>` 参数**（可重复）：链接原生库（`.a`/`.dylib`/`.so`，如其他目标构建出的 dylib），原样传给链接器，不参与模块合并
+- **`--cflag <arg>` / `--ldflag <arg>` 参数**（可重复）：`--cflag` 作用于 `.c/.cpp` 编译期（过滤 `-W/-O/-I/-D/-std` 等有意义参数），`--ldflag` 置于链接器命令末尾
 - `link_module` 新增 `native_libs` / `cflags` / `ldflags` 形参（后两者默认空）
 
 ### VMake（`tools/vmake` 0.4.0）

@@ -17,7 +17,7 @@
 
 namespace ir = vx::compiler::ir;
 
-static constexpr std::string_view VERSION = "vlnk 0.2.0";
+static constexpr std::string_view VERSION = "vlnk 0.2.1";
 
 struct Options {
   std::vector<std::string> inputs;
@@ -40,20 +40,22 @@ static void print_help() {
   std::fprintf(stdout,
                "VX Backend Linker %s\n"
                "Usage: vlnk [options] <input.vxobj>...\n"
-               "Stages: read → merge → llvm_emitter → link (clang)\n"
+               "Stages: read → merge → llvm_emitter → link\n"
+               "Linker auto-selects pipeline (llc + cc/c++ + lld)\n"
+               "or falls back to clang when toolchain is incomplete.\n"
                "Options:\n"
                "  -o <file>         Output file (default: a.out)\n"
-               "  --shared          Emit a shared library (clang -shared -fPIC;\n"
-               "                    no @main entry wrapper)\n"
+               "  --shared          Emit a shared library (llc+cc -fPIC + lld --shared/\n"
+               "                    -dylib; no @main entry wrapper)\n"
                "  --lib <file>      Link a native library (.a/.dylib/.so), e.g. a dylib\n"
                "                    built by another target (repeatable; not merged into\n"
                "                    the module)\n"
-               "  --cflag <arg>     Extra clang argument placed right after the inputs\n"
-               "                    (affects compiling .ll/.c/.cpp; repeatable)\n"
-               "  --ldflag <arg>    Extra clang argument placed at the end of the command\n"
-               "                    (linker flags, e.g. -Wl,-rpath,...; repeatable)\n"
+               "  --cflag <arg>     Extra C compiler argument (-W/-O/-I/-D/-std etc.),\n"
+               "                    placed when compiling .c/.cpp sources; repeatable\n"
+               "  --ldflag <arg>    Extra linker argument placed at the end of the link\n"
+               "                    command (e.g. -rpath,...; repeatable)\n"
                "  --target <triple> Target platform triple (default: auto-detect host;\n"
-               "                    non-host targets are cross-compiled via clang -target)\n"
+               "                    passed to llc as --mtriple for cross-compilation)\n"
                "  --emit-ir         Emit LLVM IR to stdout and stop (no link)\n"
                "  --dump            Print restored ModuleIR summary\n"
                "  -v, --verbose     Verbose output\n"

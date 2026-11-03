@@ -106,8 +106,11 @@ void run_case(const char* src, const std::string& expected, const std::string& t
     std::fprintf(stderr, "link error (%s): %s\n", tag.c_str(), lr.error.c_str());
     return;
   }
-  if (explicit_target)
-    CHECK(lr.command.find("-target " + host) != std::string::npos);
+  if (explicit_target) {
+    const bool has_clang_target = lr.command.find("-target " + host) != std::string::npos;
+    const bool has_llc_triple = lr.command.find("--mtriple=" + host) != std::string::npos;
+    CHECK(has_clang_target || has_llc_triple);
+  }
 
   auto [code, out] = run_capture(exe, extra_args);
   CHECK(code == 0);

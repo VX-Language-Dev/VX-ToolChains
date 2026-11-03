@@ -52,7 +52,7 @@ bash ci/check.sh             # 本地 CI 全套检查
 | ------------- | ---------------------------- |
 | `src/`        | C++ 源码（util / compiler / backend / driver） |
 | `include/`    | 公开头文件                   |
-| `tests/`      | 测试代码（CTest 19 组）      |
+| `tests/`      | 测试代码（CTest 20 组）      |
 | `std/`        | VX 标准库（设计参考/前瞻规范，见 std/README.md） |
 | `compiler/`   | VX 编译器前端源码（.vx 源文件） |
 | `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |

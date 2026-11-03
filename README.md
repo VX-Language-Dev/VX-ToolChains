@@ -1,35 +1,83 @@
 # VX-ToolKit
 
-![Language](https://img.shields.io/badge/language-C++23-blue)
-![Version](https://img.shields.io/badge/version-v1.16.2-blue)
-![Tests](https://img.shields.io/badge/tests-19%20suites%20100%25%20passing-brightgreen)
-![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
-![License](https://img.shields.io/badge/license-AGPL--3.0-green)
-![Platform](<https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey>)
+> **从零自研的编程语言工具链** — C++23 实现，一条纯自研的编译链路把 `.vx` 源码变成原生机器码
+>
+> ![Language](https://img.shields.io/badge/language-C%2B%2B23-blue)
+> ![Version](https://img.shields.io/badge/version-v1.16.4-blue)
+> ![Tests](https://img.shields.io/badge/tests-20%20suites%20100%25%20passing-brightgreen)
+> ![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
+> ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
 
-**VX 编程语言的完整工具链** — 从 `.vx` 源码到原生可执行文件，一条纯自研的编译链路：
+---
+
+### 一秒上手
+
+```vx
+# hello.vx
+func main():
+    out("Hello, VX!")
+```
+
+```bash
+cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
+./build/vxc hello.vx && ./build/vlnk hello.vxobj -o hello && ./hello
+# → Hello, VX!
+```
+
+---
+
+### 为什么选 VX-ToolKit
+
+| 特性 | 说明 |
+|------|------|
+| **原生编译 · 无 VM** | `.vx` → TypeIR → VXOBJ v4 → LLVM IR → clang → Mach-O / ELF 机器码。没有解释层、没有字节码，直接交给宿主编译器生成原生产物 |
+| **零第三方依赖** | 编译器与后端仅依赖 C++23 标准库。链接期才调用宿主 clang（系统工具链，不计入项目依赖） |
+| **编译链路全自研** | 从 Lexer / Parser / Semantics / Codegen / VXOBJ 格式 / LLVM Emitter / Link Driver 到 LSP 服务器与构建系统，7 个子项目全栈自写 |
+| **静态类型 + var 推断** | 显式标注或 `var` 推断；无隐式类型转换；方法支持按参数类型重载解析 |
+| **跨平台中间格式** | VXOBJ v4 不携带平台特征，同一份 `.vxobj` 可在任意 clang 宿主上链接出对应平台的可执行文件 |
+| **混合语言互操作** | `@imp(lib)` 导入 C 库，`@cppimp(header.hpp)` 一行接入 C++ 头文件——链接期自动生成 ABI shim，不需手写桥接代码 |
+| **开发工具全家桶** | `vxc` 编译器 · `vlnk` 链接器 · `vmake` 增量构建（内容哈希签名 + 并行编译）· `vxls` LSP 服务器（跨文件补全/悬停/跳转/重命名）· `vx-tidy` 静态分析引擎 · `vfmt` 格式化工具（保留注释 + AST 结构自检） |
+| **增量构建** | `vmake` 基于内容哈希签名（非 mtime），未变化的目标跳过；修改编译参数仅重链不重编 |
+
+---
+
+### 编译流水线
 
 ```
-.vx → Lexer/Parser → TypeIR（类型化栈机指令）→ VXOBJ v4 → LLVM IR → 宿主 clang → 原生可执行文件
+.vx 源码
+  ↓ Lexer → Token 流
+  ↓ Parser → AST
+  ↓ @imp / @cppimp 导入表（VX ABI 符号 + 链接依赖）
+  ↓ Semantics → 符号表 + 类型检查 + 重载解析（多错误聚合）
+  ↓ Codegen → TypeIR（类型化栈机指令）
+  ↓ VXOBJ v4 跨平台文件
+  ↓ vlnk → LLVM IR → clang 链接
+  ↓ Mach-O / ELF 原生可执行文件
 ```
 
-- **真·原生编译** — 没有 VM、没有字节码解释层，产物直接是 Mach-O / ELF 机器码
-- **零第三方依赖** — 编译器与后端只依赖 C++23 标准库，链接期调用宿主 clang
-- **全家桶开箱即用** — `vxc` 编译器 · `vlnk` 链接器 · `vmake` 增量构建 · `vxls` 语言服务器 · `vx-tidy` 静态分析引擎（动态库）· `vfmt` 源码格式化
-- **混合语言互操作** — `@imp` 导入 C 库，`@cppimp` 一行接入 C++ 头文件（链接期自动生成 ABI shim）
-- **20 组自动化测试全绿** — 单元 + 端到端，`ctest` / `cmake --build build --target test` 一键调度
+> 规划中：所有权 / 借用检查、直接机器码发射、宏系统、enum / 泛型。见 [CHANGELOG](CHANGELOG.md)。
 
-> 语言版本: v1.7.0 · 协议: [AGPL-3.0](LICENSE)
-> 当前实现: **C++ 工具链核心可用**（编译前端 vxc 0.5.0、后端 vlnk、构建编排 vmake、
-> vxls / vx-tidy；所有权检查等特性开发中，见 [CHANGELOG](CHANGELOG.md)）
+---
+
+### 各模块状态
+
+| 模块 | 职责 | 状态 | 版本 |
+|------|------|------|------|
+| `vxc` | 编译器前端：lex → parse → semantics → codegen → .vxobj | ✅ 可用 | 0.5.0 |
+| `vlnk` | 原生链接器：.vxobj → llc 生成 .o → lld 链接（自动探测系统 C/C++ 编译器，无 llc/lld 时回退 clang 驱动） | ✅ 可用 | 0.2.1 |
+| `vmake` | 项目构建编排：VMakeSet.vmake 驱动 vxc/vlnk/ar | ✅ 可用 | 0.4.0 |
+| `vxls` | LSP 语言服务器：补全/悬停/跳转/重命名（集成 vx-tidy） | ✅ 可用 | 0.4.0 |
+| `vmake-lsp` | VMakeSet.vmake 语言服务器 | ✅ 可用 | 0.3.0 |
+| `vfmt` | 源码格式化（保留注释 + AST 结构自检） | ✅ 可用 | 0.1.0 |
+| `vx-tidy` | 静态分析引擎（纯动态库 libvxtidy） | ✅ 可用 | — |
+| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.16.4 |
+| VPM 包管理器 | 多语言包管理 | 🚧 规划 | — |
+| 反编译器 vxde | VXOBJ → VX 源码还原 | 🚧 规划 | — |
 
 ---
 
 ## 目录
 
-- [项目介绍](#项目介绍)
-- [核心特性](#核心特性)
-- [编译流水线](#编译流水线)
 - [快速开始](#快速开始)
 - [使用指南](#使用指南)
 - [语言特性](#语言特性)
@@ -44,69 +92,18 @@
 
 ---
 
-## 项目介绍
+## 路线图（规划中）
 
-VX-ToolKit 是 VX 语言的完整工具链实现，采用 **C++23** 实现（CMake + Ninja 构建），提供编译器、链接器与开发工具：
+以下能力尚未实现，详见 [CHANGELOG](CHANGELOG.md)：
 
-| 模块                  | 实现语言 | 职责                              | 状态      |
-| --------------------- | -------- | --------------------------------- | --------- |
-| 编译器 (vxc)          | C++      | 源码分析、TypeIR 生成、VXOBJ 输出 | ✅ 基础可用 |
-| 原生链接器 (vlnk)     | C++      | LLVM IR 代码生成 + 可执行文件/动态库生成 | ✅ 基础可用 |
-| VPM 包管理器 (vpm)    | C++      | 多语言包管理                      | 🚧 规划中 |
-| 反编译器 (vxde)       | C++      | VXOBJ → VX 源码还原              | 🚧 规划中 |
-| 格式化工具 (vfmt)     | C++      | VX 源码格式化（缩进/空格规范化，保留注释） | ✅ 基础可用 |
-| 项目构建器 (vmake)    | C++      | VMakeSet.vmake 驱动，编排 vxc/vlnk  | ✅ 基础可用 |
-| VMake LSP (vmake-lsp) | C++      | VMakeSet.vmake 诊断、补全、跳转、格式化 | ✅ 基础可用 |
-| LSP 语言服务器 (vxls)  | C++      | 上下文感知代码补全、悬停、跳转定义等        | ✅ 基础可用 |
-| 静态分析引擎 (vx-tidy) | C++      | AST 级规则检查（VXTIDYxxx），纯动态库 libvxtidy，供 vxls / 嵌入方使用 | ✅ 基础可用 |
-| Util 基础库           | C++      | 内存分配器、字符串、文件系统      | ✅ 稳定   |
-
-### 路线图（规划中）
-
-以下能力为规划中，尚未实现（详见 [CHANGELOG](CHANGELOG.md)）：
-
-- **OwnershipChecker**：所有权/借用检查（Rust 风格，`mut`/`&`/`&mut`）
-- **编译时宏系统**：参数化宏，编译期展开
+- **所有权 / 借用检查**：Rust 风格 `mut` / `&` / `&mut`，编译期 aliasing XOR mutation 检测
+- **编译时宏系统**：参数化宏，零运行时开销
 - **enum / union / 泛型**：复合类型扩展
 - **std 标准库接入**：`std::String`、`std::Vec<T>` 等下沉到编译器构建
 - **直接机器码发射**：跳过 clang 的原生代码生成
 - **VPM 包管理器**、**反编译器 vxde**
 
 > Windows 原生（PE/MSVC）输出已移除；Windows 用户请使用 MSYS2 / Git Bash / Cygwin / WSL / WSL2。
-
-### 编译流水线
-```
-.vx 源码
-  ↓ Lexer → Token 流
-  ↓ Parser → AST
-  ↓ @imp / @cppimp 导入表（VX ABI 符号 + 链接依赖）
-  ↓ Semantics → 符号表 + 类型环境检查（未定义/重复定义/类型匹配/重载解析，多错误聚合）
-  ↓ Codegen → TypeIR（栈机指令序列）
-  ↓ serialize → VXOBJ v4 跨平台文件
-  ↓ vlnk 解析 VXOBJ → LLVM IR（.ll 文本）
-  ↓ 宿主 clang 编译链接（--target 传 -target 交叉编译）
-  ↓ 原生可执行文件（macOS Mach-O / Linux ELF）
-```
-
-> 规划中：OwnershipChecker 所有权/借用检查、直接机器码发射。
-
-### 核心特性
-
-**今天就能用：**
-
-- **静态类型 + `var` 推断** — 变量/参数/字段可显式标注，或由初始化表达式推断类型；无隐式类型转换（int↔float、string↔int 等均报错），方法支持按参数类型重载解析
-- **原生编译** — Codegen 产出 TypeIR，后端发射 LLVM IR 交宿主 clang 生成原生机器码，无 VM 解释执行层
-- **跨平台中间格式** — VXOBJ v4 不包含平台特征，一次编译、多平台链接
-- **多架构支持** — 目标由宿主 clang 决定（开发与测试以 x86_64 / aarch64 为主）
-- **混合语言互操作** — `@imp` 导入 C 库、`@cppimp` 导入 C++ 头文件，链接期自动生成 ABI shim
-- **开发体验全家桶** — vxls（补全 / 悬停 / 跳转）+ vx-tidy 规则检查（VXTIDYxxx）+ vfmt 源码格式化 + vmake 内容哈希增量构建
-
-**规划中**（尚未实现，详见[路线图](#路线图规划中)与 [CHANGELOG](CHANGELOG.md)）：
-
-- **内存安全模型** — 编译期所有权 + 借用检查 (aliasing XOR mutation)，类 Rust 语义
-- **编译时宏系统** — 参数化宏，零运行时开销
-- **VPM 包管理器** — 多语言包管理 (Python/TypeScript/Java/Rust/Go/C/C++)
-- **反编译与反链接** — 从 VXOBJ 还原源码、从可执行文件提取中间表示
 
 ---
 
@@ -180,7 +177,7 @@ zsh install.zsh
 
 `install.zsh` 构建工具链后安装到 `~/.local/bin`：`vxc`、`vlnk`、`vxls`、
 `vmake`、`vmake-lsp`、`vfmt`、`vx` 元命令；导入库 `headers/` 与二进制**同目录**（vxc / vxls
-的默认查找根，可用 `-I` 追加搜索目录或 `VX_HEADERS_DIR` / `VX_HEADERS` 覆盖库根）；预编译运行时
+的默认查找根，可用 `-I` 追加搜索目录或 `VX_HEADERS_DIR`（优先）/ `VX_HEADERS` 覆盖库根）；预编译运行时
 `libvxrt.a` 与 vx-tidy 引擎动态库 `libvxtidy` 安装到 `~/.local/lib`（vlnk 优先直接链接
 libvxrt.a；vxls 经安装 RPATH `../lib` 定位 libvxtidy）；shell 补全安装到
 `~/.local/share` / `~/.zsh/completions`。请确保 `~/.local/bin` 在 PATH 中。
@@ -197,20 +194,7 @@ chmod +x install.sh && ./install.sh        # 默认安装到 ~/.local；PREFIX=/
 `install.sh`；`install.sh` 将 `headers/` 装到 `$PREFIX/bin/headers`（与二进制同目录，
 满足默认查找规则），`libvxrt.a` 装到 `$PREFIX/lib`（vlnk 经 `bin/../lib` 自动定位）。
 
-**方式三：uv 安装**（Python 包装，`uv tool install`）
-
-```bash
-python3 python/scripts/stage.py -B build   # 先把 CMake 产物 + headers 装进包内 _bin/
-uv tool install ./python                   # 装齐 vxc / vlnk / vmake / vxls / vfmt / vx / vmake-lsp
-```
-
-`python/` 是只做转发的 uv 包：console script 按命令名分派到包内 `_bin/` 的原生二进制
-（查找顺序 `VX_TOOLKIT_BIN` → 包内 `_bin/` → `PATH`，找不到时打印修复指引）。
-`_bin/headers` 即 vxc / vxls 的默认导入库根；`libvxtidy` 等动态库经
-`DYLD_LIBRARY_PATH` / `LD_LIBRARY_PATH` 补齐，因此脱离构建目录后仍可用。
-卸载：`uv tool uninstall vx-toolkit`。
-
-> 注：以上三种脚本为日常安装的推荐方式；根 `CMakeLists.txt` 亦提供标准
+> 注：以上两种脚本为日常安装的推荐方式；根 `CMakeLists.txt` 亦提供标准
 > `install()` 规则（`cmake --install build --prefix <dir>`，安装 vxc / vlnk、
 > 静态库、`headers/`、`std/` 与补全文件）。
 
@@ -271,6 +255,9 @@ Hello, VX!
 # 指定 @imp/@cppimp 头文件搜索目录（可多次；优先于默认 headers/，亦支持 -I<dir>）
 ./build/vxc hello.vx -I ./mylibs -I /opt/vx/include
 
+# 交叉编译目标三元组（默认自动检测 host triple）
+./build/vxc hello.vx --target aarch64-unknown-linux-gnu
+
 # 打印模块摘要（funcs/insts/externs/globals）
 ./build/vxc hello.vx --dump
 
@@ -308,6 +295,12 @@ Hello, VX!
 
 # 输出动态库（clang -shared -fPIC，不生成 @main 入口包装）
 ./build/vlnk lib.vxobj --shared -o libmylib.dylib
+
+# 链接原生库（.a / .dylib / .so，可多次）
+./build/vlnk hello.vxobj -o hello --lib /opt/lib/libssl.a
+
+# 额外 clang 参数：编译期 --cflag（作用于 .ll/.c/.cpp）、链接期 --ldflag
+./build/vlnk hello.vxobj -o hello --cflag -Wall --ldflag -Wl,-rpath,/opt/lib
 ```
 
 链接器自动完成：
@@ -377,7 +370,7 @@ func main():
 
 **库查找规则**：`-I <dir>` 指定的搜索目录（可多次，按序）优先；随后是库根
 ——默认 vxc 可执行文件同级的 `headers/` 目录及其子目录（可用环境变量
-`VX_HEADERS_DIR` / `VX_HEADERS` 覆盖）。`@cppimp` 的 C/C++ 头文件在未命中上述目录时，会继续
+`VX_HEADERS_DIR`（优先）/ `VX_HEADERS` 覆盖）。`@cppimp` 的 C/C++ 头文件在未命中上述目录时，会继续
 探测系统 C/C++ 编译器（`c++`/`clang++`/`g++` 等）的头文件搜索目录；此时
 VX 签名的 `.vxh` 伴生文件可在 `-I` / 库根中按同主名提供。
 
@@ -458,7 +451,7 @@ cmake -G Ninja -B build -S . && ninja -C build vmake
   修改 `cflags`/`defines`/`ldflags` 或切换 `--release`/`--debug` 只重链不重编。
 - **tools 子命令**：`vx run` / `vx test` 转发到 `vmake run` / `vmake test`。
 - **工具链定位**：`VX_VXC` / `VX_VLNK` / `VX_AR` 可显式指定；否则在 vmake 可执行文件附近与 `PATH` 中查找。
-- **导入库**：未设置 `VX_HEADERS_DIR` / `VX_HEADERS` 时，自动尝试项目 `headers/` 与编译器旁的 `headers/`；
+- **导入库**：未设置 `VX_HEADERS_DIR`（优先）/ `VX_HEADERS` 时，自动尝试项目 `headers/` 与编译器旁的 `headers/`；
   `-I <dir>`（可多次）把头文件搜索目录透传给每个 `vxc` 调用并参与增量签名。
 - 中间产物位于 `<构建目录>/obj/<目标>/`，最终产物默认：exe → `<name>`，
   dylib → `lib<name>.dylib`（macOS）/ `lib<name>.so`（Linux），
@@ -556,7 +549,7 @@ vmake-lsp 位于 `tools/vmake-lsp/`，针对 `VMakeSet.vmake` 的 LSP 服务器�
 | 代码补全   | 语句位（`exe` / `dylib`）、字段名、字段值片段            | ✅   |
 | 格式化     | 目标声明规范化为 `exe("name", sources=[...])` 单行      | ✅   |
 | 大纲 / 折叠 | documentSymbol 大纲、foldingRange 折叠                 | ✅   |
-| 跨文件语义 | 引用查找、重命名、工作区符号                            | ✅   |
+| 跨文件语义 | 引用查找、重命名、工作区符号                            | 🚧 开发中 |
 
 ```bash
 cmake -G Ninja -B build -S . && ninja -C build vmake-lsp

@@ -155,7 +155,7 @@ func main() -> int:
 ```
 
 - 库查找顺序：`-I <dir>` 指定的搜索目录（可多次，按序）→ 库根
-  （`vxc` 同级 `headers/`，`VX_HEADERS_DIR` / `VX_HEADERS` 环境变量可覆盖）；`./` 起始的
+  （`vxc` 同级 `headers/`，`VX_HEADERS_DIR`（优先）/ `VX_HEADERS` 环境变量可覆盖）；`./` 起始的
   自定义库相对引用只查源文件目录。
 - `@cppimp` 的 C/C++ 头文件在上述目录未命中时，继续探测系统
   C/C++ 编译器（`c++`/`clang++`/`g++` 等）的头文件搜索目录。
@@ -249,13 +249,15 @@ vec.push(x)         # 导入库调用 → CALL f;_vx_<lib>_<name>
 ## 7. 编译流水线与产物
 
 ```
-.vx → Lexer → Parser → 导入表(@imp/@cppimp) → Codegen(TypeIR) → VXOBJ v4
+.vx → Lexer → Parser → 导入表(@imp/@cppimp)
+    → Semantics（符号表 + 类型检查 + 重载解析，多错误聚合）
+    → Codegen(TypeIR) → VXOBJ v4
 VXOBJ → vlnk（读回 → LLVM IR → clang 链接）→ 原生可执行文件
 ```
 
 ```bash
-vxc hello.vx                # → hello.vxobj（--check 仅检查，--dump 打印模块摘要）
-vlnk hello.vxobj -o hello   # → 可执行文件
+vxc hello.vx                # → hello.vxobj（--check 仅检查，--dump 打印模块摘要，--target 交叉编译）
+vlnk hello.vxobj -o hello   # → 可执行文件（--lib 链接原生库，--cflag/--ldflag 传递 clang 参数）
 ```
 
 ## 8. 已知限制
