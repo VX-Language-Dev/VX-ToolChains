@@ -17,20 +17,20 @@ bool is_ident_char(char c) {
 
 // 码点 → UTF-8 编码
 void append_utf8(std::string& out, std::uint32_t cp) {
-  if (cp < 0x80) {
+  if (cp < 0x80u) {
     out += static_cast<char>(cp);
-  } else if (cp < 0x800) {
-    out += static_cast<char>(0xC0 | (cp >> 6));
-    out += static_cast<char>(0x80 | (cp & 0x3F));
-  } else if (cp < 0x10000) {
-    out += static_cast<char>(0xE0 | (cp >> 12));
-    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-    out += static_cast<char>(0x80 | (cp & 0x3F));
+  } else if (cp < 0x800u) {
+    out += static_cast<char>(0xC0u | (cp >> 6u));
+    out += static_cast<char>(0x80u | (cp & 0x3Fu));
+  } else if (cp < 0x10000u) {
+    out += static_cast<char>(0xE0u | (cp >> 12u));
+    out += static_cast<char>(0x80u | ((cp >> 6u) & 0x3Fu));
+    out += static_cast<char>(0x80u | (cp & 0x3Fu));
   } else {
-    out += static_cast<char>(0xF0 | (cp >> 18));
-    out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-    out += static_cast<char>(0x80 | (cp & 0x3F));
+    out += static_cast<char>(0xF0u | (cp >> 18u));
+    out += static_cast<char>(0x80u | ((cp >> 12u) & 0x3Fu));
+    out += static_cast<char>(0x80u | ((cp >> 6u) & 0x3Fu));
+    out += static_cast<char>(0x80u | (cp & 0x3Fu));
   }
 }
 
@@ -149,7 +149,7 @@ std::vector<Token> lex(std::string_view text) {
                   digits_ok = false;
                   break;
                 }
-                cp = cp * 16 + static_cast<std::uint32_t>(h);
+                cp = (cp * 16) + static_cast<std::uint32_t>(h);
                 advance(1);
               }
               if (!digits_ok) {
@@ -271,7 +271,7 @@ bool valid_target_name(std::string_view name) {
     return false;
   for (char c : name) {
     const auto u = static_cast<unsigned char>(c);
-    if (!(std::isalnum(u) != 0 || c == '_' || c == '-'))
+    if (std::isalnum(u) == 0 && c != '_' && c != '-')
       return false;
   }
   return true;
@@ -301,7 +301,7 @@ bool has_dotdot_component(std::string_view p) {
 }
 
 bool is_vx_source(std::string_view s) {
-  return s.size() >= 3 && s.compare(s.size() - 3, 3, ".vx") == 0;
+  return s.size() >= 3 && s.ends_with(".vx");
 }
 
 bool is_c_source(std::string_view s) {
@@ -311,7 +311,7 @@ bool is_c_source(std::string_view s) {
 bool is_cxx_source(std::string_view s) {
   constexpr std::string_view exts[] = {".cpp", ".cc", ".cxx"};
   for (std::string_view e : exts) {
-    if (s.size() >= e.size() && s.compare(s.size() - e.size(), e.size(), e) == 0)
+    if (s.size() >= e.size() && s.ends_with(e))
       return true;
   }
   return false;

@@ -19,10 +19,10 @@ void append_u8(std::string& buf, std::uint8_t v) {
 }
 
 void append_u32_be(std::string& buf, std::uint32_t v) {
-  buf.push_back(static_cast<char>((v >> 24) & 0xFF));
-  buf.push_back(static_cast<char>((v >> 16) & 0xFF));
-  buf.push_back(static_cast<char>((v >> 8) & 0xFF));
-  buf.push_back(static_cast<char>(v & 0xFF));
+  buf.push_back(static_cast<char>((v >> 24u) & 0xFFu));
+  buf.push_back(static_cast<char>((v >> 16u) & 0xFFu));
+  buf.push_back(static_cast<char>((v >> 8u) & 0xFFu));
+  buf.push_back(static_cast<char>(v & 0xFFu));
 }
 
 void append_write_string(std::string& buf, std::string_view s) {
@@ -42,6 +42,8 @@ std::uint8_t type_tag_for(std::string_view name) {
     return ir::TYPE_STRING;
   if (name == "void")
     return ir::TYPE_VOID;
+  if (name == "ptr")
+    return ir::TYPE_POINTER;
   if (name == "var")
     return ir::TYPE_UNKNOWN;
   return ir::TYPE_UNKNOWN;
@@ -206,8 +208,10 @@ Header parse_header(std::string_view data) {
     return h;
   std::size_t pos = 5;
   auto read_u32 = [&](std::size_t& p) -> std::uint32_t {
-    std::uint32_t v = (static_cast<unsigned char>(data[p]) << 24) | (static_cast<unsigned char>(data[p + 1]) << 16) |
-                      (static_cast<unsigned char>(data[p + 2]) << 8) | static_cast<unsigned char>(data[p + 3]);
+    std::uint32_t v = (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p])) << 24u) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p + 1])) << 16u) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p + 2])) << 8u) |
+                      static_cast<std::uint32_t>(static_cast<unsigned char>(data[p + 3]));
     p += 4;
     return v;
   };

@@ -13,8 +13,8 @@
 namespace vmake_lsp {
 namespace {
 
-using vmake_shared::TokType;
 using vmake_shared::Token;
+using vmake_shared::TokType;
 
 const char* kind_text(TargetKind kind) {
   switch (kind) {
@@ -33,7 +33,7 @@ Range cur_range_at(const Token& tok) {
 }
 
 // 字符串值的范围（不含引号）：start+1 .. end-1
-static Range value_range(const Token& tok) {
+Range value_range(const Token& tok) {
   if (tok.text.size() >= 2) {
     return {{tok.line, tok.column + 1}, {tok.end_line, tok.end_column - 1}};
   }
@@ -57,18 +57,16 @@ private:
   std::set<std::string> seen_names_; // 已声明的目标名（用于查重）
 
   const Token& cur() const {
-    static const Token k_end = []() {
+    static const Token k_end = [] {
       Token t;
       t.type = TokType::End;
       return t;
     }();
     return (pos_ < toks_.size()) ? toks_[pos_] : k_end;
   }
-  bool eof() const {
-    return pos_ >= toks_.size() || cur().type == TokType::End || cur().type == TokType::Bad;
-  }
+  bool eof() const { return pos_ >= toks_.size() || cur().type == TokType::End || cur().type == TokType::Bad; }
 
-  void add_diag(ParseResult& result, const Range& r, std::string message) {
+  static void add_diag(ParseResult& result, const Range& r, std::string message) {
     result.diagnostics.push_back({r, 1, std::move(message)});
   }
 
@@ -592,8 +590,8 @@ Hit hit_test(const std::vector<VTarget>& targets, int line, int character) {
       hit.part = Hit::Part::Sources;
       return hit;
     }
-    for (std::size_t j = 0; j < t.source_ranges.size(); ++j) {
-      if (in_range(t.source_ranges[j])) {
+    for (auto source_range : t.source_ranges) {
+      if (in_range(source_range)) {
         hit.target_index = i;
         hit.part = Hit::Part::SourceElem;
         return hit;
@@ -619,8 +617,8 @@ Hit hit_test(const std::vector<VTarget>& targets, int line, int character) {
       hit.part = Hit::Part::Deps;
       return hit;
     }
-    for (std::size_t j = 0; j < t.dep_ranges.size(); ++j) {
-      if (in_range(t.dep_ranges[j])) {
+    for (auto dep_range : t.dep_ranges) {
+      if (in_range(dep_range)) {
         hit.target_index = i;
         hit.part = Hit::Part::DepElem;
         return hit;
@@ -637,8 +635,8 @@ Hit hit_test(const std::vector<VTarget>& targets, int line, int character) {
       hit.part = Hit::Part::Libs;
       return hit;
     }
-    for (std::size_t j = 0; j < t.lib_ranges.size(); ++j) {
-      if (in_range(t.lib_ranges[j])) {
+    for (auto lib_range : t.lib_ranges) {
+      if (in_range(lib_range)) {
         hit.target_index = i;
         hit.part = Hit::Part::LibElem;
         return hit;
@@ -654,8 +652,8 @@ Hit hit_test(const std::vector<VTarget>& targets, int line, int character) {
       hit.part = Hit::Part::LibDirs;
       return hit;
     }
-    for (std::size_t j = 0; j < t.lib_dir_ranges.size(); ++j) {
-      if (in_range(t.lib_dir_ranges[j])) {
+    for (auto lib_dir_range : t.lib_dir_ranges) {
+      if (in_range(lib_dir_range)) {
         hit.target_index = i;
         hit.part = Hit::Part::LibDirElem;
         return hit;

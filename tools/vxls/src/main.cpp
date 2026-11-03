@@ -57,25 +57,30 @@ Analysis analyze_doc(const std::string& uri) {
 }
 
 Value range_value(const vxls::LspRange& r) {
-  return Value::object(
-      {{"start",
-        Value::object({{"line", Value::number(r.start.line)}, {"character", Value::number(r.start.character)}})},
-       {"end", Value::object({{"line", Value::number(r.end.line)}, {"character", Value::number(r.end.character)}})}});
+  return Value::object({
+      {
+          "start",
+          Value::object({{"line", Value::number(r.start.line)}, {"character", Value::number(r.start.character)}}),
+      },
+      {"end", Value::object({{"line", Value::number(r.end.line)}, {"character", Value::number(r.end.character)}})},
+  });
 }
 
 Value diag_value(const vxls::LspDiagnostic& d) {
-  return Value::object({{"range", range_value(d.range)},
-                        {"severity", Value::number(d.severity)},
-                        {"code", Value::string(d.code)},
-                        {"source", Value::string(d.source)},
-                        {"message", Value::string(d.message)}});
+  return Value::object({
+      {"range", range_value(d.range)},
+      {"severity", Value::number(d.severity)},
+      {"code", Value::string(d.code)},
+      {"source", Value::string(d.source)},
+      {"message", Value::string(d.message)},
+  });
 }
 
 // 发布诊断通知（textDocument/publishDiagnostics）
 // 诊断源：前端诊断（lexer/parser）+ 可选 vx-tidy 静态检查（默认启用）
 void publish_diagnostics(const std::string& uri) {
   Analysis a = analyze_doc(uri);
-  const std::string text = g_docs.count(uri) ? g_docs[uri] : std::string();
+  const std::string text = (static_cast<unsigned int>(g_docs.contains(uri)) != 0U) ? g_docs[uri] : std::string();
   std::vector<vxls::LspDiagnostic> all;
   for (const auto& d : a.diags) {
     all.push_back(vxls::to_lsp_diagnostic(d, text));
@@ -106,24 +111,59 @@ void handle_initialize(const LspMessage& req) {
       }
     }
   }
-  Value caps =
-      Value::object({{"textDocumentSync", Value::number(2)}, // Incremental：didChange 增量编辑
-                     {"hoverProvider", Value::boolean(true)},
-                     {"definitionProvider", Value::boolean(true)},
-                     {"documentSymbolProvider", Value::boolean(true)},
-                     {"referencesProvider", Value::boolean(true)},
-                     {"renameProvider", Value::boolean(true)},
-                     {"prepareRenameProvider", Value::boolean(true)},
-                     {"documentHighlightProvider", Value::boolean(true)},
-                     {"signatureHelpProvider", Value::object({{"triggerCharacters", Value::array({Value::string("("), Value::string(",")})}})},
-                     {"semanticTokensProvider", Value::object({{"legend", Value::object({{"tokenTypes", Value::array({Value::string("keyword"), Value::string("function"), Value::string("variable"), Value::string("type"), Value::string("string"), Value::string("number"), Value::string("comment"), Value::string("operator")})}, {"tokenModifiers", Value::array({})}})}, {"range", Value::boolean(false)}, {"full", Value::boolean(true)}})},
-                     {"codeActionProvider", Value::boolean(true)},
-                     {"workspaceSymbolProvider", Value::boolean(true)},
-                     {"completionProvider", Value::object({{"triggerCharacters", Value::array({Value::string(".")})},
-                                                           {"resolveProvider", Value::boolean(false)}})}});
-  Value result = Value::object(
-      {{"capabilities", caps},
-       {"serverInfo", Value::object({{"name", Value::string("vxls")}, {"version", Value::string(kVersion)}})}});
+  Value caps = Value::object({
+      {"textDocumentSync", Value::number(2)}, // Incremental：didChange 增量编辑
+      {"hoverProvider", Value::boolean(true)},
+      {"definitionProvider", Value::boolean(true)},
+      {"documentSymbolProvider", Value::boolean(true)},
+      {"referencesProvider", Value::boolean(true)},
+      {"renameProvider", Value::boolean(true)},
+      {"prepareRenameProvider", Value::boolean(true)},
+      {"documentHighlightProvider", Value::boolean(true)},
+      {
+          "signatureHelpProvider",
+          Value::object({{"triggerCharacters", Value::array({Value::string("("), Value::string(",")})}}),
+      },
+      {
+          "semanticTokensProvider",
+          Value::object({
+              {
+                  "legend",
+                  Value::object({
+                      {
+                          "tokenTypes",
+                          Value::array({
+                              Value::string("keyword"),
+                              Value::string("function"),
+                              Value::string("variable"),
+                              Value::string("type"),
+                              Value::string("string"),
+                              Value::string("number"),
+                              Value::string("comment"),
+                              Value::string("operator"),
+                          }),
+                      },
+                      {"tokenModifiers", Value::array({})},
+                  }),
+              },
+              {"range", Value::boolean(false)},
+              {"full", Value::boolean(true)},
+          }),
+      },
+      {"codeActionProvider", Value::boolean(true)},
+      {"workspaceSymbolProvider", Value::boolean(true)},
+      {
+          "completionProvider",
+          Value::object({
+              {"triggerCharacters", Value::array({Value::string(".")})},
+              {"resolveProvider", Value::boolean(false)},
+          }),
+      },
+  });
+  Value result = Value::object({
+      {"capabilities", caps},
+      {"serverInfo", Value::object({{"name", Value::string("vxls")}, {"version", Value::string(kVersion)}})},
+  });
   vxls::send_response(req, result);
 }
 
@@ -155,7 +195,8 @@ void handle_did_change(const Value& params) {
   for (const Value& ch : changes->as_array()) {
     if (const Value* r = ch.find("range")) {
       // 增量编辑
-      LspPosition s, e;
+      LspPosition s;
+      LspPosition e;
       if (const Value* st = r->find("start")) {
         s.line = st->int_or("line", 0);
         s.character = st->int_or("character", 0);
@@ -210,18 +251,21 @@ void handle_document_symbol(const LspMessage& req) {
   Analysis a = analyze_doc(uri);
   std::vector<Value> syms;
   for (const auto& s : a.symbols) {
-    syms.push_back(Value::object({{"name", Value::string(s.name)},
-                                  {"detail", Value::string(s.detail)},
-                                  {"kind", Value::number(s.kind)},
-                                  {"range", range_value(s.range)},
-                                  {"selectionRange", range_value(s.selection_range)}}));
+    syms.push_back(Value::object({
+        {"name", Value::string(s.name)},
+        {"detail", Value::string(s.detail)},
+        {"kind", Value::number(s.kind)},
+        {"range", range_value(s.range)},
+        {"selectionRange", range_value(s.selection_range)},
+    }));
   }
   vxls::send_response(req, Value::array(syms));
 }
 
 void handle_signature_help(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     vxls::send_response(req, Value{});
     return;
@@ -241,17 +285,22 @@ void handle_signature_help(const LspMessage& req) {
     std::vector<Value> params;
     for (const auto& p : s.parameters)
       params.push_back(Value::object({{"label", Value::string(p.label)}}));
-    sigs.push_back(Value::object({{"label", Value::string(s.label)},
-                                  {"parameters", Value::array(params)}}));
+    sigs.push_back(Value::object({
+        {"label", Value::string(s.label)},
+        {"parameters", Value::array(params)},
+    }));
   }
-  vxls::send_response(req, Value::object({{"signatures", Value::array(sigs)},
-                                          {"activeSignature", Value::number(help.active_signature)},
-                                          {"activeParameter", Value::number(help.active_parameter)}}));
+  vxls::send_response(req, Value::object({
+                               {"signatures", Value::array(sigs)},
+                               {"activeSignature", Value::number(help.active_signature)},
+                               {"activeParameter", Value::number(help.active_parameter)},
+                           }));
 }
 
 void handle_hover(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     vxls::send_response(req, Value{});
     return;
@@ -267,13 +316,21 @@ void handle_hover(const LspMessage& req) {
     vxls::send_response(req, Value{});
     return;
   }
-  vxls::send_response(req, Value::object({{"contents", Value::object({{"kind", Value::string("markdown")},
-                                                                      {"value", Value::string(md)}})}}));
+  vxls::send_response(req, Value::object({
+                               {
+                                   "contents",
+                                   Value::object({
+                                       {"kind", Value::string("markdown")},
+                                       {"value", Value::string(md)},
+                                   }),
+                               },
+                           }));
 }
 
 void handle_document_highlight(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     vxls::send_response(req, Value::array({}));
     return;
@@ -308,12 +365,13 @@ void handle_semantic_tokens(const LspMessage& req) {
   auto utf8_len = [](std::string_view s) {
     std::size_t n = 0;
     for (char c : s)
-      if ((static_cast<unsigned char>(c) & 0xC0) != 0x80)
+      if ((static_cast<unsigned char>(c) & 0xC0u) != 0x80u)
         ++n;
     return n;
   };
   std::vector<int> data;
-  int prev_line = 0, prev_char = 0;
+  int prev_line = 0;
+  int prev_char = 0;
   for (const auto& t : toks) {
     using vx::compiler::Tok;
     if (t.kind == Tok::Eof || t.kind == Tok::Nl || t.kind == Tok::Semi || t.kind == Tok::Indent ||
@@ -360,7 +418,8 @@ void handle_semantic_tokens(const LspMessage& req) {
 
 void handle_definition(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     vxls::send_response(req, Value{});
     return;
@@ -380,7 +439,8 @@ void handle_definition(const LspMessage& req) {
 
 void handle_completion(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     vxls::send_response(req, Value::array({}));
     return;
@@ -401,8 +461,10 @@ void handle_completion(const LspMessage& req) {
     fields.emplace_back("kind", Value::number(c.kind));
     fields.emplace_back("detail", Value::string(c.detail));
     if (!c.documentation.empty()) {
-      fields.emplace_back("documentation", Value::object({{"kind", Value::string("markdown")},
-                                                          {"value", Value::string(c.documentation)}}));
+      fields.emplace_back("documentation", Value::object({
+                                               {"kind", Value::string("markdown")},
+                                               {"value", Value::string(c.documentation)},
+                                           }));
     }
     if (c.is_snippet && !c.insert_text.empty()) {
       fields.emplace_back("insertText", Value::string(c.insert_text));
@@ -421,7 +483,8 @@ void handle_completion(const LspMessage& req) {
 
 void handle_references(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     vxls::send_response(req, Value::array({}));
     return;
@@ -447,7 +510,8 @@ void handle_references(const LspMessage& req) {
 
 void handle_rename(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     vxls::send_response(req, Value{});
     return;
@@ -481,7 +545,8 @@ void handle_rename(const LspMessage& req) {
 
 void handle_prepare_rename(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     vxls::send_response(req, Value{});
     return;
@@ -508,10 +573,11 @@ void handle_workspace_symbol(const LspMessage& req) {
   const auto syms = vxls::workspace_symbols(query, g_docs);
   std::vector<Value> out;
   for (const auto& s : syms) {
-    out.push_back(
-        Value::object({{"name", Value::string(s.name)},
-                       {"kind", Value::number(s.kind)},
-                       {"location", Value::object({{"uri", Value::string(s.uri)}, {"range", range_value(s.range)}})}}));
+    out.push_back(Value::object({
+        {"name", Value::string(s.name)},
+        {"kind", Value::number(s.kind)},
+        {"location", Value::object({{"uri", Value::string(s.uri)}, {"range", range_value(s.range)}})},
+    }));
   }
   vxls::send_response(req, Value::array(out));
 }
@@ -654,8 +720,8 @@ int main(int argc, char** argv) {
 
     if (m.method == "initialize") {
       handle_initialize(m);
-    } else if (m.method == "initialized") {
-      // 通知，无需响应
+    } else if (m.method == "initialized" || m.method == "$/cancelRequest" || m.method == "$/setTrace") {
+      // 通知 / 取消 / 跟踪，无需响应
     } else if (m.method == "shutdown") {
       vxls::send_response(m, Value{});
     } else if (m.method == "exit") {
@@ -690,8 +756,6 @@ int main(int argc, char** argv) {
       handle_prepare_rename(m);
     } else if (m.method == "workspace/symbol") {
       handle_workspace_symbol(m);
-    } else if (m.method == "$/cancelRequest" || m.method == "$/setTrace") {
-      // 忽略
     } else if (m.has_id) {
       vxls::send_error(m, -32601, "方法不支持: " + m.method);
     }

@@ -3,6 +3,7 @@
 // 条件分支自动开 fallthrough 基本块；标签处若非终止块则补 br，保证 IR 合法。
 #include "vx/backend/llvm_emitter.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <cstdio>
@@ -38,7 +39,7 @@ const char* vt_name(VT t) {
 VT vt_of(std::string_view ty) {
   if (ty == "float")
     return VT::F64;
-  if (ty == "string")
+  if (ty == "string" || ty == "ptr")
     return VT::PTR;
   if (ty == "i64")
     return VT::I64;
@@ -64,42 +65,47 @@ struct Builtin {
 };
 
 // 键为 VX 源码中可见的调用名，sym 为链接期实际符号（可与键不同）。
-static const std::map<std::string_view, Builtin> kBuiltinTable = {
-    {"out", {"out", {VT::PTR}, false, VT::I32}},
-    {"out_int", {"out_int", {VT::I32}, false, VT::I32}},
-    {"out_bool", {"out_bool", {VT::I32}, false, VT::I32}},
-    {"out_float", {"out_float", {VT::F64}, false, VT::I32}},
-    {"puts", {"puts", {VT::PTR}, true, VT::I32}},
-    {"exit", {"exit", {VT::I32}, false, VT::I32}},
-    {"malloc", {"malloc", {VT::I64}, true, VT::PTR}},
-    {"free", {"free", {VT::PTR}, false, VT::I32}},
-    {"vx_array_new", {"vx_array_new", {VT::I64}, true, VT::PTR}},
-    {"vx_array_get", {"vx_array_get", {VT::PTR, VT::I64}, true, VT::I64}},
-    {"vx_array_set", {"vx_array_set", {VT::PTR, VT::I64, VT::I64}, false, VT::I32}},
-    {"vx_map_new", {"vx_map_new", {VT::I64}, true, VT::PTR}},
-    {"vx_map_get", {"vx_map_get", {VT::PTR, VT::I64, VT::I64, VT::PTR}, true, VT::I64}},
-    {"vx_map_set", {"vx_map_set", {VT::PTR, VT::I64, VT::I64, VT::PTR, VT::I64}, false, VT::I32}},
-    {"vx_str_concat", {"vx_str_concat", {VT::PTR, VT::PTR}, true, VT::PTR}},
-    {"strcmp", {"strcmp", {VT::PTR, VT::PTR}, true, VT::I32}},
-    {"vx_pow_i32", {"vx_pow_i32", {VT::I32, VT::I32}, true, VT::I32}},
-    {"vx_pow_f64", {"vx_pow_f64", {VT::F64, VT::F64}, true, VT::F64}},
-    // 系统能力：命令行参数 / 文件 I/O（实现见 vxrt.c）
-    {"sys_argv_count", {"vx_argv_count", {}, true, VT::I32}},
-    {"sys_argv_get", {"vx_argv_get", {VT::I32}, true, VT::PTR}},
-    {"file_read", {"vx_file_read", {VT::PTR}, true, VT::PTR}},
-    {"file_write", {"vx_file_write", {VT::PTR, VT::PTR}, true, VT::I32}},
-    {"file_exists", {"vx_file_exists", {VT::PTR}, true, VT::I32}},
-};
+// 注意：使用函数内静态避免静态初始化顺序 / 抛异常问题（throwing-static-init）。
+static const std::map<std::string_view, Builtin>& builtin_table() {
+  static const std::map<std::string_view, Builtin> t = {
+      {"out", {"out", {VT::PTR}, false, VT::I32}},
+      {"out_int", {"out_int", {VT::I32}, false, VT::I32}},
+      {"out_bool", {"out_bool", {VT::I32}, false, VT::I32}},
+      {"out_float", {"out_float", {VT::F64}, false, VT::I32}},
+      {"puts", {"puts", {VT::PTR}, true, VT::I32}},
+      {"exit", {"exit", {VT::I32}, false, VT::I32}},
+      {"malloc", {"malloc", {VT::I64}, true, VT::PTR}},
+      {"free", {"free", {VT::PTR}, false, VT::I32}},
+      {"vx_array_new", {"vx_array_new", {VT::I64}, true, VT::PTR}},
+      {"vx_array_get", {"vx_array_get", {VT::PTR, VT::I64}, true, VT::I64}},
+      {"vx_array_set", {"vx_array_set", {VT::PTR, VT::I64, VT::I64}, false, VT::I32}},
+      {"vx_map_new", {"vx_map_new", {VT::I64}, true, VT::PTR}},
+      {"vx_map_get", {"vx_map_get", {VT::PTR, VT::I64, VT::I64, VT::PTR}, true, VT::I64}},
+      {"vx_map_set", {"vx_map_set", {VT::PTR, VT::I64, VT::I64, VT::PTR, VT::I64}, false, VT::I32}},
+      {"vx_str_concat", {"vx_str_concat", {VT::PTR, VT::PTR}, true, VT::PTR}},
+      {"strcmp", {"strcmp", {VT::PTR, VT::PTR}, true, VT::I32}},
+      {"vx_pow_i32", {"vx_pow_i32", {VT::I32, VT::I32}, true, VT::I32}},
+      {"vx_pow_f64", {"vx_pow_f64", {VT::F64, VT::F64}, true, VT::F64}},
+      // 系统能力：命令行参数 / 文件 I/O（实现见 vxrt.c）
+      {"sys_argv_count", {"vx_argv_count", {}, true, VT::I32}},
+      {"sys_argv_get", {"vx_argv_get", {VT::I32}, true, VT::PTR}},
+      {"file_read", {"vx_file_read", {VT::PTR}, true, VT::PTR}},
+      {"file_write", {"vx_file_write", {VT::PTR, VT::PTR}, true, VT::I32}},
+      {"file_exists", {"vx_file_exists", {VT::PTR}, true, VT::I32}},
+  };
+  return t;
+}
 
 // 按 VX 源码中的调用名查找
 const Builtin* lookup_builtin(std::string_view name) {
-  auto it = kBuiltinTable.find(name);
-  return it == kBuiltinTable.end() ? nullptr : &it->second;
+  const auto& t = builtin_table();
+  auto it = t.find(name);
+  return it == t.end() ? nullptr : &it->second;
 }
 
 // 按链接期实际符号查找（发射 declare 时使用）
 const Builtin* lookup_builtin_by_sym(std::string_view sym) {
-  for (const auto& [name, b] : kBuiltinTable) {
+  for (const auto& [name, b] : builtin_table()) {
     if (sym == b.sym)
       return &b;
   }
@@ -263,7 +269,7 @@ public:
     // P4：类/结构字段布局（字段名 -> 索引/类型；首个定义优先）
     for (const ir::StructLayout& sl : mod_.structs) {
       for (std::size_t i = 0; i < sl.fields.size(); ++i) {
-        if (field_index_.find(sl.fields[i].name) == field_index_.end()) {
+        if (!field_index_.contains(sl.fields[i].name)) {
           field_index_[sl.fields[i].name] = i;
           field_type_[sl.fields[i].name] = vt_of(sl.fields[i].type);
         }
@@ -288,13 +294,13 @@ public:
     out += "target triple = \"" + std::string(triple_) + "\"\n\n";
     for (const std::string& sym : used_builtins_) {
       const Builtin* b = lookup_builtin_by_sym(sym);
-      if (!b)
+      if (b == nullptr)
         continue;
       out += "declare ";
       out += b->has_ret ? vt_name(b->ret) : "void";
       out += " @" + std::string(b->sym) + "(";
       for (std::size_t i = 0; i < b->args.size(); ++i) {
-        if (i)
+        if (i != 0U)
           out += ", ";
         out += vt_name(b->args[i]);
       }
@@ -313,7 +319,7 @@ public:
       out += has_ret ? vt_name(vt_of(e->ret_type)) : "void";
       out += " @" + sym + "(";
       for (std::size_t i = 0; i < e->params.size(); ++i) {
-        if (i)
+        if (i != 0U)
           out += ", ";
         out += vt_name(vt_of(e->params[i].type));
       }
@@ -345,7 +351,9 @@ private:
                 ")");
   }
 
-  std::string symbol_of(std::string_view name) { return name == "main" ? std::string("vx_main") : std::string(name); }
+  static std::string symbol_of(std::string_view name) {
+    return name == "main" ? std::string("vx_main") : std::string(name);
+  }
 
   std::string new_temp() { return "%t" + std::to_string(temp_++); }
   std::string new_bb() { return "bb" + std::to_string(bb_++); }
@@ -481,7 +489,8 @@ private:
       case ir::OP_I32_MUL:
       case ir::OP_I32_DIV:
       case ir::OP_I32_MOD: {
-        Value b, a;
+        Value b;
+        Value a;
         if (!pop(b) || !pop(a))
           return false;
         if (!need_i32(a) || !need_i32(b))
@@ -514,7 +523,8 @@ private:
       case ir::OP_I32_GT:
       case ir::OP_I32_LE:
       case ir::OP_I32_GE: {
-        Value b, a;
+        Value b;
+        Value a;
         if (!pop(b) || !pop(a))
           return false;
         if (!need_i32(a) || !need_i32(b))
@@ -561,7 +571,8 @@ private:
       case ir::OP_F64_SUB:
       case ir::OP_F64_MUL:
       case ir::OP_F64_DIV: {
-        Value b, a;
+        Value b;
+        Value a;
         if (!pop(b) || !pop(a))
           return false;
         if (a.vt != VT::F64 || b.vt != VT::F64)
@@ -591,7 +602,8 @@ private:
       case ir::OP_F64_GT:
       case ir::OP_F64_LE:
       case ir::OP_F64_GE: {
-        Value b, a;
+        Value b;
+        Value a;
         if (!pop(b) || !pop(a))
           return false;
         if (a.vt != VT::F64 || b.vt != VT::F64)
@@ -651,7 +663,8 @@ private:
       case ir::OP_I32_AND:
       case ir::OP_BOOL_OR:
       case ir::OP_I32_OR: {
-        Value b, a;
+        Value b;
+        Value a;
         if (!pop(b) || !pop(a))
           return false;
         if (!need_i32(a) || !need_i32(b))
@@ -663,7 +676,8 @@ private:
         return true;
       }
       case ir::OP_STR_CONCAT: {
-        Value b, a;
+        Value b;
+        Value a;
         if (!pop(b) || !pop(a))
           return false;
         used_builtins_.insert("vx_str_concat");
@@ -673,7 +687,8 @@ private:
         return true;
       }
       case ir::OP_STR_EQ: {
-        Value b, a;
+        Value b;
+        Value a;
         if (!pop(b) || !pop(a))
           return false;
         if (a.vt != VT::PTR || b.vt != VT::PTR) {
@@ -697,9 +712,7 @@ private:
       }
       case ir::OP_POP: {
         Value v;
-        if (!pop(v))
-          return false;
-        return true;
+        return pop(v);
       }
       // ---- P4: NEWZ / FREE ----
       case ir::OP_NEWZ: {
@@ -742,7 +755,7 @@ private:
         if (it == field_index_.end())
           return fail_inst("未知字段 " + inst.args);
         std::size_t idx = it->second;
-        VT ft = field_type_.count(inst.args) ? field_type_[inst.args] : VT::I32;
+        VT ft = (static_cast<unsigned int>(field_type_.contains(inst.args)) != 0U) ? field_type_[inst.args] : VT::I32;
         std::string gep = new_temp();
         line(gep + " = getelementptr i8, ptr " + obj.val + ", i64 " + std::to_string(idx * 8));
         std::string t = new_temp();
@@ -751,7 +764,8 @@ private:
         return true;
       }
       case ir::OP_FIELD_STORE: {
-        Value val, obj;
+        Value val;
+        Value obj;
         if (!pop(val) || !pop(obj))
           return false;
         if (obj.vt != VT::PTR)
@@ -760,7 +774,7 @@ private:
         if (it == field_index_.end())
           return fail_inst("未知字段 " + inst.args);
         std::size_t idx = it->second;
-        VT ft = field_type_.count(inst.args) ? field_type_[inst.args] : VT::I32;
+        VT ft = (static_cast<unsigned int>(field_type_.contains(inst.args)) != 0U) ? field_type_[inst.args] : VT::I32;
         std::string v = val.val;
         VT vt = val.vt;
         // 类型转换到字段类型
@@ -768,19 +782,19 @@ private:
           if (vt == to)
             return;
           std::string t = new_temp();
-          if (to == VT::I32 && vt == VT::I64)
+          if (to == VT::I32 && vt == VT::I64) {
             line(t + " = trunc i64 " + v + " to i32");
-          else if (to == VT::I64 && vt == VT::I32)
+          } else if (to == VT::I64 && vt == VT::I32) {
             line(t + " = zext i32 " + v + " to i64");
-          else if (to == VT::F64 && vt == VT::I32)
+          } else if (to == VT::F64 && vt == VT::I32) {
             line(t + " = sitofp i32 " + v + " to double");
-          else if (to == VT::I32 && vt == VT::F64)
+          } else if (to == VT::I32 && vt == VT::F64) {
             line(t + " = fptosi double " + v + " to i32");
-          else if (to == VT::PTR && vt == VT::I64)
+          } else if (to == VT::PTR && vt == VT::I64) {
             line(t + " = inttoptr i64 " + v + " to ptr");
-          else if (to == VT::I64 && vt == VT::PTR)
+          } else if (to == VT::I64 && vt == VT::PTR) {
             line(t + " = ptrtoint ptr " + v + " to i64");
-          else { /* no-op conversion */
+          } else { /* no-op conversion */
           }
           v = t;
           vt = to;
@@ -801,8 +815,7 @@ private:
         } catch (const std::out_of_range&) {
           n = 0;
         }
-        if (n < 0)
-          n = 0;
+        n = std::max(n, 0);
         std::vector<Value> vals(n);
         for (int i = n - 1; i >= 0; --i) {
           if (!pop(vals[i]))
@@ -835,7 +848,8 @@ private:
       }
       // ---- P4: INDEX_GET ----
       case ir::OP_INDEX_GET: {
-        Value idxv, objv;
+        Value idxv;
+        Value objv;
         if (!pop(idxv) || !pop(objv))
           return false;
         std::string idx = idxv.val;
@@ -885,7 +899,9 @@ private:
       }
       // ---- P4: INDEX_SET ----
       case ir::OP_INDEX_SET: {
-        Value val, idxv, objv;
+        Value val;
+        Value idxv;
+        Value objv;
         if (!pop(val) || !pop(idxv) || !pop(objv))
           return false;
         std::string idx = idxv.val;
@@ -938,9 +954,9 @@ private:
         } catch (const std::out_of_range&) {
           n = 0;
         }
-        if (n < 0)
-          n = 0;
-        std::vector<Value> keys(n), vals(n);
+        n = std::max(n, 0);
+        std::vector<Value> keys(n);
+        std::vector<Value> vals(n);
         for (int i = n - 1; i >= 0; --i) {
           if (!pop(vals[i]))
             return false;
@@ -1088,18 +1104,26 @@ private:
         return fail_inst("未知调用目标 @" + name + "（extern 签名未序列化，且不在内置表）");
       }
     } else if (kind == 'm') {
-      // 方法：查找唯一名为 "*.<method>" 的函数
-      const std::string suffix = "." + name;
       const ir::FuncIR* found = nullptr;
-      for (const ir::FuncIR& f : mod_.funcs) {
-        if (f.name.size() > suffix.size() &&
-            f.name.compare(f.name.size() - suffix.size(), suffix.size(), suffix) == 0) {
-          if (found)
-            return fail_inst("方法 " + name + " 匹配到多个函数");
-          found = &f;
+      if (name.contains('.')) {
+        // 全限定符号（语义分析解析出的重载方法 "Class.method$<序号>"）：
+        // 按具名函数精确匹配
+        auto it = fn_by_name_.find(std::string_view(name));
+        if (it != fn_by_name_.end()) {
+          found = it->second;
+        }
+      } else {
+        // 未限定方法名：查找唯一名为 "*.<method>" 的函数
+        const std::string suffix = "." + name;
+        for (const ir::FuncIR& f : mod_.funcs) {
+          if (f.name.size() > suffix.size() && f.name.ends_with(suffix)) {
+            if (found != nullptr)
+              return fail_inst("方法 " + name + " 匹配到多个函数");
+            found = &f;
+          }
         }
       }
-      if (!found)
+      if (found == nullptr)
         return fail_inst("未知方法 ." + name);
       sym = symbol_of(found->name);
       for (const vx::compiler::Param& p : found->params)
@@ -1127,7 +1151,7 @@ private:
     }
     call += " @" + sym + "(";
     for (std::size_t i = 0; i < args.size(); ++i) {
-      if (i)
+      if (i != 0U)
         call += ", ";
       call += std::string(vt_name(arg_vts[i])) + " " + args[i].val;
     }
@@ -1163,7 +1187,7 @@ private:
     std::string sig = ret_void_ ? "void" : std::string(vt_name(ret_vt_));
     sig += " @" + sym + "(";
     for (std::size_t i = 0; i < f.params.size(); ++i) {
-      if (i)
+      if (i != 0U)
         sig += ", ";
       VT pv = vt_of(f.params[i].type);
       sig += std::string(vt_name(pv)) + " %a" + std::to_string(i);

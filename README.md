@@ -80,7 +80,7 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **C++23** 实现（CMa
   ↓ Lexer → Token 流
   ↓ Parser → AST
   ↓ @imp / @cppimp 导入表（VX ABI 符号 + 链接依赖）
-  ↓ Semantics → 符号表 + 类型环境检查（未定义/重复定义/调用与字段访问，多错误聚合）
+  ↓ Semantics → 符号表 + 类型环境检查（未定义/重复定义/类型匹配/重载解析，多错误聚合）
   ↓ Codegen → TypeIR（栈机指令序列）
   ↓ serialize → VXOBJ v4 跨平台文件
   ↓ vlnk 解析 VXOBJ → LLVM IR（.ll 文本）
@@ -94,7 +94,7 @@ VX-ToolKit 是 VX 语言的完整工具链实现，采用 **C++23** 实现（CMa
 
 **今天就能用：**
 
-- **纯静态类型系统** — 所有变量/参数/字段必须显式声明类型，无隐式类型转换
+- **静态类型 + `var` 推断** — 变量/参数/字段可显式标注，或由初始化表达式推断类型；无隐式类型转换（int↔float、string↔int 等均报错），方法支持按参数类型重载解析
 - **原生编译** — Codegen 产出 TypeIR，后端发射 LLVM IR 交宿主 clang 生成原生机器码，无 VM 解释执行层
 - **跨平台中间格式** — VXOBJ v4 不包含平台特征，一次编译、多平台链接
 - **多架构支持** — 目标由宿主 clang 决定（开发与测试以 x86_64 / aarch64 为主）
@@ -283,7 +283,7 @@ Hello, VX!
 1. **词法分析** (Lexer) → Token 流
 2. **语法分析** (Parser) → AST
 3. **库导入解析** (@imp / @cppimp) → 导入表（VX ABI 符号签名 + 链接依赖）
-4. **Semantics** → 符号表（Scope 栈 / 函数表 / 类布局表）+ 类型环境检查，多错误聚合输出
+4. **Semantics** → 符号表（Scope 栈 / 函数表 / 类布局表）+ 类型环境检查：无隐式转换、`var` 推断、方法重载解析，多错误聚合输出
 5. **Codegen** → TypeIR 栈机指令 + 序列化 → VXOBJ v4
 
 > 所有权/借用检查（OwnershipChecker）为规划特性，尚未实现。

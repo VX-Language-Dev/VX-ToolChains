@@ -105,7 +105,7 @@ bool write_text(const fs::path& path, std::string_view text) {
 }
 
 bool contains(const std::string& text, std::string_view needle) {
-  return text.find(needle) != std::string::npos;
+  return text.contains(needle);
 }
 
 // 仅更新 mtime（内容不变）：用于验证内容哈希增量不会误判重编

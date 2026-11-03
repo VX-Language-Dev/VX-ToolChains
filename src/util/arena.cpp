@@ -31,7 +31,7 @@ Arena::Arena(std::size_t block_size) : block_size_(block_size) {}
 
 Arena::~Arena() {
   Block* b = head_;
-  while (b) {
+  while (b != nullptr) {
     Block* next = b->next;
     ::operator delete(static_cast<void*>(b));
     b = next;
@@ -52,7 +52,7 @@ void Arena::new_block(std::size_t bytes, std::size_t alignment) {
 void* Arena::allocate(std::size_t bytes, std::size_t alignment) {
   // 零长度分配：不占用任何空间，仅返回对齐后的当前位置。
   if (bytes == 0) {
-    if (!current_) {
+    if (current_ == nullptr) {
       new_block(alignment, alignment);
     }
     const auto base = reinterpret_cast<std::uintptr_t>(current_->data());
@@ -64,7 +64,7 @@ void* Arena::allocate(std::size_t bytes, std::size_t alignment) {
     return align_up(base + b->used, alignment) + bytes <= base + b->capacity;
   };
 
-  if (!current_ || !fits(current_)) {
+  if ((current_ == nullptr) || !fits(current_)) {
     new_block(bytes, alignment);
   }
 
@@ -75,7 +75,7 @@ void* Arena::allocate(std::size_t bytes, std::size_t alignment) {
 }
 
 void Arena::reset() noexcept {
-  for (Block* b = head_; b; b = b->next) {
+  for (Block* b = head_; b != nullptr; b = b->next) {
     b->used = 0;
   }
   current_ = head_;
@@ -83,7 +83,7 @@ void Arena::reset() noexcept {
 
 std::size_t Arena::size() const noexcept {
   std::size_t total = 0;
-  for (Block* b = head_; b; b = b->next) {
+  for (Block* b = head_; b != nullptr; b = b->next) {
     total += b->used;
   }
   return total;

@@ -12,6 +12,8 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <ranges>
+#include <utility>
 
 namespace vxls {
 
@@ -28,7 +30,7 @@ namespace {
 std::size_t utf8_len(std::string_view s) {
   std::size_t n = 0;
   for (char c : s) {
-    if ((static_cast<unsigned char>(c) & 0xC0) != 0x80)
+    if ((static_cast<unsigned char>(c) & 0xC0u) != 0x80u)
       ++n;
   }
   return n;
@@ -38,10 +40,10 @@ std::size_t utf8_len(std::string_view s) {
 std::size_t utf16_len(std::string_view s) {
   std::size_t n = 0;
   for (char c : s) {
-    const unsigned char u = static_cast<unsigned char>(c);
-    if ((u & 0xC0) == 0x80)
-      continue;               // 续字节
-    n += (u >= 0xF0) ? 2 : 1; // 4 字节码点 = 代理对 2 码元
+    const auto u = static_cast<unsigned char>(c);
+    if ((u & 0xC0u) == 0x80u)
+      continue;                // 续字节
+    n += (u >= 0xF0u) ? 2 : 1; // 4 字节码点 = 代理对 2 码元
   }
   return n;
 }
@@ -78,7 +80,7 @@ std::string func_signature(std::string_view keyword, std::string_view name, std:
                            std::string_view ret) {
   std::string s = std::string(keyword) + " " + std::string(name) + "(";
   for (std::size_t i = 0; i < params.size(); ++i) {
-    if (i)
+    if (i != 0U)
       s += ", ";
     s += std::string(params[i].name);
     if (!params[i].type.empty())
@@ -100,8 +102,10 @@ void collect_symbol(const Stmt* s, std::string_view text, std::vector<LspSymbol>
     sym.detail = std::string(detail);
     sym.kind = kind;
     sym.range = {{line - 1, 0}, {line, 0}};
-    sym.selection_range = {{line - 1, static_cast<int>(name_col)},
-                           {line - 1, static_cast<int>(name_col + utf16_len(name))}};
+    sym.selection_range = {
+        {line - 1, static_cast<int>(name_col)},
+        {line - 1, static_cast<int>(name_col + utf16_len(name))},
+    };
     out.push_back(std::move(sym));
     (void)text;
   };
@@ -118,7 +122,7 @@ void collect_symbol(const Stmt* s, std::string_view text, std::vector<LspSymbol>
   switch (s->kind) {
     case NodeKind::FuncDecl: {
       const auto* f = static_cast<const vx::compiler::FuncDecl*>(s);
-      const char* kw = in_class ? "func" : "func";
+      const char* kw = "func";
       add(f->name, func_signature(kw, f->name, f->params, f->ret_type), in_class ? 6 /*Method*/ : 12 /*Function*/,
           f->line, name_col_of(f->line, "func", f->name));
       break;
@@ -183,13 +187,13 @@ LspPosition diag_pos_to_lsp(std::string_view text, int line, int col) {
   std::size_t points = 0;
   std::size_t i = 0;
   while (i < l.size() && points + 1 < static_cast<std::size_t>(col)) {
-    const unsigned char u = static_cast<unsigned char>(l[i]);
+    const auto u = static_cast<unsigned char>(l[i]);
     std::size_t adv = 1;
-    if ((u & 0xE0) == 0xC0)
+    if ((u & 0xE0u) == 0xC0u)
       adv = 2;
-    else if ((u & 0xF0) == 0xE0)
+    else if ((u & 0xF0u) == 0xE0u)
       adv = 3;
-    else if ((u & 0xF8) == 0xF0)
+    else if ((u & 0xF8u) == 0xF0u)
       adv = 4;
     i += adv;
     ++points;
@@ -210,8 +214,7 @@ std::size_t lsp_pos_to_offset(std::string_view text, LspPosition pos) {
     start = nl + 1;
     ++cur;
   }
-  if (start > text.size())
-    start = text.size();
+  start = std::min(start, text.size());
   // 行尾
   std::size_t line_end = text.find('\n', start);
   if (line_end == std::string_view::npos)
@@ -220,15 +223,15 @@ std::size_t lsp_pos_to_offset(std::string_view text, LspPosition pos) {
   std::size_t i = start;
   int utf16 = 0;
   while (i < line_end && utf16 < pos.character) {
-    const unsigned char c = static_cast<unsigned char>(text[i]);
+    const auto c = static_cast<unsigned char>(text[i]);
     std::size_t cp_len = 1;
-    if ((c & 0x80) == 0)
+    if ((c & 0x80u) == 0)
       cp_len = 1;
-    else if ((c & 0xE0) == 0xC0)
+    else if ((c & 0xE0u) == 0xC0u)
       cp_len = 2;
-    else if ((c & 0xF0) == 0xE0)
+    else if ((c & 0xF0u) == 0xE0u)
       cp_len = 3;
-    else if ((c & 0xF8) == 0xF0)
+    else if ((c & 0xF8u) == 0xF0u)
       cp_len = 4;
     int add = (cp_len == 4) ? 2 : 1;
     if (utf16 + add > pos.character)
@@ -238,8 +241,7 @@ std::size_t lsp_pos_to_offset(std::string_view text, LspPosition pos) {
     i += cp_len;
     utf16 += add;
   }
-  if (i > line_end)
-    i = line_end;
+  i = std::min(i, line_end);
   return i;
 }
 
@@ -296,7 +298,7 @@ std::size_t ident_token_at(std::string_view text, int line, int character, std::
     if (line != start.line && line != end.line)
       continue;
     const int from = line == start.line ? start.character : 0;
-    const int to = line == end.line ? end.character : 1 << 20;
+    const int to = line == end.line ? end.character : static_cast<int>(1u << 20u);
     if (character >= from && character <= to) {
       name = std::string(t.text);
       tok_line = t.line;
@@ -331,10 +333,10 @@ std::string doc_above(std::string_view text, int decl_line) {
     lines.emplace_back(doc);
     --l;
   }
-  for (auto it = lines.rbegin(); it != lines.rend(); ++it) {
+  for (auto& line : std::views::reverse(lines)) {
     if (!out.empty())
       out += '\n';
-    out += *it;
+    out += line;
   }
   return out;
 }
@@ -558,8 +560,10 @@ const std::map<std::string_view, BuiltinDoc>& builtin_docs() {
       {"vx_str_concat", {"vx_str_concat(a: string, b: string) -> string", "运行时拼接两个字符串（返回新分配的内存）"}},
       {"sys_argv_count", {"sys_argv_count() -> int", "命令行参数个数（含可执行文件名）"}},
       {"sys_argv_get", {"sys_argv_get(i: int) -> string", "取第 i 个命令行参数（越界返回空串）"}},
-      {"file_read",
-       {"file_read(path: string) -> string", "读取整个文件内容；失败返回空串（可用 file_exists 判断是否存在）"}},
+      {
+          "file_read",
+          {"file_read(path: string) -> string", "读取整个文件内容；失败返回空串（可用 file_exists 判断是否存在）"},
+      },
       {"file_write", {"file_write(path: string, content: string) -> int", "覆写写入文件，返回写入字节数；失败返回 -1"}},
       {"file_exists", {"file_exists(path: string) -> bool", "判断文件是否存在（可读）"}},
   };
@@ -634,10 +638,10 @@ std::size_t utf16_to_byte(std::string_view line, int utf16_pos) {
     if (u < 0x80) {
       i += 1;
       units += 1;
-    } else if ((u & 0xE0) == 0xC0) {
+    } else if ((u & 0xE0u) == 0xC0u) {
       i += 2;
       units += 1;
-    } else if ((u & 0xF0) == 0xE0) {
+    } else if ((u & 0xF0u) == 0xE0u) {
       i += 3;
       units += 1;
     } else {
@@ -701,7 +705,8 @@ CursorContext detect_context(std::string_view text, int line0, int character) {
   // 类型上下文②：冒号判定。花括号内的冒号（字典字面量）忽略；
   // 括号内的冒号 = 形参注解；顶层冒号仅当 var/mut 声明（此前无 '='）
   // 或「单个非关键字标识符」（class/struct 字段注解）时为类型位置。
-  int paren = 0, brace = 0;
+  int paren = 0;
+  int brace = 0;
   std::size_t top_eq = std::string_view::npos;
   std::size_t colon = std::string_view::npos;
   int colon_paren = 0;
@@ -716,7 +721,7 @@ CursorContext detect_context(std::string_view text, int line0, int character) {
     } else if (ch == '}') {
       --brace;
     } else if (ch == '=' && paren == 0 && brace == 0 && top_eq == std::string_view::npos &&
-               !(i + 1 < head.size() && head[i + 1] == '=') && !(i > 0 && head[i - 1] == '=')) {
+               (i + 1 >= head.size() || head[i + 1] != '=') && (i <= 0 || head[i - 1] != '=')) {
       top_eq = i;
     } else if (ch == ':' && brace == 0) {
       colon = i;
@@ -738,7 +743,7 @@ CursorContext detect_context(std::string_view text, int line0, int character) {
         return c;
       }
       // 单个非关键字标识符独占一行的冒号 → 字段注解（`x: |`）
-      const bool bare_ident = !decl.empty() && std::all_of(decl.begin(), decl.end(), comp_ident_char);
+      const bool bare_ident = !decl.empty() && std::ranges::all_of(decl, comp_ident_char);
       if (bare_ident && !vx::compiler::is_keyword(decl)) {
         c.kind = CompCtx::Type;
         return c;
@@ -753,7 +758,7 @@ std::string snippet_from_params(std::string_view name, std::span<const vx::compi
   std::string s(name);
   s += "(";
   for (std::size_t i = 0; i < params.size(); ++i) {
-    if (i)
+    if (i != 0U)
       s += ", ";
     s += "${" + std::to_string(i + 1) + ":" + std::string(params[i].name) + "}";
   }
@@ -796,8 +801,10 @@ std::string snippet_from_sig(std::string_view name, std::string_view sig) {
 
 // 关键字项（两种收集路径共用）：语句关键字在行首位置排最前
 void emit_keyword_items(std::vector<LspCompletion>& items, bool stmt_pos) {
-  static const char* kStmt[] = {"if",  "elif", "else", "for",    "while", "break",  "continue", "return",
-                                "var", "mut",  "func", "extern", "class", "struct", "import",   "export"};
+  static const char* kStmt[] = {
+      "if",  "elif", "else", "for",    "while", "break",  "continue", "return",
+      "var", "mut",  "func", "extern", "class", "struct", "import",   "export",
+  };
   static const char* kExpr[] = {"true", "false", "nil", "and", "or", "not", "new", "as", "in", "const"};
   for (const char* kw : kStmt) {
     items.push_back({kw, 14 /*Keyword*/, "关键字", {}, {}, {}, stmt_pos ? "0" : "3", false});
@@ -923,7 +930,8 @@ std::vector<LspCompletion> collect_fallback(std::string_view text, const CursorC
       if (!is_name(name_t) || tok_at(i + 2) == nullptr || tok_at(i + 2)->kind != Tok::LParen)
         continue;
       const std::string name(name_t->text);
-      std::string params, ret;
+      std::string params;
+      std::string ret;
       const std::size_t after = scan_params(i + 3, params, ret);
       std::string detail = kw + " " + name + "(" + params + ")";
       if (!ret.empty())
@@ -1122,19 +1130,26 @@ std::vector<LspCompletion> collect_from_prog(std::string_view text, const Cursor
   auto next_top_line = [&](std::size_t i) -> int { return (i + 1 < stmts.size()) ? stmts[i + 1]->line : INT_MAX; };
 
   // 第一遍：顶层 func/extern + class/struct
-  for (std::size_t i = 0; i < stmts.size(); ++i) {
-    const Stmt* s = stmts[i];
+  for (const auto* s : stmts) {
     switch (s->kind) {
       case NodeKind::FuncDecl: {
         const auto* f = static_cast<const FuncDecl*>(s);
-        funcs[std::string(f->name)] = Callable{func_signature("func", f->name, f->params, f->ret_type),
-                                               std::string(f->ret_type), doc_above(text, f->line), f->params};
+        funcs[std::string(f->name)] = Callable{
+            func_signature("func", f->name, f->params, f->ret_type),
+            std::string(f->ret_type),
+            doc_above(text, f->line),
+            f->params,
+        };
         break;
       }
       case NodeKind::ExternDecl: {
         const auto* e = static_cast<const ExternDecl*>(s);
-        funcs[std::string(e->name)] = Callable{func_signature("extern", e->name, e->params, e->ret_type),
-                                               std::string(e->ret_type), doc_above(text, e->line), e->params};
+        funcs[std::string(e->name)] = Callable{
+            func_signature("extern", e->name, e->params, e->ret_type),
+            std::string(e->ret_type),
+            doc_above(text, e->line),
+            e->params,
+        };
         break;
       }
       case NodeKind::ClassDecl: {
@@ -1149,8 +1164,12 @@ std::vector<LspCompletion> collect_from_prog(std::string_view text, const Cursor
                                  std::string(fl.name) + ": " + (fl.type.empty() ? "var" : std::string(fl.type)));
         }
         for (const FuncDecl* m : c->methods) {
-          te.methods.push_back(Method{std::string(m->name), func_signature("func", m->name, m->params, m->ret_type),
-                                      doc_above(text, m->line), m->params});
+          te.methods.push_back(Method{
+              std::string(m->name),
+              func_signature("func", m->name, m->params, m->ret_type),
+              doc_above(text, m->line),
+              m->params,
+          });
         }
         types[te.name] = std::move(te);
         break;
@@ -1305,7 +1324,7 @@ std::vector<LspCompletion> collect_from_prog(std::string_view text, const Cursor
             c.kind = 3 /*Function*/;
             std::string params;
             for (std::size_t pi = 0; pi < sym.params.size(); ++pi) {
-              if (pi)
+              if (pi != 0U)
                 params += ", ";
               params += sym.params[pi].name + ": " + sym.params[pi].type;
             }
@@ -1353,7 +1372,7 @@ std::vector<LspCompletion> collect_from_prog(std::string_view text, const Cursor
     if (ctx.receiver == "self" && !method_class.empty()) {
       resolved = method_class;
       found = true;
-    } else if (types.count(ctx.receiver)) {
+    } else if (static_cast<unsigned int>(types.contains(ctx.receiver)) != 0U) {
       resolved = ctx.receiver;
       found = true;
     } else if (const auto lt = locals.find(ctx.receiver); lt != locals.end()) {
@@ -1367,16 +1386,17 @@ std::vector<LspCompletion> collect_from_prog(std::string_view text, const Cursor
       resolved = ft->second.ret;
     }
 
-    static const std::map<std::string_view, int> kPrimitives = {{"int", 1},  {"float", 1}, {"bool", 1}, {"string", 1},
-                                                                {"void", 1}, {"ptr", 1},   {"nil", 1}};
-    if (found && !resolved.empty() && !kPrimitives.count(resolved)) {
+    static const std::map<std::string_view, int> kPrimitives = {
+        {"int", 1}, {"float", 1}, {"bool", 1}, {"string", 1}, {"void", 1}, {"ptr", 1}, {"nil", 1},
+    };
+    if (found && !resolved.empty() && (static_cast<unsigned int>(kPrimitives.contains(resolved)) == 0U)) {
       if (const auto te = types.find(resolved); te != types.end()) {
         emit_members(te->second);
         if (!items.empty())
           return items;
       }
       found = false; // 解析到未知类型 → 走全类回退
-    } else if (found && kPrimitives.count(resolved)) {
+    } else if (found && (static_cast<unsigned int>(kPrimitives.contains(resolved)) != 0U)) {
       return items; // 基础类型无成员
     }
     if (!found) {
@@ -1472,7 +1492,7 @@ std::vector<LspCompletion> completion_at(std::string_view text, int line, int ch
   out.reserve(best.size());
   for (auto& [label, c] : best)
     out.push_back(std::move(c));
-  std::sort(out.begin(), out.end(), [](const LspCompletion& a, const LspCompletion& b) {
+  std::ranges::sort(out, [](const LspCompletion& a, const LspCompletion& b) {
     return a.sort_text != b.sort_text ? a.sort_text < b.sort_text : a.label < b.label;
   });
   return out;
@@ -1500,7 +1520,7 @@ std::string lib_symbol_hover(std::string_view text, int line, int character, con
     if (line != start.line && line != end.line)
       continue;
     const int from = line == start.line ? start.character : 0;
-    const int to = line == end.line ? end.character : 1 << 20;
+    const int to = line == end.line ? end.character : static_cast<int>(1u << 20u);
     if (character >= from && character <= to) {
       idx = i;
       name = std::string(t.text);
@@ -1530,7 +1550,7 @@ std::string lib_symbol_hover(std::string_view text, int line, int character, con
   std::string md = "```vx\n" + std::string(lib->name) + "." + sym->vx_name;
   md += "(";
   for (std::size_t i = 0; i < sym->params.size(); ++i) {
-    if (i)
+    if (i != 0U)
       md += ", ";
     md += sym->params[i].name + ": " + sym->params[i].type;
   }
@@ -1550,8 +1570,9 @@ std::string lib_symbol_hover(std::string_view text, int line, int character, con
 std::string hover_at(std::string_view text, int line, int character, const std::filesystem::path& headers_root,
                      const std::vector<std::filesystem::path>& include_dirs) {
   std::string name;
-  int tl = 0, tc = 0;
-  if (!ident_token_at(text, line, character, name, tl, tc))
+  int tl = 0;
+  int tc = 0;
+  if (ident_token_at(text, line, character, name, tl, tc) == 0U)
     return {};
 
   // 优先：导入库符号（库前缀.成员 形态，需 headers_root）
@@ -1576,7 +1597,8 @@ LspRange definition_at(std::string_view text, int line, int character) {
   bad.start = {-1, 0};
   bad.end = {-1, 0};
   std::string name;
-  int tl = 0, tc = 0;
+  int tl = 0;
+  int tc = 0;
   if (!ident_at(text, line, character, name, tl, tc))
     return bad;
   DeclInfo info;
@@ -1624,10 +1646,11 @@ namespace {
 bool contains_ci(std::string_view haystack, std::string_view needle) {
   if (needle.empty())
     return true;
-  std::string h(haystack), n(needle);
-  std::transform(h.begin(), h.end(), h.begin(), [](unsigned char c) { return std::tolower(c); });
-  std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return std::tolower(c); });
-  return h.find(n) != std::string::npos;
+  std::string h(haystack);
+  std::string n(needle);
+  std::ranges::transform(h, h.begin(), [](unsigned char c) { return std::tolower(c); });
+  std::ranges::transform(n, n.begin(), [](unsigned char c) { return std::tolower(c); });
+  return h.contains(n);
 }
 
 // 在单个文档中查找名为 name 的顶层声明位置（函数/类/结构/变量/extern）
@@ -1671,9 +1694,7 @@ LspRange find_decl_range_in_doc(std::string_view text, std::string_view name) {
       }
       case NodeKind::ExternDecl: {
         const auto* e = static_cast<const ExternDecl*>(s);
-        if (e->name == name)
-          return true;
-        return false;
+        return e->name == name;
       }
       case NodeKind::ClassDecl: {
         const auto* c = static_cast<const ClassDecl*>(s);
@@ -1687,15 +1708,11 @@ LspRange find_decl_range_in_doc(std::string_view text, std::string_view name) {
       }
       case NodeKind::StructDecl: {
         const auto* st = static_cast<const StructDecl*>(s);
-        if (st->name == name)
-          return true;
-        return false;
+        return st->name == name;
       }
       case NodeKind::VarDecl: {
         const auto* v = static_cast<const VarDecl*>(s);
-        if (v->name == name)
-          return true;
-        return false;
+        return v->name == name;
       }
       case NodeKind::If: {
         const auto* i = static_cast<const If*>(s);
@@ -1902,7 +1919,8 @@ LspLocation definition_at_cross(const std::string& uri, std::string_view text, i
 
   // 先在当前文档查找
   std::string name;
-  int tl = 0, tc = 0;
+  int tl = 0;
+  int tc = 0;
   if (ident_at(text, line, character, name, tl, tc)) {
     LspRange r = definition_at(text, line, character);
     if (r.start.line >= 0) {
@@ -1942,7 +1960,8 @@ std::vector<LspLocation> references_at(const std::string& uri, std::string_view 
   std::vector<LspLocation> out;
 
   std::string name;
-  int tl = 0, tc = 0;
+  int tl = 0;
+  int tc = 0;
   if (!ident_at(text, line, character, name, tl, tc))
     return out;
 
@@ -1970,7 +1989,8 @@ std::map<std::string, std::vector<LspTextEdit>> rename_at(const std::string& uri
   std::map<std::string, std::vector<LspTextEdit>> edits;
 
   std::string name;
-  int tl = 0, tc = 0;
+  int tl = 0;
+  int tc = 0;
   if (!ident_at(text, line, character, name, tl, tc))
     return edits;
 
@@ -2005,7 +2025,7 @@ LspRange ident_range_at(std::string_view text, int line, int character) {
     if (line != start.line && line != end.line)
       continue;
     const int from = line == start.line ? start.character : 0;
-    const int to = line == end.line ? end.character : 1 << 20;
+    const int to = line == end.line ? end.character : static_cast<int>(1u << 20u);
     if (character >= from && character <= to) {
       LspRange r;
       r.start = start;
@@ -2028,7 +2048,7 @@ std::string ident_name_at(std::string_view text, int line, int character) {
     if (line != start.line && line != end.line)
       continue;
     const int from = line == start.line ? start.character : 0;
-    const int to = line == end.line ? end.character : 1 << 20;
+    const int to = line == end.line ? end.character : static_cast<int>(1u << 20u);
     if (character >= from && character <= to) {
       return std::string(t.text);
     }
@@ -2056,8 +2076,8 @@ std::vector<LspRange> document_highlights(std::string_view text, int line, int c
 }
 
 LspSignatureHelp signature_help_at(std::string_view text, int line, int character,
-                                  const std::filesystem::path& /*headers_root*/,
-                                  const std::vector<std::filesystem::path>& /*include_dirs*/) {
+                                   const std::filesystem::path& /*headers_root*/,
+                                   const std::vector<std::filesystem::path>& /*include_dirs*/) {
   LspSignatureHelp help;
   LspPosition pos{line, character};
   std::size_t off = lsp_pos_to_offset(text, pos);
@@ -2075,9 +2095,9 @@ LspSignatureHelp signature_help_at(std::string_view text, int line, int characte
       in_str = true;
       continue;
     }
-    if (c == ')')
+    if (c == ')') {
       ++depth;
-    else if (c == '(') {
+    } else if (c == '(') {
       if (depth == 0) {
         open_pos = k;
         break;
@@ -2091,7 +2111,7 @@ LspSignatureHelp signature_help_at(std::string_view text, int line, int characte
   while (p > 0 && (text[p - 1] == ' ' || text[p - 1] == '\t'))
     --p;
   std::size_t end = p;
-  while (p > 0 && (std::isalnum(static_cast<unsigned char>(text[p - 1])) || text[p - 1] == '_'))
+  while (p > 0 && ((std::isalnum(static_cast<unsigned char>(text[p - 1])) != 0) || text[p - 1] == '_'))
     --p;
   std::string fname(text.substr(p, end - p));
   if (fname.empty())
@@ -2100,9 +2120,9 @@ LspSignatureHelp signature_help_at(std::string_view text, int line, int characte
   int d2 = 0;
   for (std::size_t k = open_pos + 1; k < off && k < text.size(); ++k) {
     char c = text[k];
-    if (c == '(')
+    if (c == '(') {
       ++d2;
-    else if (c == ')') {
+    } else if (c == ')') {
       if (d2 > 0)
         --d2;
     } else if (c == ',' && d2 == 0) {
@@ -2198,7 +2218,7 @@ LspSignatureHelp signature_help_at(std::string_view text, int line, int characte
   }
   if (!help.signatures.empty()) {
     help.active_parameter = active;
-    if (active >= 0 && active < (int)help.signatures[0].parameters.size())
+    if (active >= 0 && std::cmp_less(active, help.signatures[0].parameters.size()))
       help.active_parameter = active;
   }
   return help;

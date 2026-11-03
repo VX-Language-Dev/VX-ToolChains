@@ -152,7 +152,7 @@ void Value::dump_to(std::string& out) const {
     case Type::Array: {
       out += '[';
       for (std::size_t i = 0; i < arr_.size(); ++i) {
-        if (i)
+        if (i != 0U)
           out += ',';
         arr_[i].dump_to(out);
       }
@@ -162,7 +162,7 @@ void Value::dump_to(std::string& out) const {
     case Type::Object: {
       out += '{';
       for (std::size_t i = 0; i < obj_.size(); ++i) {
-        if (i)
+        if (i != 0U)
           out += ',';
         out += escape_string(obj_[i].first);
         out += ':';
@@ -259,7 +259,7 @@ private:
     if (consume('-')) {
     }
     while (pos_ < text_.size() &&
-           (std::isdigit(static_cast<unsigned char>(text_[pos_])) || text_[pos_] == '.' || text_[pos_] == 'e' ||
+           ((std::isdigit(static_cast<unsigned char>(text_[pos_])) != 0) || text_[pos_] == '.' || text_[pos_] == 'e' ||
             text_[pos_] == 'E' || text_[pos_] == '+' || text_[pos_] == '-')) {
       // 起始 '-' 已消费；数字体内仅接受合法尾随字符
       if ((text_[pos_] == '+' || text_[pos_] == '-') && text_[pos_ - 1] != 'e' && text_[pos_ - 1] != 'E') {
@@ -330,7 +330,7 @@ private:
             if (!read_hex4(lo))
               return std::nullopt;
             if (lo >= 0xDC00 && lo <= 0xDFFF) {
-              cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+              cp = 0x10000u + ((cp - 0xD800u) << 10u) + (lo - 0xDC00u);
             }
           }
           append_utf8(out, cp);
@@ -349,7 +349,7 @@ private:
     out = 0;
     for (int i = 0; i < 4; ++i) {
       const char c = text_[pos_++];
-      out <<= 4;
+      out <<= 4u;
       if (c >= '0' && c <= '9')
         out |= static_cast<unsigned>(c - '0');
       else if (c >= 'a' && c <= 'f')
@@ -363,20 +363,20 @@ private:
   }
 
   static void append_utf8(std::string& out, unsigned cp) {
-    if (cp < 0x80) {
+    if (cp < 0x80u) {
       out += static_cast<char>(cp);
-    } else if (cp < 0x800) {
-      out += static_cast<char>(0xC0 | (cp >> 6));
-      out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-      out += static_cast<char>(0xE0 | (cp >> 12));
-      out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-      out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x800u) {
+      out += static_cast<char>(0xC0u | (cp >> 6u));
+      out += static_cast<char>(0x80u | (cp & 0x3Fu));
+    } else if (cp < 0x10000u) {
+      out += static_cast<char>(0xE0u | (cp >> 12u));
+      out += static_cast<char>(0x80u | ((cp >> 6u) & 0x3Fu));
+      out += static_cast<char>(0x80u | (cp & 0x3Fu));
     } else {
-      out += static_cast<char>(0xF0 | (cp >> 18));
-      out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-      out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-      out += static_cast<char>(0x80 | (cp & 0x3F));
+      out += static_cast<char>(0xF0u | (cp >> 18u));
+      out += static_cast<char>(0x80u | ((cp >> 12u) & 0x3Fu));
+      out += static_cast<char>(0x80u | ((cp >> 6u) & 0x3Fu));
+      out += static_cast<char>(0x80u | (cp & 0x3Fu));
     }
   }
 

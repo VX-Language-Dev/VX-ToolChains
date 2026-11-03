@@ -4,6 +4,7 @@
 #include "vx/compiler/codegen.hpp"
 
 #include "vx/compiler/parser.hpp"
+#include "vx/compiler/semantics.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -34,8 +35,8 @@ bool builtin_returns_str(std::string_view name) {
 
 class CodeGen {
 public:
-  CodeGen(std::string_view filename, DiagBag& bag, const ImportTable* imports)
-      : filename_(filename), bag_(bag), imports_(imports) {}
+  CodeGen(std::string_view filename, DiagBag& bag, const ImportTable* imports, const Analysis* analysis)
+      : filename_(filename), bag_(bag), imports_(imports), analysis_(analysis) {}
 
   std::optional<ModuleIR> run(const Program& prog) {
     ModuleIR mod;
@@ -49,7 +50,7 @@ public:
         const auto* c = static_cast<const ClassDecl*>(s);
         sl.name = std::string(c->name);
         for (const ClassField& f : c->fields)
-          if (!f.init)
+          if (f.init == nullptr)
             sl.fields.push_back({std::string(f.name), std::string(f.type)});
         mod.structs.push_back(std::move(sl));
       } else if (s->kind == NodeKind::StructDecl) {
@@ -58,7 +59,7 @@ public:
         const auto* st = static_cast<const StructDecl*>(s);
         sl.name = std::string(st->name);
         for (const ClassField& f : st->fields)
-          if (!f.init)
+          if (f.init == nullptr)
             sl.fields.push_back({std::string(f.name), std::string(f.type)});
         mod.structs.push_back(std::move(sl));
       }
@@ -83,8 +84,17 @@ public:
           break;
         case NodeKind::ClassDecl: {
           const auto* c = static_cast<const ClassDecl*>(s);
+          // 同名方法为重载：按声明序号生成唯一的具名函数（与语义层的
+          // "Class.method$<序号>" 符号一致），非重载保持 "Class.method"。
+          std::unordered_map<std::string, int> total;
           for (const FuncDecl* m : c->methods) {
-            gen_method(*c, *m, mod);
+            ++total[std::string(m->name)];
+          }
+          std::unordered_map<std::string, int> seen;
+          for (const FuncDecl* m : c->methods) {
+            const std::string mname = std::string(m->name);
+            const int idx = seen[mname]++;
+            gen_method(*c, *m, mod, total[mname] > 1 ? idx : -1);
           }
           break;
         }
@@ -254,7 +264,7 @@ private:
       case NodeKind::Property: {
         const auto* p = static_cast<const Property*>(e);
         // 类常量访问：TypeNames.NIL → 内联其初始化表达式
-        if (p->obj && p->obj->kind == NodeKind::Ident) {
+        if ((p->obj != nullptr) && p->obj->kind == NodeKind::Ident) {
           const auto* id = static_cast<const Ident*>(p->obj);
           auto c_it = class_consts_.find(std::string(id->name));
           if (c_it != class_consts_.end()) {
@@ -313,12 +323,12 @@ private:
   }
 
   // 操作数类型判断辅助
-  static bool is_float_lit(const Expr* e) { return e && e->kind == NodeKind::FloatLit; }
+  static bool is_float_lit(const Expr* e) { return (e != nullptr) && e->kind == NodeKind::FloatLit; }
   // 语法浮点性推断：FloatLit、浮点算术（+ - * /）、浮点取负、
   // 以及「初始化/赋值为浮点」的变量（var_kind_ 传播）结果为浮点；
   // 比较运算结果为整型布尔，不计入浮点。
   bool is_float_expr(const Expr* e) {
-    if (!e)
+    if (e == nullptr)
       return false;
     if (e->kind == NodeKind::FloatLit)
       return true;
@@ -341,7 +351,7 @@ private:
   // 字符串表达式：StrLit、字符串拼接结果、字符串变量（var_kind_ 传播）、
   // 返回字符串的内置运行时调用（file_read / sys_argv_get）
   bool is_str_expr(const Expr* e) {
-    if (!e)
+    if (e == nullptr)
       return false;
     if (e->kind == NodeKind::StrLit)
       return true;
@@ -357,7 +367,7 @@ private:
     if (e->kind == NodeKind::Property) {
       // 类常量：按初始化表达式递归判定（C.NAME = "x" → 字符串）
       const auto* p = static_cast<const Property*>(e);
-      if (p->obj && p->obj->kind == NodeKind::Ident) {
+      if ((p->obj != nullptr) && p->obj->kind == NodeKind::Ident) {
         auto c_it = class_consts_.find(std::string(static_cast<const Ident*>(p->obj)->name));
         if (c_it != class_consts_.end()) {
           auto f_it = c_it->second.find(std::string(p->name));
@@ -400,7 +410,7 @@ private:
       var_kind_.erase(std::string(name));
     }
   }
-  static bool is_str_lit(const Expr* e) { return e && e->kind == NodeKind::StrLit; }
+  static bool is_str_lit(const Expr* e) { return (e != nullptr) && e->kind == NodeKind::StrLit; }
 
   void emit_binary_op(std::string_view op, const Expr* left, const Expr* right, int line) {
     // 字符串拼接："a" + "b" → OP_STR_CONCAT（含字符串变量参与）
@@ -525,7 +535,15 @@ private:
       for (const Expr* a : c->args) {
         gen_expr(a);
       }
-      emit(ir::OP_CALL, "m;" + std::string(prop->name));
+      // 语义分析已解析出目标方法符号（重载 → "Class.method$<序号>"）时直接使用
+      std::string msym = std::string(prop->name);
+      if (analysis_ != nullptr) {
+        auto it = analysis_->method_symbols.find(c);
+        if (it != analysis_->method_symbols.end()) {
+          msym = it->second;
+        }
+      }
+      emit(ir::OP_CALL, "m;" + msym);
       return;
     }
     fail("unsupported call target: " + std::string(node_kind_name(c->callee->kind)), c->line);
@@ -734,7 +752,7 @@ private:
   void gen_while(const While* s) {
     const std::string start_label = new_label();
     const std::string end_label = new_label();
-    loop_stack_.push_back({start_label, end_label});
+    loop_stack_.emplace_back(start_label, end_label);
     emit_label(start_label);
     gen_expr(s->cond);
     emit(ir::OP_JUMP_IF_FALSE, end_label);
@@ -757,7 +775,7 @@ private:
 
     const std::string start_label = new_label();
     const std::string end_label = new_label();
-    loop_stack_.push_back({start_label, end_label});
+    loop_stack_.emplace_back(start_label, end_label);
 
     emit_label(start_label);
     emit(ir::OP_LOAD_VAR, idx_slot);
@@ -858,21 +876,29 @@ private:
     end_func(mod);
   }
 
-  // 方法生成为 "<Class>.<method>"；隐式 self 占首槽位
+  // 方法生成为 "<Class>.<method>"，重载追加 "$<声明序号>"；隐式 self 占首槽位
   // （源码已显式声明 self 时不重复添加）。
-  void gen_method(const ClassDecl& cls, const FuncDecl& m, ModuleIR& mod) {
+  void gen_method(const ClassDecl& cls, const FuncDecl& m, ModuleIR& mod, int overload_index) {
     std::vector<Param> params;
     params.reserve(m.params.size() + 1);
     if (m.params.empty() || m.params[0].name != "self") {
       params.push_back(Param{"self", ""});
     }
     params.insert(params.end(), m.params.begin(), m.params.end());
-    begin_func(std::string(cls.name) + "." + std::string(m.name), std::move(params), m.ret_type);
+    // 接收者为类实例指针：self 按 ptr 类型参与 LLVM 签名（空标注默认映射 i32）
+    if (!params.empty() && params[0].name == "self") {
+      params[0].type = "ptr";
+    }
+    std::string fname = std::string(cls.name) + "." + std::string(m.name);
+    if (overload_index >= 0) {
+      fname += "$" + std::to_string(overload_index);
+    }
+    begin_func(fname, std::move(params), m.ret_type);
     gen_block(m.body);
     end_func(mod);
   }
 
-  void gen_extern(const ExternDecl* e, ModuleIR& mod) {
+  static void gen_extern(const ExternDecl* e, ModuleIR& mod) {
     ir::LinkEntry entry;
     entry.name = std::string(e->name);
     entry.ret_type = std::string(e->ret_type);
@@ -895,8 +921,7 @@ private:
         continue;
       }
       // 同一库被多条注解引用（@imp(math) 与 @imp(math) as m）时只注册一次
-      const bool dup =
-          std::any_of(mod.libs.begin(), mod.libs.end(), [&](const ir::LibDep& d) { return d.ref == l.ref; });
+      const bool dup = std::ranges::any_of(mod.libs, [&](const ir::LibDep& d) { return d.ref == l.ref; });
       if (dup) {
         return;
       }
@@ -931,6 +956,7 @@ private:
   std::string_view filename_;            // 诊断定位用（可为空）
   DiagBag& bag_;                         // 共享诊断收集器
   const ImportTable* imports_ = nullptr; // 导入表（可空）
+  const Analysis* analysis_ = nullptr;   // 语义分析产物（可空）
   bool failed_ = false;
   std::unordered_map<std::string, std::vector<ClassField>> struct_fields_;
   // 类常量表：类名 → 常量名 → 初始化表达式（「类名.常量」访问时内联展开）
@@ -948,7 +974,7 @@ private:
     kVarListInt = 3,
     kVarListFloat = 4,
     kVarListStr = 5,
-    kVarMap = 6
+    kVarMap = 6,
   };
   std::unordered_map<std::string, int> var_kind_;
   std::vector<Inst> insts_;
@@ -959,8 +985,8 @@ private:
 } // namespace
 
 optional<ir::ModuleIR> generate_module(const Program& prog, std::string_view filename, DiagBag& bag,
-                                       const ImportTable* imports) {
-  return CodeGen(filename, bag, imports).run(prog);
+                                       const ImportTable* imports, const Analysis* analysis) {
+  return CodeGen(filename, bag, imports, analysis).run(prog);
 }
 
 } // namespace vx::compiler

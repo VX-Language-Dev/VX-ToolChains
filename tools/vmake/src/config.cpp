@@ -23,11 +23,11 @@ namespace {
 
 namespace fs = std::filesystem;
 
+using vmake_shared::has_dotdot_component;
+using vmake_shared::is_absolute_path;
 using vmake_shared::is_c_source;
 using vmake_shared::is_cxx_source;
 using vmake_shared::is_vx_source;
-using vmake_shared::has_dotdot_component;
-using vmake_shared::is_absolute_path;
 using vmake_shared::valid_target_name;
 namespace Tok = vmake_shared; // 词法常量别名：Tok::Str / Tok::LBracket / ...
 
@@ -95,7 +95,7 @@ private:
   std::size_t cur_line_1() const { return static_cast<std::size_t>(cur().line) + 1; }
 
   const vmake_shared::Token& cur() const {
-    static const vmake_shared::Token k_end = []() {
+    static const vmake_shared::Token k_end = [] {
       vmake_shared::Token t;
       t.type = vmake_shared::TokType::End;
       return t;
@@ -103,8 +103,7 @@ private:
     return (pos_ < toks_.size()) ? toks_[pos_] : k_end;
   }
   bool eof() const {
-    return pos_ >= toks_.size() || cur().type == vmake_shared::TokType::End ||
-           cur().type == vmake_shared::TokType::Bad;
+    return pos_ >= toks_.size() || cur().type == vmake_shared::TokType::End || cur().type == vmake_shared::TokType::Bad;
   }
 
   void skip_newlines() {

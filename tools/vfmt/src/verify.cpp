@@ -22,7 +22,7 @@ void fp_expr(std::string& out, const Expr* e);
 void fp_stmt(std::string& out, const Stmt* s);
 
 void fp_expr(std::string& out, const Expr* e) {
-  if (!e) {
+  if (e == nullptr) {
     out += "nil;";
     return;
   }
@@ -173,7 +173,7 @@ void fp_body(std::string& out, std::span<const Stmt* const> body) {
 }
 
 void fp_stmt(std::string& out, const Stmt* s) {
-  if (!s) {
+  if (s == nullptr) {
     out += "nil;";
     return;
   }

@@ -72,7 +72,7 @@ static void print_help() {
                "                  also accepts --color=<when>)\n"
                "  --version       Print version\n"
                "  -h, --help      Show this help\n",
-               VERSION.data());
+               std::string(VERSION).c_str());
 }
 
 static int parse_args(int argc, char** argv, Options& opts) {
@@ -116,7 +116,7 @@ static int parse_args(int argc, char** argv, Options& opts) {
         }
         opts.includes.emplace_back(argv[++i]);
       } else {
-        opts.includes.emplace_back(std::string(a.substr(2)));
+        opts.includes.emplace_back(a.substr(2));
       }
     } else if (a == "--target") {
       if (i + 1 >= argc) {
@@ -151,7 +151,7 @@ struct AstStats {
 
 static AstStats count_toplevel(Program& prog) {
   AstStats s;
-  for (auto stmt : prog.stmts) {
+  for (const auto* stmt : prog.stmts) {
     switch (stmt->kind) {
       case NodeKind::FuncDecl:
         ++s.funcs;
@@ -186,7 +186,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (opts.version) {
-    std::fprintf(stdout, "VX Compiler %s\n", VERSION.data());
+    std::fprintf(stdout, "VX Compiler %s\n", std::string(VERSION).c_str());
     return 0;
   }
 
@@ -265,16 +265,17 @@ int main(int argc, char** argv) {
 
   // --- 阶段 4: 语义分析（符号表 + 类型环境检查）---
   // codegen 的前置门禁：语义错误时不再进入代码生成（codegen 只消费已验证的 AST）
-  if (!check_module(*prog, opts.source, bag, &*imports)) {
+  Analysis analysis;
+  if (!check_module(*prog, opts.source, bag, &*imports, &analysis)) {
     std::fputs(render_all(bag, *src_res, color).c_str(), stderr);
     return 1;
   }
   if (opts.verbose) {
-    std::fprintf(stderr, "  semantics: ok\n");
+    std::fprintf(stderr, "  semantics: ok (%zu resolved calls)\n", analysis.method_symbols.size());
   }
 
   // --- 阶段 5: TypeIR 代码生成 ---
-  auto ir_res = generate_module(*prog, opts.source, bag, &*imports);
+  auto ir_res = generate_module(*prog, opts.source, bag, &*imports, &analysis);
   if (!ir_res) {
     std::fputs(render_all(bag, *src_res, color).c_str(), stderr);
     return 1;

@@ -38,9 +38,9 @@ struct Cursor {
   std::uint32_t u32() {
     if (!need(4))
       return 0;
-    std::uint32_t v = (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos])) << 24) |
-                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos + 1])) << 16) |
-                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos + 2])) << 8) |
+    std::uint32_t v = (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos])) << 24u) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos + 1])) << 16u) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos + 2])) << 8u) |
                       static_cast<std::uint32_t>(static_cast<unsigned char>(data[pos + 3]));
     pos += 4;
     return v;
@@ -72,6 +72,8 @@ std::string_view tag_to_type(std::uint8_t tag) {
       return "string";
     case ir::TYPE_VOID:
       return "void";
+    case ir::TYPE_POINTER:
+      return "ptr";
     default:
       return "var";
   }
@@ -84,7 +86,7 @@ VxobjReadResult read_vxobj(std::string_view data) {
   Cursor c{data};
 
   // ---- 文件头 ----
-  if (data.size() < 5 || data.substr(0, 5) != "VXOBJ") {
+  if (data.size() < 5 || !data.starts_with("VXOBJ")) {
     r.error = "不是 VXOBJ 文件（magic 不匹配）";
     return r;
   }
@@ -99,9 +101,12 @@ VxobjReadResult read_vxobj(std::string_view data) {
   const std::uint32_t section_count = c.u32();
 
   // ---- 定位 TypeIR / Deps section ----
-  std::size_t typeir_off = 0, typeir_size = 0;
-  std::size_t deps_off = 0, deps_size = 0;
-  bool found = false, found_deps = false;
+  std::size_t typeir_off = 0;
+  std::size_t typeir_size = 0;
+  std::size_t deps_off = 0;
+  std::size_t deps_size = 0;
+  bool found = false;
+  bool found_deps = false;
   for (std::uint32_t i = 0; i < section_count; ++i) {
     const std::string name = c.str();
     const std::uint32_t off = c.u32();
@@ -166,7 +171,7 @@ VxobjReadResult read_vxobj(std::string_view data) {
     const std::uint32_t param_count = t.u32();
     const std::uint8_t has_return = t.u8();
     const std::uint8_t ret_tag = t.u8();
-    f.ret_type = has_return ? std::string(tag_to_type(ret_tag)) : "void";
+    f.ret_type = (has_return != 0U) ? std::string(tag_to_type(ret_tag)) : "void";
 
     for (std::uint32_t k = 0; k < param_count; ++k) {
       vx::compiler::Param p;
@@ -211,7 +216,7 @@ VxobjReadResult read_vxobj(std::string_view data) {
     e.from_cpp = t.u8() != 0;
     const std::uint8_t has_return = t.u8();
     const std::uint8_t ret_tag = t.u8();
-    e.ret_type = has_return ? std::string(tag_to_type(ret_tag)) : "void";
+    e.ret_type = (has_return != 0U) ? std::string(tag_to_type(ret_tag)) : "void";
     const std::uint32_t param_count = t.u32();
     for (std::uint32_t k = 0; k < param_count; ++k) {
       ir::AbiParam p;

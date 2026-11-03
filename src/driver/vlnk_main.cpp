@@ -62,7 +62,7 @@ static void print_help() {
                "\n"
                "Multiple .vxobj inputs are merged into one module (functions, linkage,\n"
                "library deps), enabling multi-file VX targets.\n",
-               VERSION.data());
+               std::string(VERSION).c_str());
 }
 
 static int parse_args(int argc, char** argv, Options& opts) {
@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (opts.version) {
-    std::fprintf(stdout, "%s\n", VERSION.data());
+    std::fprintf(stdout, "%s\n", std::string(VERSION).c_str());
     return 0;
   }
   if (opts.inputs.empty()) {

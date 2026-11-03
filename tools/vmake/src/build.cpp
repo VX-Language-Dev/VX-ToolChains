@@ -142,7 +142,7 @@ bool path_is_under(const fs::path& child, const fs::path& parent) {
   const std::string p = parent.lexically_normal().string();
   if (p.empty() || c.size() < p.size())
     return false;
-  if (c.compare(0, p.size(), p) != 0)
+  if (!c.starts_with(p))
     return false;
   return c.size() == p.size() || p.back() == fs::path::preferred_separator ||
          c[p.size()] == fs::path::preferred_separator;
@@ -184,8 +184,8 @@ std::string dependency_signature(const BuildOptions& opts) {
   for (const std::string& inc : opts.include_dirs)
     collect_files(fs::path(inc), {}, false, files);
   collect_files(opts.manifest_dir, opts.build_dir, true, files);
-  std::sort(files.begin(), files.end());
-  files.erase(std::unique(files.begin(), files.end()), files.end());
+  std::ranges::sort(files);
+  files.erase(std::ranges::unique(files).begin(), files.end());
 
   std::string sig;
   add_field(sig, "vmake-deps-v1");
@@ -256,7 +256,7 @@ std::string depfile_signature(const fs::path& depfile) {
   std::vector<std::string> tokens;
   std::string cur;
   bool esc = false;
-  auto flush = [&]() {
+  auto flush = [&] {
     if (!cur.empty()) {
       tokens.push_back(cur);
       cur.clear();
@@ -283,7 +283,7 @@ std::string depfile_signature(const fs::path& depfile) {
     return "none"; // 只有目标，无依赖（理论边缘）
   // 排序：clang 列出的顺序稳定但不作假设，排序保证签名与顺序无关
   std::vector<std::string> deps(tokens.begin() + 1, tokens.end());
-  std::sort(deps.begin(), deps.end());
+  std::ranges::sort(deps);
   std::string sig;
   add_field(sig, "vmake-depfile-v1");
   for (const std::string& d : deps) {
@@ -460,7 +460,7 @@ std::size_t worker_count(const BuildOptions& opts, std::size_t job_count) {
 
 // 判断库条目是否是路径型（含路径分隔符或常见后缀）→ --lib；否则裸名 → -l
 bool looks_like_lib_path(std::string_view lib) {
-  if (lib.find('/') != std::string_view::npos)
+  if (lib.contains('/'))
     return true;
 #ifdef _WIN32
   if (lib.find('\\') != std::string_view::npos)
@@ -530,14 +530,14 @@ int run_compile_jobs(const std::vector<CompileJob>& jobs, const std::vector<Targ
   std::size_t failed_index = 0;
   ProcessResult failed_result;
 
-  auto worker = [&]() {
+  auto worker = [&] {
     while (!stop.load(std::memory_order_relaxed)) {
       const std::size_t k = next.fetch_add(1);
       if (k >= jobs.size())
         return;
       ProcessResult r = run_process(jobs[k].program, jobs[k].args, opts.child_env);
       if (!r.ok) {
-        std::lock_guard<std::mutex> lk(failure_mutex);
+        std::scoped_lock lk(failure_mutex);
         if (!failed || k < failed_index) {
           failed = true;
           failed_index = k;
@@ -673,7 +673,7 @@ std::vector<const Target*> plan_order(const Manifest& manifest, const std::vecto
     }
   }
 
-  auto is_wanted = [&](const Target& t) { return wanted.count(t.name) > 0; };
+  auto is_wanted = [&](const Target& t) { return wanted.contains(t.name); };
   std::vector<const Target*> plan;
   // StaticLib 先构建 → Dylib → Exe：静态库是对象归档，dylib/exe 可依赖；
   // dylib 先于 exe：exe 可依赖 dylib。组内保持声明顺序。
@@ -778,8 +778,8 @@ int build_manifest(const Manifest& manifest, const BuildOptions& opts) {
         // .c 按 C++ 编译导致符号修饰不一致）
         job.args = {"-c", "-x", is_cxx ? "c++" : "c", source.string(), "-o", object.string()};
         // -MMD -MF：编译同时写出头依赖文件（不含系统头），供下次签名计算
-        job.args.push_back("-MMD");
-        job.args.push_back("-MF");
+        job.args.emplace_back("-MMD");
+        job.args.emplace_back("-MF");
         job.args.push_back(depfile_for(object).string());
         if (!opts.target.empty()) {
           job.args.push_back("--target=" + opts.target);
@@ -792,15 +792,15 @@ int build_manifest(const Manifest& manifest, const BuildOptions& opts) {
         job.tool_label = "vxc";
         job.args = {source.string(), "-o", object.string(), "--color", opts.color ? "always" : "never"};
         for (const std::string& inc : opts.include_dirs) {
-          job.args.push_back("-I");
+          job.args.emplace_back("-I");
           job.args.push_back(inc);
         }
         if (!opts.target.empty()) {
-          job.args.push_back("--target");
+          job.args.emplace_back("--target");
           job.args.push_back(opts.target);
         }
         if (opts.verbose)
-          job.args.push_back("-v");
+          job.args.emplace_back("-v");
       }
 
       std::string source_digest;
@@ -1027,23 +1027,23 @@ int build_manifest(const Manifest& manifest, const BuildOptions& opts) {
       if (obj.extension() == ".vxobj")
         args.push_back(obj.string());
     }
-    args.push_back("-o");
+    args.emplace_back("-o");
     args.push_back(tp.artifact.string());
     for (const fs::path& obj : tp.objects) {
       if (obj.extension() != ".vxobj") {
-        args.push_back("--lib");
+        args.emplace_back("--lib");
         args.push_back(obj.string());
       }
     }
     if (t.kind == TargetKind::Dylib)
-      args.push_back("--shared");
+      args.emplace_back("--shared");
     if (!opts.target.empty()) {
-      args.push_back("--target");
+      args.emplace_back("--target");
       args.push_back(opts.target);
     }
     // 额外 clang 参数（cflags + defines → -D...）：透传 vlnk --cflag
     for (const std::string& f : flags.cflags) {
-      args.push_back("--cflag");
+      args.emplace_back("--cflag");
       args.push_back(f);
     }
     // lib_dirs：CLI --lib-dir 合并到目标配置；CLI 优先（放在前面）
@@ -1055,13 +1055,13 @@ int build_manifest(const Manifest& manifest, const BuildOptions& opts) {
     }
     // deps 产物（dylib/staticlib）→ --lib <path>
     for (const std::string& lib : lib_args) {
-      args.push_back("--lib");
+      args.emplace_back("--lib");
       args.push_back(lib);
     }
     // 外部 libs：路径型 → --lib；裸名 → -l<name>
     for (const std::string& l : t.libs) {
       if (looks_like_lib_path(l)) {
-        args.push_back("--lib");
+        args.emplace_back("--lib");
         args.push_back(l);
       } else {
         args.push_back("-l" + l);
@@ -1078,16 +1078,16 @@ int build_manifest(const Manifest& manifest, const BuildOptions& opts) {
     }
     if (any_cxx) {
       const std::string cxx_lib = vx::util::host_os() == "macosx" ? "-lc++" : "-lstdc++";
-      args.push_back("--ldflag");
+      args.emplace_back("--ldflag");
       args.push_back(cxx_lib);
     }
     // 链接器参数：透传 vlnk --ldflag（置于 clang 命令末尾）
     for (const std::string& f : flags.ldflags) {
-      args.push_back("--ldflag");
+      args.emplace_back("--ldflag");
       args.push_back(f);
     }
     if (opts.verbose)
-      args.push_back("-v");
+      args.emplace_back("-v");
 
     ++step;
     std::fprintf(stderr, "[ %zu/%zu] %s %s\n", step, total_steps, opts.color ? "\033[1;32mvlnk\033[0m" : "vlnk",

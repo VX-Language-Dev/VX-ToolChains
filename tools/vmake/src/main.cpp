@@ -7,6 +7,7 @@
 
 #include "vx/util/fs.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -102,7 +103,7 @@ static void print_help() {
                "\n"
                "Environment: VX_VXC / VX_VLNK / VX_CC / VX_AR override toolchain paths; "
                "VX_HEADERS_DIR / VX_HEADERS override the import library root.\n",
-               VERSION.data());
+               std::string(VERSION).c_str());
 }
 
 static int parse_args(int argc, char** argv, CliOptions& opts) {
@@ -124,8 +125,7 @@ static int parse_args(int argc, char** argv, CliOptions& opts) {
       } else {
         opts.jobs = std::stoi(std::string(a.substr(2)));
       }
-      if (opts.jobs < 0)
-        opts.jobs = 0;
+      opts.jobs = std::max(opts.jobs, 0);
     } else if (a == "-B" || a.starts_with("-B")) {
       if (a == "-B") {
         if (i + 1 >= argc) {
@@ -145,7 +145,7 @@ static int parse_args(int argc, char** argv, CliOptions& opts) {
         }
         opts.include_dirs.emplace_back(argv[++i]);
       } else {
-        opts.include_dirs.emplace_back(std::string(a.substr(2)));
+        opts.include_dirs.emplace_back(a.substr(2));
       }
     } else if (a == "--lib-dir") {
       if (i + 1 >= argc) {
@@ -154,7 +154,7 @@ static int parse_args(int argc, char** argv, CliOptions& opts) {
       }
       opts.lib_dirs.emplace_back(argv[++i]);
     } else if (a.starts_with("--lib-dir=")) {
-      opts.lib_dirs.emplace_back(std::string(a.substr(10)));
+      opts.lib_dirs.emplace_back(a.substr(10));
     } else if (a == "--target") {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "error: --target requires a triple argument\n");
@@ -409,7 +409,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (cli.version) {
-    std::fprintf(stdout, "vmake %s\n", VERSION.data());
+    std::fprintf(stdout, "vmake %s\n", std::string(VERSION).c_str());
     return 0;
   }
   if (cli.command == Command::Clean) {

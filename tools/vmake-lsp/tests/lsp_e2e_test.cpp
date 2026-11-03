@@ -102,22 +102,24 @@ public:
   // 发送请求并等待对应 id 的响应；期间收到的通知放入 notifications
   json::Value request(const std::string& method, const json::Value& params, std::vector<json::Value>& notifications) {
     const int id = next_id_++;
-    json::Value msg = json::Value::object({{"jsonrpc", json::Value::string("2.0")},
-                                           {"id", json::Value::number(id)},
-                                           {"method", json::Value::string(method)},
-                                           {"params", params}});
+    json::Value msg = json::Value::object({
+        {"jsonrpc", json::Value::string("2.0")},
+        {"id", json::Value::number(id)},
+        {"method", json::Value::string(method)},
+        {"params", params},
+    });
     if (!send_raw(msg.dump()))
-      return json::Value();
+      return {};
     for (;;) {
       json::Value v;
       if (!read_value(v))
-        return json::Value();
+        return {};
       const json::Value* rid = v.find("id");
       if (rid == nullptr) {
         notifications.push_back(v);
         continue;
       }
-      if ((int)rid->as_number() == id)
+      if (static_cast<int>(rid->as_number()) == id)
         return v;
     }
   }
@@ -135,12 +137,12 @@ public:
       std::string lower = header;
       for (char& c : lower) {
         if (c >= 'A' && c <= 'Z')
-          c = (char)(c - 'A' + 'a');
+          c = static_cast<char>(c - 'A' + 'a');
       }
       const std::string key = "content-length:";
       const std::size_t pos = lower.find(key);
       if (pos != std::string::npos) {
-        length = (std::size_t)std::atoll(lower.c_str() + pos + key.size());
+        length = static_cast<std::size_t>(std::strtoll(lower.c_str() + pos + key.size(), nullptr, 10));
         found = true;
       }
     }
@@ -153,7 +155,7 @@ public:
       ssize_t n = ::read(out_fd_, body.data() + got, length - got);
       if (n <= 0)
         return false;
-      got += (std::size_t)n;
+      got += static_cast<std::size_t>(n);
     }
     auto parsed = json::parse(body);
     if (!parsed)
@@ -182,19 +184,19 @@ public:
   }
 
 private:
-  bool write_all(const std::string& s) {
+  bool write_all(const std::string& s) const {
     std::size_t done = 0;
     while (done < s.size()) {
       ssize_t n = ::write(in_fd_, s.data() + done, s.size() - done);
       if (n <= 0)
         return false;
-      done += (std::size_t)n;
+      done += static_cast<std::size_t>(n);
     }
     return true;
   }
 
   // 读一行（不含换行符）
-  bool read_line(std::string& out) {
+  bool read_line(std::string& out) const {
     out.clear();
     char c = 0;
     for (;;) {
@@ -218,9 +220,16 @@ private:
 
 // ---- 测试辅助 ----
 json::Value pos_params(const std::string& uri, int line, int character) {
-  return json::Value::object({{"textDocument", json::Value::object({{"uri", json::Value::string(uri)}})},
-                              {"position", json::Value::object({{"line", json::Value::number(line)},
-                                                                {"character", json::Value::number(character)}})}});
+  return json::Value::object({
+      {"textDocument", json::Value::object({{"uri", json::Value::string(uri)}})},
+      {
+          "position",
+          json::Value::object({
+              {"line", json::Value::number(line)},
+              {"character", json::Value::number(character)},
+          }),
+      },
+  });
 }
 
 json::Value doc_params(const std::string& uri) {
@@ -279,7 +288,7 @@ void test_session() {
   // 1. initialize：能力声明
   json::Value init =
       client.request("initialize", json::Value::object({{"capabilities", json::Value::object({})}}), notifications);
-  const json::Value* caps = init.find("result") ? init.find("result")->find("capabilities") : nullptr;
+  const json::Value* caps = (init.find("result") != nullptr) ? init.find("result")->find("capabilities") : nullptr;
   CHECK(caps != nullptr);
   if (caps != nullptr) {
     CHECK(caps->find("documentSymbolProvider") != nullptr);
@@ -295,23 +304,30 @@ void test_session() {
   const std::string good = "exe(\"app\", sources=[\n  \"src/main.vx\",\n  \"src/util.vx\",\n])\n"
                            "\n"
                            "dylib(\"calc\", sources=[\"src/calc.vx\"], output=\"libcalc.dylib\")\n";
-  client.notify("textDocument/didOpen",
-                json::Value::object({{"textDocument", json::Value::object({{"uri", json::Value::string(uri)},
-                                                                           {"languageId", json::Value::string("vmake")},
-                                                                           {"version", json::Value::number(1)},
-                                                                           {"text", json::Value::string(good)}})}}));
+  client.notify("textDocument/didOpen", json::Value::object({
+                                            {
+                                                "textDocument",
+                                                json::Value::object({
+                                                    {"uri", json::Value::string(uri)},
+                                                    {"languageId", json::Value::string("vmake")},
+                                                    {"version", json::Value::number(1)},
+                                                    {"text", json::Value::string(good)},
+                                                }),
+                                            },
+                                        }));
   json::Value diag_msg;
   CHECK(client.read_value(diag_msg));
   CHECK(diag_msg.find("method") != nullptr);
   if (diag_msg.find("method") != nullptr) {
     CHECK(diag_msg.find("method")->as_string() == "textDocument/publishDiagnostics");
   }
-  const json::Value* diags = diag_msg.find("params") ? diag_msg.find("params")->find("diagnostics") : nullptr;
+  const json::Value* diags =
+      (diag_msg.find("params") != nullptr) ? diag_msg.find("params")->find("diagnostics") : nullptr;
   CHECK(array_size(diags) == 0);
 
   // 2b. 拉取式诊断（textDocument/diagnostic）：合法文件 → 空列表
   json::Value pull = client.request("textDocument/diagnostic", doc_params(uri), notifications);
-  const json::Value* pull_items = pull.find("result") ? pull.find("result")->find("items") : nullptr;
+  const json::Value* pull_items = (pull.find("result") != nullptr) ? pull.find("result")->find("items") : nullptr;
   CHECK(pull_items != nullptr);
   CHECK(array_size(pull_items) == 0);
 
@@ -326,7 +342,7 @@ void test_session() {
 
   // 4. hover：目标名
   json::Value hov = client.request("textDocument/hover", pos_params(uri, 5, 8), notifications);
-  const json::Value* contents = hov.find("result") ? hov.find("result")->find("contents") : nullptr;
+  const json::Value* contents = (hov.find("result") != nullptr) ? hov.find("result")->find("contents") : nullptr;
   CHECK(contents != nullptr);
   if (contents != nullptr) {
     const json::Value* value = contents->find("value");
@@ -338,7 +354,7 @@ void test_session() {
 
   // 5. definition：跳到目标名
   json::Value def = client.request("textDocument/definition", pos_params(uri, 5, 9), notifications);
-  const json::Value* def_range = def.find("result") ? def.find("result")->find("range") : nullptr;
+  const json::Value* def_range = (def.find("result") != nullptr) ? def.find("result")->find("range") : nullptr;
   CHECK(def_range != nullptr);
   if (def_range != nullptr) {
     const json::Value* start = def_range->find("start");
@@ -351,7 +367,7 @@ void test_session() {
 
   // 5b. definition：源文件元素 → 磁盘上的 .vx 文件（<清单目录>/src/main.vx）
   json::Value def_src = client.request("textDocument/definition", pos_params(uri, 1, 4), notifications);
-  const json::Value* src_uri = def_src.find("result") ? def_src.find("result")->find("uri") : nullptr;
+  const json::Value* src_uri = (def_src.find("result") != nullptr) ? def_src.find("result")->find("uri") : nullptr;
   CHECK(src_uri != nullptr);
   if (src_uri != nullptr) {
     CHECK(src_uri->as_string() == "file://" + project + "/src/main.vx");
@@ -369,7 +385,7 @@ void test_session() {
     const json::Value& it = items->as_array()[0];
     CHECK(it.find("label")->as_string() == "[\"\"]");
     CHECK(it.find("insertText") != nullptr);
-    if (it.find("insertText")) {
+    if (it.find("insertText") != nullptr) {
       CHECK(it.find("insertText")->as_string() == "[\"$0\"]");
     }
   }
@@ -377,24 +393,32 @@ void test_session() {
   // 7. formatting：规范化为单行
   client.notify(
       "textDocument/didChange",
-      json::Value::object(
-          {{"textDocument",
-            json::Value::object({{"uri", json::Value::string(uri)}, {"version", json::Value::number(2)}})},
-           {"contentChanges", json::Value::array({json::Value::object(
-                                  {{"text", json::Value::string("exe( \"app\" ,sources=[\"a.vx\"] )\n")}})})}}));
+      json::Value::object({
+          {
+              "textDocument",
+              json::Value::object({{"uri", json::Value::string(uri)}, {"version", json::Value::number(2)}}),
+          },
+          {
+              "contentChanges",
+              json::Value::array({
+                  json::Value::object({{"text", json::Value::string("exe( \"app\" ,sources=[\"a.vx\"] )\n")}}),
+              }),
+          },
+      }));
   json::Value changed;
   CHECK(client.read_value(changed)); // 诊断通知
-  json::Value fmt =
-      client.request("textDocument/formatting",
-                     json::Value::object({{"textDocument", json::Value::object({{"uri", json::Value::string(uri)}})},
-                                          {"options", json::Value::object({{"tabSize", json::Value::number(2)}})}}),
-                     notifications);
+  json::Value fmt = client.request("textDocument/formatting",
+                                   json::Value::object({
+                                       {"textDocument", json::Value::object({{"uri", json::Value::string(uri)}})},
+                                       {"options", json::Value::object({{"tabSize", json::Value::number(2)}})},
+                                   }),
+                                   notifications);
   const json::Value* edits = fmt.find("result");
   CHECK(array_size(edits) == 1);
   if (array_size(edits) == 1) {
     const json::Value& e = edits->as_array()[0];
     CHECK(e.find("newText") != nullptr);
-    if (e.find("newText")) {
+    if (e.find("newText") != nullptr) {
       CHECK(e.find("newText")->as_string() == "exe(\"app\", sources=[\"a.vx\"])");
     }
   }
@@ -402,10 +426,13 @@ void test_session() {
   // 8. foldingRange：多行目标可折叠
   client.notify(
       "textDocument/didChange",
-      json::Value::object(
-          {{"textDocument",
-            json::Value::object({{"uri", json::Value::string(uri)}, {"version", json::Value::number(3)}})},
-           {"contentChanges", json::Value::array({json::Value::object({{"text", json::Value::string(good)}})})}}));
+      json::Value::object({
+          {
+              "textDocument",
+              json::Value::object({{"uri", json::Value::string(uri)}, {"version", json::Value::number(3)}}),
+          },
+          {"contentChanges", json::Value::array({json::Value::object({{"text", json::Value::string(good)}})})},
+      }));
   json::Value changed2;
   CHECK(client.read_value(changed2));
   json::Value folds = client.request("textDocument/foldingRange", doc_params(uri), notifications);
@@ -413,14 +440,22 @@ void test_session() {
 
   // 9. didChange：非法文件 → 出现诊断
   client.notify("textDocument/didChange",
-                json::Value::object(
-                    {{"textDocument",
-                      json::Value::object({{"uri", json::Value::string(uri)}, {"version", json::Value::number(4)}})},
-                     {"contentChanges", json::Value::array({json::Value::object(
-                                            {{"text", json::Value::string("exe(\"a\", sources=[\"a.txt\"])\n")}})})}}));
+                json::Value::object({
+                    {
+                        "textDocument",
+                        json::Value::object({{"uri", json::Value::string(uri)}, {"version", json::Value::number(4)}}),
+                    },
+                    {
+                        "contentChanges",
+                        json::Value::array({
+                            json::Value::object({{"text", json::Value::string("exe(\"a\", sources=[\"a.txt\"])\n")}}),
+                        }),
+                    },
+                }));
   json::Value bad_diag;
   CHECK(client.read_value(bad_diag));
-  const json::Value* bad_list = bad_diag.find("params") ? bad_diag.find("params")->find("diagnostics") : nullptr;
+  const json::Value* bad_list =
+      (bad_diag.find("params") != nullptr) ? bad_diag.find("params")->find("diagnostics") : nullptr;
   CHECK(array_size(bad_list) == 1);
   if (array_size(bad_list) == 1) {
     CHECK(bad_list->as_array()[0].find("message")->as_string().find(".vx") != std::string::npos);
@@ -431,12 +466,14 @@ void test_session() {
                 json::Value::object({{"textDocument", json::Value::object({{"uri", json::Value::string(uri)}})}}));
   json::Value save_diag;
   CHECK(client.read_value(save_diag));
-  const json::Value* save_list = save_diag.find("params") ? save_diag.find("params")->find("diagnostics") : nullptr;
+  const json::Value* save_list =
+      (save_diag.find("params") != nullptr) ? save_diag.find("params")->find("diagnostics") : nullptr;
   CHECK(array_size(save_list) == 1);
 
   // 9c. 拉取式诊断：同一错误也能取到
   json::Value pull_bad = client.request("textDocument/diagnostic", doc_params(uri), notifications);
-  const json::Value* pull_bad_items = pull_bad.find("result") ? pull_bad.find("result")->find("items") : nullptr;
+  const json::Value* pull_bad_items =
+      (pull_bad.find("result") != nullptr) ? pull_bad.find("result")->find("items") : nullptr;
   CHECK(array_size(pull_bad_items) == 1);
 
   // 10. shutdown / exit

@@ -44,7 +44,7 @@ bool fails_with(std::string_view text, std::string_view needle) {
   }
   if (errors.empty() || errors[0].line == 0)
     return false;
-  const bool match = errors[0].message.find(needle) != std::string::npos;
+  const bool match = errors[0].message.contains(needle);
   if (!match) {
     std::fprintf(stderr, "  expected '%s', got: %s\n", std::string(needle).c_str(), errors[0].message.c_str());
   }

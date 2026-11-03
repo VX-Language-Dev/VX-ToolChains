@@ -45,18 +45,23 @@ ParseResult analyze_doc(const std::string& uri) {
 }
 
 Value range_value(const Range& r) {
-  return Value::object(
-      {{"start",
-        Value::object({{"line", Value::number(r.start.line)}, {"character", Value::number(r.start.character)}})},
-       {"end", Value::object({{"line", Value::number(r.end.line)}, {"character", Value::number(r.end.character)}})}});
+  return Value::object({
+      {
+          "start",
+          Value::object({{"line", Value::number(r.start.line)}, {"character", Value::number(r.start.character)}}),
+      },
+      {"end", Value::object({{"line", Value::number(r.end.line)}, {"character", Value::number(r.end.character)}})},
+  });
 }
 
 Value diag_value(const Diagnostic& d) {
-  return Value::object({{"range", range_value(d.range)},
-                        {"severity", Value::number(d.severity)},
-                        {"code", Value::string("VMAKE")},
-                        {"source", Value::string("vmake-lsp")},
-                        {"message", Value::string(d.message)}});
+  return Value::object({
+      {"range", range_value(d.range)},
+      {"severity", Value::number(d.severity)},
+      {"code", Value::string("VMAKE")},
+      {"source", Value::string("vmake-lsp")},
+      {"message", Value::string(d.message)},
+  });
 }
 
 // 诊断数组（推送与拉取共用）
@@ -89,27 +94,51 @@ void handle_pull_diagnostics(const LspMessage& req) {
 }
 
 void handle_initialize(const LspMessage& req) {
-  Value caps =
-      Value::object({{"textDocumentSync", Value::object({{"openClose", Value::boolean(true)},
-                                                         {"change", Value::number(2)}, // Incremental：didChange 增量编辑
-                                                         {"save", Value::object({})}})},
-                     // 拉取式诊断（textDocument/diagnostic），同时保留推送式 publishDiagnostics
-                     {"diagnosticProvider", Value::object({{"identifier", Value::string("vmake")},
-                                                           {"interFileDependencies", Value::boolean(false)},
-                                                           {"workspaceDiagnostics", Value::boolean(false)}})},
-                     {"documentSymbolProvider", Value::boolean(true)},
-                     {"hoverProvider", Value::boolean(true)},
-                     {"definitionProvider", Value::boolean(true)},
-                     {"formattingProvider", Value::boolean(true)},
-                     {"foldingRangeProvider", Value::boolean(true)},
-                     {"completionProvider",
-                      Value::object({{"triggerCharacters",
-                                      Value::array({Value::string("."), Value::string("="), Value::string("("),
-                                                    Value::string(","), Value::string("\""), Value::string("'")})},
-                                     {"resolveProvider", Value::boolean(false)}})}});
-  Value result = Value::object(
-      {{"capabilities", caps},
-       {"serverInfo", Value::object({{"name", Value::string("vmake-lsp")}, {"version", Value::string(kVersion)}})}});
+  Value caps = Value::object({
+      {
+          "textDocumentSync",
+          Value::object({
+              {"openClose", Value::boolean(true)},
+              {"change", Value::number(2)}, // Incremental：didChange 增量编辑
+              {"save", Value::object({})},
+          }),
+      },
+      // 拉取式诊断（textDocument/diagnostic），同时保留推送式 publishDiagnostics
+      {
+          "diagnosticProvider",
+          Value::object({
+              {"identifier", Value::string("vmake")},
+              {"interFileDependencies", Value::boolean(false)},
+              {"workspaceDiagnostics", Value::boolean(false)},
+          }),
+      },
+      {"documentSymbolProvider", Value::boolean(true)},
+      {"hoverProvider", Value::boolean(true)},
+      {"definitionProvider", Value::boolean(true)},
+      {"formattingProvider", Value::boolean(true)},
+      {"foldingRangeProvider", Value::boolean(true)},
+      {
+          "completionProvider",
+          Value::object({
+              {
+                  "triggerCharacters",
+                  Value::array({
+                      Value::string("."),
+                      Value::string("="),
+                      Value::string("("),
+                      Value::string(","),
+                      Value::string("\""),
+                      Value::string("'"),
+                  }),
+              },
+              {"resolveProvider", Value::boolean(false)},
+          }),
+      },
+  });
+  Value result = Value::object({
+      {"capabilities", caps},
+      {"serverInfo", Value::object({{"name", Value::string("vmake-lsp")}, {"version", Value::string(kVersion)}})},
+  });
   send_response(req, result);
   g_initialized = true;
 }
@@ -152,13 +181,11 @@ static std::size_t vmake_pos_to_offset(const std::string& text, int line, int ch
     line_end = text.size();
   std::size_t len = line_end - line_start;
   int c = character;
-  if (c < 0)
-    c = 0;
-  if ((std::size_t)c > len)
-    c = (int)len;
-  off += (std::size_t)c;
-  if (off > text.size())
-    off = text.size();
+  c = std::max(c, 0);
+  if (std::cmp_greater(c, len))
+    c = static_cast<int>(len);
+  off += static_cast<std::size_t>(c);
+  off = std::min(off, text.size());
   (void)start;
   (void)pos;
   (void)i;
@@ -184,7 +211,10 @@ void handle_did_change(const Value& params) {
   std::string& doc = it->second;
   for (const Value& ch : changes->as_array()) {
     if (const Value* r = ch.find("range")) {
-      int sl = 0, sc = 0, el = 0, ec = 0;
+      int sl = 0;
+      int sc = 0;
+      int el = 0;
+      int ec = 0;
       if (const Value* st = r->find("start")) {
         sl = st->int_or("line", 0);
         sc = st->int_or("character", 0);
@@ -297,18 +327,21 @@ void handle_document_symbol(const LspMessage& req) {
       detail += " → output=";
       detail += *t.output;
     }
-    syms.push_back(Value::object({{"name", Value::string(t.name)},
-                                  {"detail", Value::string(detail)},
-                                  {"kind", Value::number(12)}, // SymbolKind.Function
-                                  {"range", range_value(t.call_range)},
-                                  {"selectionRange", range_value(t.name_range)}}));
+    syms.push_back(Value::object({
+        {"name", Value::string(t.name)},
+        {"detail", Value::string(detail)},
+        {"kind", Value::number(12)}, // SymbolKind.Function
+        {"range", range_value(t.call_range)},
+        {"selectionRange", range_value(t.name_range)},
+    }));
   }
   send_response(req, Value::array(syms));
 }
 
 void handle_hover(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     send_response(req, Value{});
     return;
@@ -340,7 +373,7 @@ void handle_hover(const LspMessage& req) {
       md += "- 类型：`" + std::string(kind_name(t.kind)) + "`\n";
       md += "- 源文件：";
       for (std::size_t i = 0; i < t.sources.size(); ++i) {
-        if (i)
+        if (i != 0U)
           md += ", ";
         md += "`" + t.sources[i] + "`";
       }
@@ -350,7 +383,7 @@ void handle_hover(const LspMessage& req) {
       if (!t.deps.empty()) {
         md += "- 依赖：";
         for (std::size_t i = 0; i < t.deps.size(); ++i) {
-          if (i)
+          if (i != 0U)
             md += ", ";
           md += "`" + t.deps[i] + "`";
         }
@@ -359,7 +392,7 @@ void handle_hover(const LspMessage& req) {
       if (!t.libs.empty()) {
         md += "- 外部库：";
         for (std::size_t i = 0; i < t.libs.size(); ++i) {
-          if (i)
+          if (i != 0U)
             md += ", ";
           md += "`" + t.libs[i] + "`";
         }
@@ -368,7 +401,7 @@ void handle_hover(const LspMessage& req) {
       if (!t.lib_dirs.empty()) {
         md += "- 库搜索目录：";
         for (std::size_t i = 0; i < t.lib_dirs.size(); ++i) {
-          if (i)
+          if (i != 0U)
             md += ", ";
           md += "`" + t.lib_dirs[i] + "`";
         }
@@ -471,8 +504,15 @@ void handle_hover(const LspMessage& req) {
       send_response(req, Value{});
       return;
   }
-  send_response(req, Value::object({{"contents", Value::object({{"kind", Value::string("markdown")},
-                                                                {"value", Value::string(md)}})}}));
+  send_response(req, Value::object({
+                         {
+                             "contents",
+                             Value::object({
+                                 {"kind", Value::string("markdown")},
+                                 {"value", Value::string(md)},
+                             }),
+                         },
+                     }));
 }
 
 // 将「清单 URI 所在目录 + 相对源路径」拼成源文件 URI（如 file:///tmp/src/main.vx）。
@@ -497,7 +537,8 @@ std::optional<std::string> resolve_source_uri(const std::string& manifest_uri, c
 
 void handle_definition(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     send_response(req, Value{});
     return;
@@ -526,8 +567,10 @@ void handle_definition(const LspMessage& req) {
       // 源文件 → 跳到磁盘上的 .vx 文件（相对清单所在目录）
       const std::size_t idx = find_source_index(t, line, character);
       if (std::optional<std::string> src_uri = resolve_source_uri(uri, t.sources[idx])) {
-        send_response(req, Value::object({{"uri", Value::string(*src_uri)},
-                                          {"range", range_value(Range{Position{0, 0}, Position{0, 0}})}}));
+        send_response(req, Value::object({
+                               {"uri", Value::string(*src_uri)},
+                               {"range", range_value(Range{Position{0, 0}, Position{0, 0}})},
+                           }));
         return;
       }
       send_response(req, Value{}); // 文件不存在 → 不提供跳转
@@ -555,8 +598,10 @@ void handle_definition(const LspMessage& req) {
       const ArrayField& f = t.extra_arrays[hit.extra_index];
       if (f.key == "tests" && hit.elem_index < f.values.size()) {
         if (std::optional<std::string> src_uri = resolve_source_uri(uri, f.values[hit.elem_index])) {
-          send_response(req, Value::object({{"uri", Value::string(*src_uri)},
-                                            {"range", range_value(Range{Position{0, 0}, Position{0, 0}})}}));
+          send_response(req, Value::object({
+                                 {"uri", Value::string(*src_uri)},
+                                 {"range", range_value(Range{Position{0, 0}, Position{0, 0}})},
+                             }));
           return;
         }
       }
@@ -614,9 +659,9 @@ struct ScanCtx {
 static ScanCtx scan_before(const std::string& text, int line, int character) {
   auto lines = split_lines(text);
   ScanCtx sc;
-  for (int l = 0; l <= line && l < (int)lines.size(); ++l) {
+  for (int l = 0; l <= line && std::cmp_less(l, lines.size()); ++l) {
     const std::string& ln = lines[l];
-    int end = (l == line) ? std::min(character, (int)ln.size()) : (int)ln.size();
+    int end = (l == line) ? std::min(character, static_cast<int>(ln.size())) : static_cast<int>(ln.size());
     char quote = '\0';
     for (int i = 0; i < end; ++i) {
       char c = ln[i];
@@ -685,7 +730,8 @@ static ScanCtx scan_before(const std::string& text, int line, int character) {
 
 void handle_completion(const LspMessage& req) {
   std::string uri;
-  int line = 0, character = 0;
+  int line = 0;
+  int character = 0;
   if (!doc_and_pos(req.params, uri, line, character)) {
     send_response(req, Value::array({}));
     return;
@@ -757,16 +803,14 @@ void handle_completion(const LspMessage& req) {
 // 计算 (line, character) 在全文中的字节偏移
 static std::size_t offset_of(const std::vector<std::string>& lines, int line, int character) {
   std::size_t off = 0;
-  for (int i = 0; i < line && i < (int)lines.size(); ++i) {
+  for (int i = 0; i < line && std::cmp_less(i, lines.size()); ++i) {
     off += lines[i].size() + 1; // +1 为换行符
   }
-  if (line >= 0 && line < (int)lines.size()) {
+  if (line >= 0 && std::cmp_less(line, lines.size())) {
     int c = character;
-    if (c < 0)
-      c = 0;
-    if (c > (int)lines[line].size())
-      c = (int)lines[line].size();
-    off += (std::size_t)c;
+    c = std::max(c, 0);
+    c = std::min(c, static_cast<int>(lines[line].size()));
+    off += static_cast<std::size_t>(c);
   }
   return off;
 }
@@ -776,12 +820,9 @@ static std::string slice_range(const std::string& text, const Range& r) {
   auto lines = split_lines(text);
   std::size_t begin = offset_of(lines, r.start.line, r.start.character);
   std::size_t end = offset_of(lines, r.end.line, r.end.character);
-  if (end < begin)
-    end = begin;
-  if (begin > text.size())
-    begin = text.size();
-  if (end > text.size())
-    end = text.size();
+  end = std::max(end, begin);
+  begin = std::min(begin, text.size());
+  end = std::min(end, text.size());
   return text.substr(begin, end - begin);
 }
 
@@ -846,7 +887,7 @@ static std::string format_target(const VTarget& t) {
   out += quote_string(t.name);
   out += ", sources=[";
   for (std::size_t i = 0; i < t.sources.size(); ++i) {
-    if (i)
+    if (i != 0U)
       out += ", ";
     out += quote_string(t.sources[i]);
   }
@@ -858,7 +899,7 @@ static std::string format_target(const VTarget& t) {
   if (t.has_deps && !t.deps.empty()) {
     out += ", deps=[";
     for (std::size_t i = 0; i < t.deps.size(); ++i) {
-      if (i)
+      if (i != 0U)
         out += ", ";
       out += quote_string(t.deps[i]);
     }
@@ -867,7 +908,7 @@ static std::string format_target(const VTarget& t) {
   if (t.has_libs && !t.libs.empty()) {
     out += ", libs=[";
     for (std::size_t i = 0; i < t.libs.size(); ++i) {
-      if (i)
+      if (i != 0U)
         out += ", ";
       out += quote_string(t.libs[i]);
     }
@@ -876,7 +917,7 @@ static std::string format_target(const VTarget& t) {
   if (t.has_lib_dirs && !t.lib_dirs.empty()) {
     out += ", lib_dirs=[";
     for (std::size_t i = 0; i < t.lib_dirs.size(); ++i) {
-      if (i)
+      if (i != 0U)
         out += ", ";
       out += quote_string(t.lib_dirs[i]);
     }
@@ -888,7 +929,7 @@ static std::string format_target(const VTarget& t) {
     out += f.key;
     out += "=[";
     for (std::size_t i = 0; i < f.values.size(); ++i) {
-      if (i)
+      if (i != 0U)
         out += ", ";
       out += quote_string(f.values[i]);
     }
@@ -941,11 +982,13 @@ void handle_folding_range(const LspMessage& req) {
   auto add_fold = [&](const Range& rg) {
     if (rg.end.line <= rg.start.line)
       return; // 单行无需折叠
-    ranges.push_back(Value::object({{"startLine", Value::number(rg.start.line)},
-                                    {"startCharacter", Value::number(rg.start.character)},
-                                    {"endLine", Value::number(rg.end.line)},
-                                    {"endCharacter", Value::number(rg.end.character)},
-                                    {"kind", Value::string("region")}}));
+    ranges.push_back(Value::object({
+        {"startLine", Value::number(rg.start.line)},
+        {"startCharacter", Value::number(rg.start.character)},
+        {"endLine", Value::number(rg.end.line)},
+        {"endCharacter", Value::number(rg.end.character)},
+        {"kind", Value::string("region")},
+    }));
   };
   for (const auto& t : r.targets) {
     add_fold(t.call_range);
@@ -1019,8 +1062,8 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    if (m.method == "initialized") {
-      // 通知，无需响应
+    if (m.method == "initialized" || m.method == "$/cancelRequest" || m.method == "$/setTrace") {
+      // 通知 / 取消 / 跟踪，无需响应
     } else if (m.method == "shutdown") {
       vmake_lsp::g_shutdown = true;
       vmake_lsp::send_response(m, vmake_lsp::json::Value{});
@@ -1048,8 +1091,6 @@ int main(int argc, char** argv) {
       vmake_lsp::handle_formatting(m);
     } else if (m.method == "textDocument/foldingRange") {
       vmake_lsp::handle_folding_range(m);
-    } else if (m.method == "$/cancelRequest" || m.method == "$/setTrace") {
-      // 忽略
     } else if (m.has_id) {
       vmake_lsp::send_error(m, -32601, "方法不支持: " + m.method);
     }

@@ -87,7 +87,7 @@ void test_arith() {
     CHECK(f.instructions[i].op == expect_ops[i]);
   }
   CHECK(args_at(*m, 0, 0) == "i1");
-  CHECK(args_at(*m, 0, 5) == "");
+  CHECK(args_at(*m, 0, 5).empty());
 }
 
 void test_vars_assign() {
@@ -126,7 +126,9 @@ void test_if_elif_else() {
   CHECK(op_at(*m, 0, 9) == ir::OP_NOOP);
   CHECK(args_at(*m, 0, 9) == "L1");
   // elif 条件后的 JUMP_IF_FALSE 与末尾 end 标签
-  bool has_l3_jif = false, has_l3_label = false, has_end = false;
+  bool has_l3_jif = false;
+  bool has_l3_label = false;
+  bool has_end = false;
   for (const auto& inst : f.instructions) {
     if (inst.op == ir::OP_JUMP_IF_FALSE && inst.args == "L3") {
       has_l3_jif = true;
@@ -156,7 +158,8 @@ void test_while_break_continue() {
   CHECK(m);
   const auto& f = m->funcs[0];
   CHECK(f.local_count == 1); // 仅 i（隐藏变量只出现在 for）
-  bool jump_start = false, jump_end = false;
+  bool jump_start = false;
+  bool jump_end = false;
   for (std::size_t i = 0; i < f.instructions.size(); ++i) {
     if (f.instructions[i].op == ir::OP_JUMP && args_at(*m, 0, i) == "L1") {
       jump_start = true; // continue / 回跳
@@ -177,7 +180,9 @@ void test_for() {
   const auto& f = m->funcs[0];
   // 参数 xs=0；隐藏变量 iter/idx；循环变量 x
   CHECK(f.local_count == 4);
-  bool has_iter = false, has_idx = false, has_guard = false;
+  bool has_iter = false;
+  bool has_idx = false;
+  bool has_guard = false;
   for (std::size_t i = 0; i < f.instructions.size(); ++i) {
     if (f.instructions[i].op == ir::OP_STORE_VAR && args_at(*m, 0, i) == "1") {
       has_iter = true;
@@ -356,7 +361,10 @@ void test_short_circuit() {
                    "    return r\n");
   CHECK(m);
   const auto& f = m->funcs[0];
-  bool has_bool_and = false, has_jump_true = false, has_store = false, has_load = false;
+  bool has_bool_and = false;
+  bool has_jump_true = false;
+  bool has_store = false;
+  bool has_load = false;
   for (std::size_t i = 0; i < f.instructions.size(); ++i) {
     const auto op = f.instructions[i].op;
     if (op == ir::OP_BOOL_AND || op == ir::OP_BOOL_OR)
@@ -375,7 +383,8 @@ void test_short_circuit() {
   CHECK(has_store);
   CHECK(has_load);
   // 短路结果规范化：两条出 0 路径 + 一条出 1 路径（and 形态）
-  std::size_t const_i0 = 0, const_i1 = 0;
+  std::size_t const_i0 = 0;
+  std::size_t const_i1 = 0;
   for (const auto& inst : f.instructions) {
     if (inst.op == ir::OP_CONST_INT && inst.args == "i0")
       ++const_i0;
@@ -547,7 +556,8 @@ void test_float_var_propagation() {
                    "    var x = 1.5\n"
                    "    return x * 2.0\n");
   CHECK(m);
-  bool has_f64_mul = false, has_i32_mul = false;
+  bool has_f64_mul = false;
+  bool has_i32_mul = false;
   for (const auto& inst : m->funcs[0].instructions) {
     if (inst.op == ir::OP_F64_MUL)
       has_f64_mul = true;
@@ -582,7 +592,8 @@ void test_float_var_propagation() {
   // 参数声明类型参与传播：float 参数参与算术选 F64 族（旧版退化 I32 → 后端诊断）
   auto m4 = gen_src("func fp(x: float) -> float:\n    return x * 2.0\n");
   CHECK(m4);
-  bool has_f64_mul4 = false, has_i32_mul4 = false;
+  bool has_f64_mul4 = false;
+  bool has_i32_mul4 = false;
   for (const auto& inst : m4->funcs[0].instructions) {
     if (inst.op == ir::OP_F64_MUL)
       has_f64_mul4 = true;

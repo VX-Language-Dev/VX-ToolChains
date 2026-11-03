@@ -55,7 +55,7 @@ std::vector<fs::path> exe_relative_dirs(const fs::path& argv0) {
 std::vector<fs::path> path_dirs() {
   std::vector<fs::path> dirs;
   const char* path = std::getenv("PATH");
-  if (!path)
+  if (path == nullptr)
     return dirs;
   const std::string text(path);
   std::size_t start = 0;
@@ -74,7 +74,7 @@ std::vector<fs::path> path_dirs() {
 // 单个工具查找：环境变量优先；显式指向不可执行文件时报错而非静默回退。
 bool locate(const char* env_name, const std::vector<std::string>& names, const std::vector<fs::path>& dirs,
             const char* label, std::string& out, std::string& error) {
-  if (const char* env = std::getenv(env_name); env && env[0] != '\0') {
+  if (const char* env = std::getenv(env_name); (env != nullptr) && env[0] != '\0') {
     if (!is_executable(env)) {
       error = std::string(env_name) + " points to a non-executable file: " + env;
       return false;
@@ -108,7 +108,7 @@ std::optional<Toolchain> find_toolchain(const fs::path& argv0, std::string& erro
   // 此处定位到则记录，找不到不报错——真正编译 C/C++ 时再诊断。
   // 纯 C 驱动优先（clang++ 会把 .c 按 C++ 编译导致符号修饰不一致）。
   const std::vector<std::string> clang_names = {"clang", "cc", "gcc", "clang++", "c++", "g++"};
-  if (const char* env = std::getenv("VX_CC"); env && env[0] != '\0') {
+  if (const char* env = std::getenv("VX_CC"); (env != nullptr) && env[0] != '\0') {
     if (!is_executable(env)) {
       error = std::string("VX_CC points to a non-executable file: ") + env;
       return std::nullopt;

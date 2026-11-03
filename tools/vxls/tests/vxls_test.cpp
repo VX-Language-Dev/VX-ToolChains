@@ -36,7 +36,7 @@ void test_json_roundtrip() {
     CHECK(v->str_or("b") == "x");
     const json::Value* c = v->find("c");
     CHECK(c != nullptr && c->type() == json::Value::Type::Array);
-    if (c && c->as_array().size() == 3) {
+    if ((c != nullptr) && c->as_array().size() == 3) {
       CHECK(c->as_array()[0].as_bool());
       CHECK(c->as_array()[1].is_null());
       CHECK(c->as_array()[2].as_number() == 2.5);
@@ -182,7 +182,8 @@ void test_tidy_diagnostics() {
                           "    return 0\n";
   auto ds = vxls::tidy_diagnostics(src, "t.vx");
   CHECK(ds.size() == 2);
-  bool has_unused = false, has_nosuch = false;
+  bool has_unused = false;
+  bool has_nosuch = false;
   for (const auto& d : ds) {
     CHECK(d.source == "vx-tidy");
     if (d.code == "VXTIDY002") {
@@ -252,7 +253,8 @@ void test_completion_scope() {
   CHECK(has_param);
   // 内置运行时与关键字
   auto general = vxls::completion_at(src, 4, 4);
-  bool has_builtin = false, has_kw = false;
+  bool has_builtin = false;
+  bool has_kw = false;
   for (const auto& c : general) {
     if (c.label == "out_int")
       has_builtin = true;
@@ -275,7 +277,9 @@ void test_completion_member() {
                           "    p.\n";
   // 第 9 行 "    p."：光标紧跟 '.'（列 6）
   auto items = vxls::completion_at(src, 8, 6);
-  bool has_x = false, has_get = false, has_unrelated = false;
+  bool has_x = false;
+  bool has_get = false;
+  bool has_unrelated = false;
   for (const auto& c : items) {
     if (c.label == "x") {
       has_x = true;
@@ -312,7 +316,9 @@ void test_completion_type() {
                           "    var q: \n";
   // 第 5 行 "    var q: "：光标在冒号后（列 10）
   auto items = vxls::completion_at(src, 4, 10);
-  bool has_int = false, has_point = false, has_func = false;
+  bool has_int = false;
+  bool has_point = false;
+  bool has_func = false;
   for (const auto& c : items) {
     if (c.label == "int")
       has_int = true;
@@ -340,7 +346,8 @@ void test_completion_import_lib() {
                           "func main() -> int:\n"
                           "    math.\n";
   auto items = vxls::completion_at(src, 3, 9, std::filesystem::path(VX_SOURCE_DIR) / "headers");
-  bool has_add = false, has_mul = false;
+  bool has_add = false;
+  bool has_mul = false;
   for (const auto& c : items) {
     if (c.label == "add") {
       has_add = true;

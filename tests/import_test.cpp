@@ -198,13 +198,13 @@ void test_full_lib_set() {
   // 别名前缀解析到 math 主条目
   const ImportedLib* m = imports->lib_by_prefix("m");
   CHECK(m != nullptr);
-  if (m)
+  if (m != nullptr)
     CHECK(m->ref == "math" && m->name == "math");
 
   // text 库：string/bool/void 三类签名与 ABI 符号
   const ImportedLib* text = imports->lib_by_prefix("text");
   CHECK(text != nullptr);
-  if (text && text->symbols.size() == 3) {
+  if ((text != nullptr) && text->symbols.size() == 3) {
     CHECK(text->symbols[0].vx_name == "length");
     CHECK(text->symbols[0].abi_symbol == "_vx_text_length");
     CHECK(text->symbols[0].ret_type == "int");
@@ -220,7 +220,7 @@ void test_full_lib_set() {
   // fmath 库：float 签名
   const ImportedLib* fm = imports->lib_by_prefix("fmath");
   CHECK(fm != nullptr);
-  if (fm && fm->symbols.size() == 2) {
+  if ((fm != nullptr) && fm->symbols.size() == 2) {
     CHECK(fm->symbols[0].ret_type == "float");
     CHECK(fm->symbols[0].params[0].type == "float");
     CHECK(fm->symbols[0].abi_symbol == "_vx_fmath_halve");
@@ -383,13 +383,13 @@ void test_include_dirs() {
   // 1) 自定义库经 -I 命中
   const ImportedLib* my = imports->lib_by_prefix("mylib");
   CHECK(my != nullptr);
-  if (my)
+  if (my != nullptr)
     CHECK(ends_with(my->decl_file, "vx_import_test_inc/mylib.vxh"));
 
   // 2) -I 遮蔽 headers_root 同名库（quad 而非 add）
   const ImportedLib* math = imports->lib_by_prefix("math");
   CHECK(math != nullptr);
-  if (math) {
+  if (math != nullptr) {
     CHECK(ends_with(math->decl_file, "vx_import_test_inc/math.vxh"));
     CHECK(ImportTable::find_symbol(*math, "quad") != nullptr);
     CHECK(ImportTable::find_symbol(*math, "add") == nullptr);
@@ -398,7 +398,7 @@ void test_include_dirs() {
   // 3) @cppimp：头与伴生文件同在 -I 目录
   const ImportedLib* tool = imports->lib_by_prefix("tool");
   CHECK(tool != nullptr);
-  if (tool) {
+  if (tool != nullptr) {
     CHECK(tool->from_cpp);
     CHECK(ends_with(tool->cpp_header, "vx_import_test_inc/sub/tool.hpp"));
     CHECK(ends_with(tool->decl_file, "vx_import_test_inc/sub/tool.vxh"));

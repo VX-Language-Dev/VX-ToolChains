@@ -163,19 +163,21 @@ std::vector<fs::path> probe_driver_dirs(const char* cc) {
     ::dup2(fds[1], STDOUT_FILENO);
     ::dup2(fds[1], STDERR_FILENO);
     ::close(fds[1]);
-    char* argv[] = {const_cast<char*>(cc),
-                    const_cast<char*>("-E"),
-                    const_cast<char*>("-x"),
-                    const_cast<char*>("c++"),
-                    const_cast<char*>("-v"),
-                    const_cast<char*>("/dev/null"),
-                    nullptr};
+    char* argv[] = {
+        const_cast<char*>(cc),
+        const_cast<char*>("-E"),
+        const_cast<char*>("-x"),
+        const_cast<char*>("c++"),
+        const_cast<char*>("-v"),
+        const_cast<char*>("/dev/null"),
+        nullptr,
+    };
     ::execvp(cc, argv);
     ::_exit(127);
   }
   ::close(fds[1]);
   FILE* pipe = ::fdopen(fds[0], "r");
-  if (!pipe) {
+  if (pipe == nullptr) {
     ::close(fds[0]);
     ::waitpid(pid, nullptr, 0);
     return dirs;
@@ -185,11 +187,11 @@ std::vector<fs::path> probe_driver_dirs(const char* cc) {
   while (std::fgets(buf, sizeof(buf), pipe) != nullptr) {
     std::string_view line(buf);
     if (!in) {
-      if (line.find("#include <...> search starts here:") != std::string_view::npos)
+      if (line.contains("#include <...> search starts here:"))
         in = true;
       continue;
     }
-    if (line.find("End of search list.") != std::string_view::npos)
+    if (line.contains("End of search list."))
       break;
     const std::size_t b = line.find_first_not_of(" \t");
     if (b == std::string_view::npos)
@@ -198,7 +200,7 @@ std::vector<fs::path> probe_driver_dirs(const char* cc) {
     if (const std::size_t e = p.find_last_not_of(" \t\r\n"); e != std::string_view::npos)
       p = p.substr(0, e + 1);
     // 框架目录不参与 #include "name" 式探测；clang 行尾带说明文字
-    if (p.empty() || p.find("(framework directory)") != std::string_view::npos)
+    if (p.empty() || p.contains("(framework directory)"))
       continue;
     std::error_code ec;
     if (fs::is_directory(p, ec))
@@ -269,10 +271,8 @@ fs::path executable_dir(std::string_view argv0) {
 
 fs::path resolve_headers_root(std::string_view argv0) {
   for (const char* var : {"VX_HEADERS_DIR", "VX_HEADERS"}) {
-    if (const char* env = std::getenv(var)) {
-      if (env[0] != '\0')
-        return fs::path(env);
-    }
+    if (const char* env = std::getenv(var); (env != nullptr) && (env[0] != '\0'))
+      return {env};
   }
   const fs::path exe_dir = executable_dir(argv0);
   if (!exe_dir.empty()) {
@@ -281,7 +281,7 @@ fs::path resolve_headers_root(std::string_view argv0) {
     if (fs::is_directory(cand, ec) && !ec)
       return cand;
   }
-  return fs::path("headers");
+  return {"headers"};
 }
 
 fs::path resolve_ref_path(const ImportContext& ctx, std::string_view ref) {
@@ -304,11 +304,11 @@ std::optional<ImportTable> build_import_table(const Program& prog, const ImportC
       // 去重：同一引用只加载一次；但重复声明可能带新别名（@imp(math) as m），
       // 别名记入 aliases 以便 lib_by_prefix 解析。
       const std::string_view name = abi::lib_name_of(d->lib);
-      auto dup = std::find_if(table.libs.begin(), table.libs.end(), [&](const ImportedLib& l) { return l.ref == ref; });
+      auto dup = std::ranges::find_if(table.libs, [&](const ImportedLib& l) { return l.ref == ref; });
       if (dup != table.libs.end()) {
         const std::string alias(alias_of(d->alias, name));
         if (alias != dup->alias && alias != dup->name &&
-            !std::any_of(table.aliases.begin(), table.aliases.end(), [&](const auto& a) { return a.first == alias; })) {
+            !std::ranges::any_of(table.aliases, [&](const auto& a) { return a.first == alias; })) {
           table.aliases.emplace_back(alias, ref);
         }
         continue;
@@ -341,12 +341,12 @@ std::optional<ImportTable> build_import_table(const Program& prog, const ImportC
     } else if (s->kind == NodeKind::CppImpDecl) {
       const auto* d = static_cast<const CppImpDecl*>(s);
       const std::string ref(d->header);
-      auto dup = std::find_if(table.libs.begin(), table.libs.end(), [&](const ImportedLib& l) { return l.ref == ref; });
+      auto dup = std::ranges::find_if(table.libs, [&](const ImportedLib& l) { return l.ref == ref; });
       if (dup != table.libs.end()) {
         const std::string cpp_name = fs::path(ref).stem().string(); // 库名 = 头文件主名
         const std::string alias(alias_of(d->alias, cpp_name));
         if (alias != dup->alias && alias != dup->name &&
-            !std::any_of(table.aliases.begin(), table.aliases.end(), [&](const auto& a) { return a.first == alias; })) {
+            !std::ranges::any_of(table.aliases, [&](const auto& a) { return a.first == alias; })) {
           table.aliases.emplace_back(alias, ref);
         }
         continue;

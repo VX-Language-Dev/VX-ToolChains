@@ -144,7 +144,7 @@ private:
     } else if (c == '\t') {
       // 制表符按 4 列宽计，与 handle_indent() 的缩进宽度保持一致
       col_ += 4;
-    } else if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) {
+    } else if ((static_cast<unsigned char>(c) & 0xC0u) != 0x80u) {
       // 列按 Unicode 码点计：UTF-8 后续字节（10xxxxxx）不推进列号
       ++col_;
     }
@@ -627,7 +627,7 @@ std::span<const Token> tokenize(std::string_view src, std::string_view filename,
   const std::span<const Token> toks = lex.tokens();
   auto* arr = static_cast<Token*>(arena.allocate(sizeof(Token) * toks.size(), alignof(Token)));
   std::memcpy(arr, toks.data(), sizeof(Token) * toks.size());
-  return std::span<const Token>(arr, toks.size());
+  return {arr, toks.size()};
 }
 
 } // namespace vx::compiler

@@ -38,9 +38,9 @@ void expect_one_diag(const ParseResult& r, std::string_view needle, const char* 
     ++g_failures;
     return;
   }
-  if (r.diagnostics[0].message.find(needle) == std::string::npos) {
-    std::fprintf(stderr, "FAIL %s:%d: 诊断文案不含 '%.*s'，实际 '%s'\n", file, line, (int)needle.size(), needle.data(),
-                 r.diagnostics[0].message.c_str());
+  if (!r.diagnostics[0].message.contains(needle)) {
+    std::fprintf(stderr, "FAIL %s:%d: 诊断文案不含 '%.*s'，实际 '%s'\n", file, line, static_cast<int>(needle.size()),
+                 needle.data(), r.diagnostics[0].message.c_str());
     ++g_failures;
   }
 }

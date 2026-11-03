@@ -50,7 +50,7 @@ static void print_help() {
                "  -V, --version        Show version\n"
                "\n"
                "Exit codes: 0 ok, 1 needs formatting (--check), 2 error\n",
-               VERSION.data());
+               std::string(VERSION).c_str());
 }
 
 static bool parse_int(const std::string_view s, int& out) {
@@ -62,7 +62,7 @@ static bool parse_int(const std::string_view s, int& out) {
     if (c < '0' || c > '9') {
       return false;
     }
-    value = value * 10 + (c - '0');
+    value = (value * 10) + (c - '0');
     if (value > 10000) {
       return false;
     }
@@ -86,12 +86,12 @@ static int parse_args(int argc, char** argv, Options& opts) {
       opts.no_verify = true;
     } else if (a == "--indent" || a == "--line-length") {
       if (i + 1 >= argc) {
-        std::fprintf(stderr, "vfmt: %s requires a value\n", a.data());
+        std::fprintf(stderr, "vfmt: %s requires a value\n", std::string(a).c_str());
         return -1;
       }
       int value = 0;
       if (!parse_int(argv[++i], value) || value <= 0) {
-        std::fprintf(stderr, "vfmt: invalid value for %s: %s\n", a.data(), argv[i]);
+        std::fprintf(stderr, "vfmt: invalid value for %s: %s\n", std::string(a).c_str(), argv[i]);
         return -1;
       }
       if (a == "--indent") {
@@ -99,14 +99,14 @@ static int parse_args(int argc, char** argv, Options& opts) {
       } else {
         opts.line_length = value;
       }
-    } else if (a.size() > 9 && a.substr(0, 9) == "--indent=") {
+    } else if (a.size() > 9 && a.starts_with("--indent=")) {
       int value = 0;
       if (!parse_int(a.substr(9), value) || value <= 0) {
         std::fprintf(stderr, "vfmt: invalid value for --indent\n");
         return -1;
       }
       opts.indent_width = value;
-    } else if (a.size() > 14 && a.substr(0, 14) == "--line-length=") {
+    } else if (a.size() > 14 && a.starts_with("--line-length=")) {
       int value = 0;
       if (!parse_int(a.substr(14), value) || value <= 0) {
         std::fprintf(stderr, "vfmt: invalid value for --line-length\n");
@@ -189,7 +189,7 @@ int main(int argc, char** argv) {
     return EXIT_OK;
   }
   if (opts.version) {
-    std::printf("vfmt %s\n", VERSION.data());
+    std::printf("vfmt %s\n", std::string(VERSION).c_str());
     return EXIT_OK;
   }
   if (opts.files.empty()) {

@@ -69,7 +69,7 @@ bool is_soft_kw(std::string_view text) {
 std::size_t utf8_len(std::string_view s) {
   std::size_t n = 0;
   for (char c : s) {
-    if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) {
+    if ((static_cast<unsigned char>(c) & 0xC0u) != 0x80u) {
       ++n;
     }
   }
@@ -107,7 +107,7 @@ public:
       }
       const std::size_t start = pos_;
       const Stmt* s = parse_stmt();
-      if (!s) {
+      if (s == nullptr) {
         // 错误恢复：跳到下一语句边界，继续解析后续语句，
         // 尽量一次性暴露多个语法错误而非仅首个。
         skip_to_stmt_boundary();
@@ -179,8 +179,8 @@ private:
   bool fail_here(std::string what) {
     const Token& t = peek();
     char buf[128];
-    std::snprintf(buf, sizeof(buf), "期望%s，但得到 %s '%.*s' (行 %d)", what.c_str(), tok_name(t.kind).data(),
-                  static_cast<int>(t.text.size()), t.text.data(), t.line);
+    std::snprintf(buf, sizeof(buf), "期望%s，但得到 %s '%.*s' (行 %d)", what.c_str(),
+                  std::string(tok_name(t.kind)).c_str(), static_cast<int>(t.text.size()), t.text.data(), t.line);
     // 高亮整个 offending token（按码点计长度；空文本退化为单字符插入符）
     const int end_col = t.col + static_cast<int>(utf8_len(t.text));
     return fail_span(buf, t.line, t.col, t.line, end_col);
@@ -301,7 +301,7 @@ private:
     if (at(Tok::Assign)) {
       advance();
       init = parse_expr(1);
-      if (!init) {
+      if (init == nullptr) {
         return nullptr;
       }
     }
@@ -497,7 +497,7 @@ private:
     const Expr* value = nullptr;
     if (!at(Tok::Nl) && !at(Tok::Semi) && !at(Tok::Dedent) && !at(Tok::Eof)) {
       value = parse_expr(1);
-      if (!value) {
+      if (value == nullptr) {
         return nullptr;
       }
     }
@@ -508,7 +508,7 @@ private:
     const int line = peek().line;
     advance(); // 'if'
     const Expr* cond = parse_expr(1);
-    if (!cond) {
+    if (cond == nullptr) {
       return nullptr;
     }
     if (!expect(Tok::Colon, "':'")) {
@@ -523,7 +523,7 @@ private:
       skip_nls();
       advance(); // 'elif'
       const Expr* econd = parse_expr(1);
-      if (!econd) {
+      if (econd == nullptr) {
         return nullptr;
       }
       if (!expect(Tok::Colon, "':'")) {
@@ -563,7 +563,7 @@ private:
     const int line = peek().line;
     advance(); // 'while'
     const Expr* cond = parse_expr(1);
-    if (!cond) {
+    if (cond == nullptr) {
       return nullptr;
     }
     if (!expect(Tok::Colon, "':'")) {
@@ -589,7 +589,7 @@ private:
     }
     advance();
     const Expr* iterable = parse_expr(1);
-    if (!iterable) {
+    if (iterable == nullptr) {
       return nullptr;
     }
     if (!expect(Tok::Colon, "':'")) {
@@ -624,7 +624,7 @@ private:
         }
         if (at_kw("func")) {
           const Stmt* m = parse_func_decl();
-          if (!m) {
+          if (m == nullptr) {
             return nullptr;
           }
           methods.push_back(static_cast<const FuncDecl*>(m));
@@ -640,7 +640,7 @@ private:
             // 类常量字段：NAME = expr（无类型注解，不占实例布局）
             advance();
             const Expr* init = parse_expr(0);
-            if (!init) {
+            if (init == nullptr) {
               return nullptr;
             }
             fields.push_back(ClassField{fname, "", init});
@@ -715,7 +715,7 @@ private:
             break;
           }
           const Stmt* s = parse_stmt();
-          if (!s) {
+          if (s == nullptr) {
             return false;
           }
           out.push_back(s);
@@ -736,7 +736,7 @@ private:
     // 同行体：if cond: a(); b()
     while (true) {
       const Stmt* s = parse_stmt();
-      if (!s) {
+      if (s == nullptr) {
         return false;
       }
       out.push_back(s);
@@ -753,13 +753,13 @@ private:
   const Stmt* parse_expr_stmt() {
     const int line = peek().line;
     const Expr* e = parse_expr(1);
-    if (!e) {
+    if (e == nullptr) {
       return nullptr;
     }
     if (is_assign_op(peek().kind)) {
       const std::string_view op = advance().text;
       const Expr* value = parse_expr(1);
-      if (!value) {
+      if (value == nullptr) {
         return nullptr;
       }
       return arena_.create<Assign>(e, op, value, line);
@@ -770,7 +770,7 @@ private:
   // ===== 表达式 =====
   const Expr* parse_expr(int min_prec) {
     const Expr* left = parse_unary();
-    if (!left) {
+    if (left == nullptr) {
       return nullptr;
     }
     while (true) {
@@ -783,7 +783,7 @@ private:
       const int line = t.line;
       advance();
       const Expr* right = parse_expr(prec + 1);
-      if (!right) {
+      if (right == nullptr) {
         return nullptr;
       }
       left = arena_.create<Binary>(op, left, right, line);
@@ -795,7 +795,7 @@ private:
     if (t.kind == Tok::Minus) {
       advance();
       const Expr* operand = parse_unary();
-      if (!operand) {
+      if (operand == nullptr) {
         return nullptr;
       }
       return arena_.create<Unary>("-", operand, t.line);
@@ -803,7 +803,7 @@ private:
     if (t.kind == Tok::Not || (t.kind == Tok::Kw && t.text == "not")) {
       advance();
       const Expr* operand = parse_unary();
-      if (!operand) {
+      if (operand == nullptr) {
         return nullptr;
       }
       return arena_.create<Unary>("!", operand, t.line);
@@ -813,7 +813,7 @@ private:
 
   const Expr* parse_postfix() {
     const Expr* e = parse_primary();
-    if (!e) {
+    if (e == nullptr) {
       return nullptr;
     }
     while (true) {
@@ -847,7 +847,7 @@ private:
       if (at(Tok::LBracket)) {
         const int line = advance().line;
         const Expr* index = parse_expr(1);
-        if (!index) {
+        if (index == nullptr) {
           return nullptr;
         }
         if (!expect(Tok::RBracket, "']'")) {
@@ -864,7 +864,7 @@ private:
     advance(); // '('
     while (!at(Tok::RParen)) {
       const Expr* a = parse_expr(1);
-      if (!a) {
+      if (a == nullptr) {
         return false;
       }
       out.push_back(a);
@@ -911,11 +911,10 @@ private:
             return nullptr;
           }
           std::vector<const Expr*> args;
-          if (at(Tok::LParen)) {
-            if (!parse_args(args)) {
-              return nullptr;
-            }
+          if (at(Tok::LParen) && (!parse_args(args))) {
+            return nullptr;
           }
+
           return arena_.create<New>(name, arena_span(arena_, args), t.line);
         }
         if (is_soft_kw(t.text)) {
@@ -925,7 +924,7 @@ private:
       case Tok::LParen: {
         advance();
         const Expr* e = parse_expr(1);
-        if (!e) {
+        if (e == nullptr) {
           return nullptr;
         }
         if (!expect(Tok::RParen, "')'")) {
@@ -938,7 +937,7 @@ private:
         std::vector<const Expr*> items;
         while (!at(Tok::RBracket)) {
           const Expr* e = parse_expr(1);
-          if (!e) {
+          if (e == nullptr) {
             return nullptr;
           }
           items.push_back(e);
@@ -958,14 +957,14 @@ private:
         std::vector<DictEntry> entries;
         while (!at(Tok::RBrace)) {
           const Expr* key = parse_expr(1);
-          if (!key) {
+          if (key == nullptr) {
             return nullptr;
           }
           if (!expect(Tok::Colon, "':'")) {
             return nullptr;
           }
           const Expr* value = parse_expr(1);
-          if (!value) {
+          if (value == nullptr) {
             return nullptr;
           }
           entries.push_back(DictEntry{key, value});

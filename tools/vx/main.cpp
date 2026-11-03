@@ -68,7 +68,7 @@ static std::string find_sibling(const std::string& name) {
   }
   // Fallback: search PATH
   const char* path_env = std::getenv("PATH");
-  if (path_env) {
+  if (path_env != nullptr) {
     std::string p(path_env);
     size_t start = 0;
     while (start <= p.size()) {
@@ -91,10 +91,8 @@ static std::string find_sibling(const std::string& name) {
 //   VX_HEADERS_DIR > VX_HEADERS > <vx 二进制所在目录>/headers > 仓库/安装目录 headers
 static std::string resolve_vx_headers() {
   for (const char* var : {"VX_HEADERS_DIR", "VX_HEADERS"}) {
-    if (const char* env = std::getenv(var)) {
-      if (env[0] != '\0')
-        return env;
-    }
+    if (const char* env = std::getenv(var); (env != nullptr) && (env[0] != '\0'))
+      return env;
   }
   // vx 二进制所在目录
   char buf[4096];
@@ -270,16 +268,16 @@ int main(int argc, char** argv) {
     tool = "vlnk";
   } else if (cmd == "build" || cmd == "b") {
     tool = "vmake";
-    extra_args.push_back("build");
+    extra_args.emplace_back("build");
   } else if (cmd == "run") {
     tool = "vmake";
-    extra_args.push_back("run");
+    extra_args.emplace_back("run");
   } else if (cmd == "test") {
     tool = "vmake";
-    extra_args.push_back("test");
+    extra_args.emplace_back("test");
   } else if (cmd == "clean") {
     tool = "vmake";
-    extra_args.push_back("clean");
+    extra_args.emplace_back("clean");
   } else if (cmd == "fmt" || cmd == "f") {
     tool = "vfmt";
   } else if (cmd == "lsp") {
@@ -297,7 +295,7 @@ int main(int argc, char** argv) {
   if (!fs::is_regular_file(tool_path)) {
     // Try ~/.local/bin
     const char* home = std::getenv("HOME");
-    if (home) {
+    if (home != nullptr) {
       fs::path cand = fs::path(home) / ".local" / "bin" / tool;
       if (fs::is_regular_file(cand))
         tool_path = cand.string();

@@ -11,7 +11,7 @@ namespace vx::util {
 class Arena {
 public:
   // block_size：普通块的最小容量（字节）
-  explicit Arena(std::size_t block_size = 64 * 1024);
+  explicit Arena(std::size_t block_size = static_cast<std::size_t>(64) * 1024);
   ~Arena();
 
   Arena(const Arena&) = delete;

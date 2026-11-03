@@ -25,10 +25,26 @@ using namespace vx::compiler; // NOLINT：测试性工具，直接使用编译�
 namespace {
 
 // 内置运行时符号（llvm_emitter Builtin 表 + 常见 libc）
-const std::set<std::string> kBuiltins = {"out", "out_int", "out_bool", "out_float", "puts", "exit", "malloc", "free",
-                                         "vx_str_concat",
-                                         // 系统能力：命令行参数 / 文件 I/O
-                                         "sys_argv_count", "sys_argv_get", "file_read", "file_write", "file_exists"};
+static const std::set<std::string>& builtins() {
+  static const std::set<std::string> kBuiltins = {
+      "out",
+      "out_int",
+      "out_bool",
+      "out_float",
+      "puts",
+      "exit",
+      "malloc",
+      "free",
+      "vx_str_concat",
+      // 系统能力：命令行参数 / 文件 I/O
+      "sys_argv_count",
+      "sys_argv_get",
+      "file_read",
+      "file_write",
+      "file_exists",
+  };
+  return kBuiltins;
+}
 
 // ---- 作用域符号表 ----
 struct LocalInfo {
@@ -118,7 +134,7 @@ private:
       locals_[std::string(p.name)] = info;
     }
     // 方法隐式 self
-    if (f->name.find('.') != std::string_view::npos) {
+    if (f->name.contains('.')) {
       LocalInfo info;
       info.decl_line = f->line;
       info.is_param = true;
@@ -166,7 +182,7 @@ private:
           info.decl_line = v->line;
           locals_[name] = info;
         }
-        if (v->init)
+        if (v->init != nullptr)
           walk_expr(v->init);
         break;
       }
@@ -184,7 +200,7 @@ private:
       case NodeKind::Return: {
         const auto* r = static_cast<const Return*>(s);
         has_return_ = true;
-        if (r->value)
+        if (r->value != nullptr)
           walk_expr(r->value);
         break;
       }
@@ -212,16 +228,14 @@ private:
         loop_var.decl_line = f->line;
         const std::string vname(f->var);
         // 循环变量若与参数同名按遮蔽报，否则登记为局部
-        if (!locals_.emplace(vname, loop_var).second) {
-          if (locals_[vname].is_param) {
-            error("VXTIDY004", f->line, "循环变量 '" + vname + "' 遮蔽了同名参数", 2);
-          }
+        if ((!locals_.emplace(vname, loop_var).second) && locals_[vname].is_param) {
+          error("VXTIDY004", f->line, "循环变量 '" + vname + "' 遮蔽了同名参数", 2);
         }
+
         walk_block(f->body);
         break;
       }
-      case NodeKind::FuncDecl: // 嵌套函数不支持，忽略
-        break;
+      case NodeKind::FuncDecl: // 嵌套函数不支持，忽略，fallthrough
       default:
         // 其余语句类型含表达式时遍历
         break;
@@ -246,9 +260,12 @@ private:
         if (c->callee->kind == NodeKind::Ident) {
           const auto* id = static_cast<const Ident*>(c->callee);
           const std::string name(id->name);
-          const bool known = funcs_.count(name) || externs_.count(name) || kBuiltins.count(name) ||
-                             locals_.count(name); // 本地变量调用（函数值，暂不判）
-          if (!known && locals_.count(name) == 0) {
+          const bool known =
+              (static_cast<unsigned int>(funcs_.contains(name)) != 0U) ||
+              (static_cast<unsigned int>(externs_.contains(name)) != 0U) ||
+              (static_cast<unsigned int>(builtins().contains(name)) != 0U) ||
+              (static_cast<unsigned int>(locals_.contains(name)) != 0U); // 本地变量调用（函数值，暂不判）
+          if (!known && !locals_.contains(name)) {
             error("VXTIDY001", c->line, "调用了未声明的函数 '" + name + "'");
           }
         }
@@ -265,7 +282,7 @@ private:
           auto it = locals_.find(std::string(id->name));
           if (it != locals_.end()) {
             it->second.used = true;
-          } else if (libs_.count(std::string(id->name)) == 0) {
+          } else if (!libs_.contains(std::string(id->name))) {
             // 非导入前缀也非局部 → 访问未定义变量
             error("VXTIDY001", p->line, "标识符 '" + std::string(id->name) + "' 未声明（既非局部变量也非导入库前缀）");
           }
@@ -362,7 +379,7 @@ std::vector<Finding> check(std::string_view text, std::string_view filename) {
   Checker c(out);
   c.run(*prog);
   // 输出按行号排序（稳定）
-  std::stable_sort(out.begin(), out.end(), [](const Finding& a, const Finding& b) { return a.line < b.line; });
+  std::ranges::stable_sort(out, [](const Finding& a, const Finding& b) { return a.line < b.line; });
   return out;
 }
 
@@ -400,14 +417,14 @@ std::string format_json(const std::vector<Finding>& fs, std::string_view filenam
   std::string out = "[";
   for (std::size_t i = 0; i < fs.size(); ++i) {
     const Finding& f = fs[i];
-    if (i)
+    if (i != 0U)
       out += ",";
-    out += "{\"file\":\"" + esc(filename) + "\",";
+    out += R"({"file":")" + esc(filename) + "\",";
     out += "\"line\":" + std::to_string(f.line) + ",";
     out += "\"col\":" + std::to_string(f.col) + ",";
     out += "\"severity\":" + std::to_string(f.severity) + ",";
-    out += "\"rule\":\"" + esc(f.rule) + "\",";
-    out += "\"message\":\"" + esc(f.message) + "\"}";
+    out += R"("rule":")" + esc(f.rule) + "\",";
+    out += R"("message":")" + esc(f.message) + "\"}";
   }
   out += "]";
   return out;

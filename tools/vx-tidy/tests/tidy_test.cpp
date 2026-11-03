@@ -64,7 +64,7 @@ void test_undeclared_call() {
                                 "u.vx");
   const Finding* f = find_rule(fs, "VXTIDY001");
   CHECK(f != nullptr);
-  if (f) {
+  if (f != nullptr) {
     CHECK(f->line == 2);
     CHECK(f->message.find("nosuchfn") != std::string::npos);
     CHECK(f->severity == 1);
@@ -91,7 +91,7 @@ void test_unused_variable() {
                                 "v.vx");
   const Finding* f = find_rule(fs, "VXTIDY002");
   CHECK(f != nullptr);
-  if (f) {
+  if (f != nullptr) {
     CHECK(f->line == 2);
     CHECK(f->severity == 2); // warning
   }
@@ -128,7 +128,7 @@ void test_shadowed_param() {
                                 "s.vx");
   const Finding* f = find_rule(fs, "VXTIDY004");
   CHECK(f != nullptr);
-  if (f) {
+  if (f != nullptr) {
     CHECK(f->message.find("遮蔽") != std::string::npos);
   }
 }
@@ -172,7 +172,7 @@ void test_syntax_error_passthrough() {
                                 "sy.vx");
   const Finding* f = find_rule(fs, "VXTIDY900");
   CHECK(f != nullptr);
-  if (f)
+  if (f != nullptr)
     CHECK(f->severity == 1);
 }
 

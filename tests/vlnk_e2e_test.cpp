@@ -7,6 +7,7 @@
 #include "vx/compiler/diag.hpp"
 #include "vx/compiler/lexer.hpp"
 #include "vx/compiler/parser.hpp"
+#include "vx/compiler/semantics.hpp"
 #include "vx/compiler/vxobj.hpp"
 #include "vx/util/util.hpp"
 
@@ -59,8 +60,9 @@ std::pair<int, std::string> run_capture(const std::string& exe, const std::strin
 // 全流程：源码 → ModuleIR → VXOBJ → reader → .ll → link → 运行，
 // 断言 stdout 等于 expected。tag 用于临时文件与诊断输出。
 // explicit_target 为 true 时走 link_executable 的显式 -target 路径并校验命令行。
+// with_semantics 为 true 时先跑语义分析（含重载解析），并把解析结果传给 codegen。
 void run_case(const char* src, const std::string& expected, const std::string& tag, bool explicit_target = false,
-              const std::string& extra_args = {}) {
+              const std::string& extra_args = {}, bool with_semantics = false) {
   const std::string exe = "/tmp/vx_vlnk_e2e_" + tag + "_" + std::to_string(::getpid());
   static Arena arena;
   DiagBag bag;
@@ -69,7 +71,16 @@ void run_case(const char* src, const std::string& expected, const std::string& t
   CHECK(prog != std::nullopt);
   if (!prog)
     return;
-  auto mod = generate_module(*prog, "<e2e>", bag);
+  Analysis analysis;
+  if (with_semantics) {
+    const bool sem_ok = check_module(*prog, "<e2e>", bag, nullptr, &analysis);
+    CHECK(sem_ok);
+    if (!sem_ok) {
+      std::fprintf(stderr, "semantics error (%s): %s\n", tag.c_str(), render_all(bag, src, false).c_str());
+      return;
+    }
+  }
+  auto mod = generate_module(*prog, "<e2e>", bag, nullptr, with_semantics ? &analysis : nullptr);
   CHECK(mod.has_value());
   if (!mod)
     return;
@@ -207,6 +218,21 @@ int main() {
            "    out_float(y)\n"
            "    return 0\n",
            "34.5", "fprop");
+
+  // 方法重载：语义分析按实参类型解析（int / float 各自分派到唯一的具名函数）
+  run_case("extern out_int(v: int)\n"
+           "extern out_float(v: float)\n"
+           "class Calc:\n"
+           "    func twice(a: int) -> int:\n"
+           "        return a * 2\n"
+           "    func twice(a: float) -> float:\n"
+           "        return a * 2.0\n"
+           "func main() -> int:\n"
+           "    var c = new Calc()\n"
+           "    out_float(c.twice(1.5))\n"
+           "    out_int(c.twice(3))\n"
+           "    return 0\n",
+           "36", "overload", false, {}, true);
 
   // 系统能力：文件 I/O（写入 → 读取 → 存在性检查）
   {

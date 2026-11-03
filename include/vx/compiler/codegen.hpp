@@ -18,13 +18,17 @@
 
 namespace vx::compiler {
 
+struct Analysis; // semantics.hpp：语义分析产出的解析结果
+
 // 遍历整个程序生成模块 IR。
 // FuncDecl → funcs；ExternDecl → linkage；@imp/@cppimp → 导入符号的 linkage
 // 条目（VX ABI 符号名）与 ModuleIR::libs；ClassDecl/StructDecl 注册字段并为
 // 每个方法生成具名函数；顶层 VarDecl 仅记录进 ModuleIR::global_vars。
 // imports 为已解析的导入表（空则忽略 @imp/@cppimp，调用点按库内名解析）。
+// analysis 非空时复用语义分析解析出的方法符号（重载方法 → 唯一的具名函数），
+// 为空则按方法名直接发射（与未接入语义分析时的行为一致）。
 // 失败时把诊断推入 bag 并返回 std::nullopt（fail-fast）。
 std::optional<ir::ModuleIR> generate_module(const Program& prog, std::string_view filename, DiagBag& bag,
-                                            const ImportTable* imports = nullptr);
+                                            const ImportTable* imports = nullptr, const Analysis* analysis = nullptr);
 
 } // namespace vx::compiler

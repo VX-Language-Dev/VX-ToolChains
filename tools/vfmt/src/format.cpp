@@ -24,6 +24,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace vfmt {
@@ -372,7 +373,7 @@ bool need_space(const std::vector<const Token*>& toks, std::size_t i, const std:
       return !is_callee_end(p) || is_control_kw(p);
     case Tok::LBrace:
       // 字典字面量的 '{'：紧贴左括号 / 中括号，其余留一个空格
-      return !(p->kind == Tok::LParen || p->kind == Tok::LBracket || p->kind == Tok::LBrace);
+      return p->kind != Tok::LParen && p->kind != Tok::LBracket && p->kind != Tok::LBrace;
     default:
       break;
   }
@@ -526,7 +527,7 @@ std::vector<Stmt> split_stmts(std::span<const Token> toks) {
     stmts.push_back(std::move(s));
   };
 
-  auto flush_raw = [&]() {
+  auto flush_raw = [&] {
     if (raw.empty()) {
       return;
     }
@@ -592,7 +593,7 @@ void flush_blank(std::string& out, int count, int level) {
 // 查找物理行区间内的行尾注释（独占一行的注释不在此列）。
 const std::string* find_trailing_comment(const std::vector<SrcLine>& src, const Group& g) {
   for (int ln = g.first_line; ln <= g.last_line; ++ln) {
-    if (ln < 1 || ln > static_cast<int>(src.size())) {
+    if (ln < 1 || std::cmp_greater(ln, src.size())) {
       continue;
     }
     const SrcLine& sl = src[static_cast<std::size_t>(ln - 1)];
@@ -629,7 +630,7 @@ std::string assemble(const std::vector<Stmt>& stmts, const std::vector<SrcLine>&
       const int lvl = group_level(g, gi == 0, s.level);
 
       // 本组之前：空行与独立注释行
-      for (int ln = prev_end + 1; ln < g.first_line && ln <= static_cast<int>(src.size()); ++ln) {
+      for (int ln = prev_end + 1; ln < g.first_line && std::cmp_less_equal(ln, src.size()); ++ln) {
         const SrcLine& sl = src[static_cast<std::size_t>(ln - 1)];
         if (sl.has_comment && sl.comment_own_line) {
           if (!first) {
@@ -663,7 +664,7 @@ std::string assemble(const std::vector<Stmt>& stmts, const std::vector<SrcLine>&
 
   // 文件末尾：剩余的独立注释行
   const int tail_level = stmts.empty() ? 0 : stmts.back().level;
-  for (int ln = prev_end + 1; ln <= static_cast<int>(src.size()); ++ln) {
+  for (int ln = prev_end + 1; std::cmp_less_equal(ln, src.size()); ++ln) {
     const SrcLine& sl = src[static_cast<std::size_t>(ln - 1)];
     if (sl.has_comment && sl.comment_own_line) {
       out += indent_str(tail_level, indent_width);
@@ -723,7 +724,7 @@ std::expected<FormatResult, std::string> format(std::string_view src, const Opti
     const std::size_t nl = res.text.find('\n', pos);
     const std::size_t end = (nl == std::string::npos) ? res.text.size() : nl;
     ++line_no;
-    if (static_cast<int>(end - pos) > opts.line_length) {
+    if (std::cmp_greater(end - pos, opts.line_length)) {
       res.long_lines.push_back(line_no);
     }
     if (nl == std::string::npos) {

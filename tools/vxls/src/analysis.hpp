@@ -100,7 +100,9 @@ std::string ident_name_at(std::string_view text, int line, int character);
 std::vector<LspRange> document_highlights(std::string_view text, int line, int character);
 
 // 签名帮助
-struct LspParameterInformation { std::string label; };
+struct LspParameterInformation {
+  std::string label;
+};
 struct LspSignatureInformation {
   std::string label;
   std::vector<LspParameterInformation> parameters;
@@ -129,8 +131,8 @@ std::vector<LspCompletion> completion_at(std::string_view text, int line, int ch
 
 // 签名帮助：光标在调用内时返回函数签名与活动参数
 LspSignatureHelp signature_help_at(std::string_view text, int line, int character,
-                                  const std::filesystem::path& headers_root = {},
-                                  const std::vector<std::filesystem::path>& include_dirs = {});
+                                   const std::filesystem::path& headers_root = {},
+                                   const std::vector<std::filesystem::path>& include_dirs = {});
 
 // vx-tidy 静态检查结果 → LSP 诊断（经 vxtidy 动态库）。
 // VXTIDY900（语法错误透传）会被跳过：该类问题由前端诊断负责，避免重复。

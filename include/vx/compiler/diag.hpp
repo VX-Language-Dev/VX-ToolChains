@@ -22,7 +22,9 @@ std::string_view severity_name(Severity s);
 // 级别权重：Info=0、Warning=1、Error=2
 std::uint8_t severity_rank(Severity s);
 
-// 集中错误码。E2xxx = 词法/语法（前端）；E0xxx 语义、E1xxx 所有权留待后续阶段。
+// 集中错误码。E2xxx = 词法/语法（前端）；E0xxx = 语义分析
+// （0001-0002 代码生成/导入，0003-0008 类型与重载，0010-0012 符号与作用域）；
+// E1xxx 所有权检查留待后续阶段。
 namespace diag_code {
 inline constexpr std::string_view sem_codegen = "E0001";                // 代码生成期语义错误
 inline constexpr std::string_view sem_import = "E0002";                 // 库导入解析错误（@imp/@cppimp）
@@ -30,8 +32,11 @@ inline constexpr std::string_view sem_unknown_type = "E0003";           // 未�
 inline constexpr std::string_view sem_immutable = "E0004";              // 对不可变变量赋值
 inline constexpr std::string_view sem_flow = "E0005";                   // break/continue/return 位置不合法
 inline constexpr std::string_view sem_arity = "E0006";                  // 调用参数个数不匹配
+inline constexpr std::string_view sem_type_mismatch = "E0007";          // 类型不匹配（无隐式转换）
+inline constexpr std::string_view sem_ambiguous = "E0008";              // 重载解析歧义
 inline constexpr std::string_view sem_undefined = "E0010";              // 未定义变量/函数/类型/字段
 inline constexpr std::string_view sem_redefined = "E0011";              // 重复定义
+inline constexpr std::string_view sem_scope_leak = "E0012";             // 内层作用域变量逃逸到外层
 inline constexpr std::string_view lex_unknown_char = "E2001";           // 无法识别的字符
 inline constexpr std::string_view lex_unterminated_string = "E2002";    // 字符串未闭合
 inline constexpr std::string_view lex_incomplete_escape = "E2003";      // 转义序列不完整

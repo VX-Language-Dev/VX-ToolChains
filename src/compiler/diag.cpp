@@ -51,11 +51,11 @@ void DiagBag::add_all(const DiagBag& other) {
 }
 
 bool DiagBag::has_error() const {
-  return std::any_of(diags_.begin(), diags_.end(), [](const Diagnostic& d) { return d.severity == Severity::Error; });
+  return std::ranges::any_of(diags_, [](const Diagnostic& d) { return d.severity == Severity::Error; });
 }
 
 void DiagBag::sort() {
-  std::stable_sort(diags_.begin(), diags_.end(), [](const Diagnostic& a, const Diagnostic& b) {
+  std::ranges::stable_sort(diags_, [](const Diagnostic& a, const Diagnostic& b) {
     if (a.file != b.file)
       return a.file < b.file;
     if (a.line != b.line)
@@ -191,9 +191,22 @@ std::string render_diagnostic(const Diagnostic& d, std::function<std::string_vie
   }
 
   if (!d.note.empty()) {
+    // note 以 "help: " 开头时按 help 行渲染（不加 note: 前缀）；
+    // note 内含换行时，后续行补 gutter 对齐
     out += gutter;
-    out += " = note: ";
-    out += d.note;
+    out += d.note.starts_with("help: ") ? " = " : " = note: ";
+    std::size_t pos = 0;
+    while (pos < d.note.size()) {
+      const std::size_t nl = d.note.find('\n', pos);
+      out += d.note.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+      if (nl == std::string::npos) {
+        break;
+      }
+      out += '\n';
+      out += gutter;
+      out += "   ";
+      pos = nl + 1;
+    }
     out += '\n';
   }
 
