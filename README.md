@@ -3,7 +3,7 @@
 > **从零自研的编程语言工具链** — C++23 实现，一条纯自研的编译链路把 `.vx` 源码变成原生机器码
 >
 > ![Language](https://img.shields.io/badge/language-C%2B%2B23-blue)
-> ![Version](https://img.shields.io/badge/version-v1.16.5-blue)
+> ![Version](https://img.shields.io/badge/version-v1.16.7-blue)
 > ![Tests](https://img.shields.io/badge/tests-20%20suites%20100%25%20passing-brightgreen)
 > ![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
 > ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
@@ -70,7 +70,7 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 | `vmake-lsp` | VMakeSet.vmake 语言服务器 | ✅ 可用 | 0.3.0 |
 | `vfmt` | 源码格式化（保留注释 + AST 结构自检） | ✅ 可用 | 0.1.0 |
 | `vx-tidy` | 静态分析引擎（纯动态库 libvxtidy） | ✅ 可用 | — |
-| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.16.5 |
+| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.16.7 |
 | VPM 包管理器 | 多语言包管理 | 🚧 规划 | — |
 | 反编译器 vxde | VXOBJ → VX 源码还原 | 🚧 规划 | — |
 
@@ -96,7 +96,10 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 
 VX 目前适合编写以计算、文件读写为主的程序；**尚不能完整实现 VMAKE 这类系统编排工具**。主要限制：
 
-- **进程与并发**：仅 `sys.system(cmd)` 阻塞调用，无 `spawn`/`wait`/`pipe`/线程/任务池，无法并行编译与可靠捕获子进程输出。
+- **进程与并发**：已提供 `proc` 进程原语库（`fork`/`waitpid`/`kill`/`sleep`/`getpid`，
+  仅 `.vxh` 声明、链接期直连系统 libc），配合 `file_read`/`file_write` 可做多进程并发与文件 IPC；
+  仍无线程/任务池（VX 无函数值，`pthread_create` 无法接线）、无管道数据回读（VX 无指针解引用），
+  捕获子进程 stdout、并行编译等场景暂不可行。
 - **文件系统**：仅有 `file_read`/`file_write`/`file_exists`，无目录创建/删除/列举/路径规范化，无法管理构建目录与头文件树。
 - **字符串处理**：仅拼接/比较/长度，无子串、查找、分割、trim、字符索引与字符串↔整数解析，难以编写解析器与签名器。
 - **集合与内存**：列表/字典为 P4 MVP（8 字节统一槽），无动态追加/扩容/迭代器；`std/` 标准库未接入编译器构建。
@@ -372,6 +375,7 @@ func main() -> int:
 @imp(math) as m               # 别名导入：m.add(...) 等价 math.add(...)
 @imp(/collections/vec)        # 子目录库：'/' + 子目录路径，库名取末段 → vec
 @imp(./mylib)                 # 自定义库：相对源文件目录
+@imp(proc)                    # 进程原语库：仅 .vxh 声明，链接期直连系统 libc
 @cppimp(cpp/greet.hpp)        # C++ 头文件 → 链接期生成 C++ ABI → VX ABI 的 shim
 
 func main():
@@ -379,6 +383,22 @@ func main():
     out_int(m.mul(6, 7))      # 别名 m → 同 _vx_math_mul
     out_int(vec.sum_to(10))   # vec 库  → 符号 _vx_vec_sum_to
     out(greet.greet("VX"))    # greet 库 → shim 包装 C++ 符号
+```
+
+**进程原语库 `proc`（多进程并发）**：`headers/proc.vxh` 只有声明、**无 `.c` 实现文件**——
+链接期 emitter 识别 `_vx_proc_*` 后直接发射对系统 libc 的调用，零 C/C++ 源码：
+
+```vx
+@imp(proc)
+func main() -> int:
+    var pid = proc.fork()          # 父返回子 PID，子返回 0
+    if pid == 0:
+        out("child\n")
+        exit(0)
+    proc.waitpid(pid, nil, 0)      # 阻塞回收；status 传 nil/0 = 不采集退出状态
+    out_bool(proc.waitpid(proc.getpid(), 0, 1) == -1)  # options=1（WNOHANG）非阻塞轮询
+    out("\n")
+    return 0
 ```
 
 **库查找规则**：`-I <dir>` 指定的搜索目录（可多次，按序）优先；随后是库根，
@@ -749,6 +769,7 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 │   ├── math.* / text.*       # 根目录库：int / string+bool+void
 │   ├── fmath.*               # 根目录库：float（double ABI）
 │   ├── collections/vec.*     # 子目录库（@imp(/collections/vec)）
+│   ├── proc.vxh              # 进程原语库（仅 .vxh 声明，链接期直连系统 libc，无 .c）
 │   └── cpp/greet.{hpp,vxh,cpp} # @cppimp 样例（C++ 头文件 + 伴生声明 + 实现）
 ├── tests/                    # C++ 单元测试 + .vx 端到端样例
 │   ├── *_test.cpp            # util/diag/lexer/parser/codegen/semantics/vxobj/e2e/backend/import 测试

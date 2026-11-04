@@ -191,7 +191,7 @@ void test_vx_sources() {
   auto lexer_src = read_file(root / "compiler" / "lexer.vx");
   CHECK(lexer_src.has_value());
   if (lexer_src) {
-    CHECK(lexer_src->find("func tokenize") != std::string::npos);
+    CHECK(std::string::npos != lexer_src->find("func tokenize"));
   }
 
   // 最大源码文件回环：write_file → read_file 内容一致

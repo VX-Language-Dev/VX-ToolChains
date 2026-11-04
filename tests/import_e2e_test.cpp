@@ -156,6 +156,29 @@ int main() {
            "    return 0\n",
            "0\ntrue\n", "sys");
 
+  // @imp(proc)：进程原语库（headers/proc.vxh 无 C 实现，emitter 直连 libc）
+  // fork 子进程输出后退出，父进程 waitpid 回收（nil 与整型 0 两种 NULL 形参），
+  // 并覆盖 getpid/getppid/sleep/kill(sig=0 存活探测)
+  run_case("@imp(proc)\n"
+           "func main() -> int:\n"
+           "    var pid = proc.fork()\n"
+           "    if pid == 0:\n"
+           "        out(\"child\\n\")\n"
+           "        exit(0)\n"
+           "    var got = proc.waitpid(pid, nil, 0)\n"
+           "    out_bool(got == pid)\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(proc.waitpid(proc.getpid(), 0, 1) == -1)\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.sleep(0))\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(proc.kill(proc.getpid(), 0) == 0)\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(proc.getppid() > 0)\n"
+           "    out(\"\\n\")\n"
+           "    return 0\n",
+           "child\ntrue\ntrue\n0\ntrue\ntrue\n", "proc");
+
   // 整套库：int/float/bool/string/void + 子目录 + 别名 + C++ 混合导入
   run_case("@imp(math)\n"
            "@imp(collections/vec)\n"

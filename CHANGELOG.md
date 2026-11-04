@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## v1.16.7 (2026-11-04)
+
+### 进程与并发（`proc` 导入库，新增）
+
+- **新增 `headers/proc.vxh` 进程原语库：仅 `.vxh` 声明，无任何 C/C++ 实现文件**
+  - 声明 `fork` / `getpid` / `getppid` / `waitpid(pid, status: ptr, options)` / `kill(pid, sig)` / `sleep(seconds)`，POSIX 语义（macOS / Linux 一致）
+  - 实现路径：emitter 内置表以 **VX ABI 符号 `_vx_proc_*` 为键**直接命中，发射对系统 libc 符号（`fork` / `waitpid` / …）的 `declare` + `call`；内置查找先于 linkage extern，故不会发出无实现的 `@_vx_proc_*` 外部声明（`headers/proc.c` 不存在也可链接）
+  - **实参类型互转**：`emit_call` 对值类型与形参声明不一致的 FFI 实参发射 `inttoptr`/`ptrtoint`（如 `waitpid(pid, 0, …)` 用整型 0 表示 NULL 的 `ptr` 形参），此前该类调用会产出类型不匹配的非法 IR
+  - `waitpid` 的 `status` 传 `nil`（或 `0`）即不采集退出状态；`options=1`（WNOHANG）非阻塞轮询；`kill(pid, 0)` 存活探测
+- `@imp(proc)` 的补全 / 悬停 / 类型推断走既有 `.vxh` 导入表通路，vxls 与 vx-tidy 无需改动、无误报（实测 `proc.` 补全 6 符号、hover 签名正常）
+- 测试：`backend_tests` 新增 IR 桥接用例（`declare i32 @fork()` / `inttoptr` 转换 / 不发 `@_vx_proc_*`）；`import_e2e_tests` 新增端到端用例（fork 子进程输出 → waitpid 回收，覆盖 nil 与整型 0 两种 NULL 形参及 getpid/getppid/sleep/kill）；CTest **20/20 全绿**
+- 文档：README「当前局限」进程与并发条目更新（多进程并发可用，无线程/管道回读如实保留）、§3 新增 proc 用法示例与目录结构条目；docs/SYNTAX.md §3.3/§4 同步；std/README 能力表同步
+- 版本号：徽章与 `vx` 元命令 1.16.6 → 1.16.7
+- 安装与分发无需改动：`headers/` 目录整体安装 / 打包，`proc.vxh` 随之分发
+- 杂项：`src/backend/link_driver.cpp` 修复历史提交遗留的 clang-format 差异（纯格式，无语义变化），`ci/check.sh` 阻断式格式检查恢复通过
+
+## v1.16.6 (2026-11-04)
+
+### 文档
+
+- README 新增「当前局限（VX 能力边界）」章节，说明 VX 尚不能完整实现 VMAKE 等系统编排工具及需补齐的能力；徽章与 `vx` 元命令版本 1.16.5 → 1.16.6
+
 ## v1.16.5 (2026-11-04)
 
 ### LSP 语言服务器（`vxls` 0.5.0）

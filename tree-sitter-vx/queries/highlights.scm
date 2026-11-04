@@ -18,6 +18,8 @@
   "import" "as" "export" "extern"
 ] @keyword.import
 
+"@" @attribute
+
 [
   "class" "struct"
 ] @keyword.type

@@ -49,6 +49,7 @@ module.exports = grammar({
     $._type,
   ],
 
+
   rules: {
     // ============================================================
     // 程序结构
@@ -75,6 +76,7 @@ module.exports = grammar({
       $.variable_declaration,
       $.annotated_assignment,
       $.extern_declaration,
+      $.at_directive,
       $.return_statement,
       $.break_statement,
       $.continue_statement,
@@ -128,6 +130,23 @@ module.exports = grammar({
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
     ),
+
+    // 导入注解：@imp(<库引用>) [as alias] / @cppimp(<头文件路径>) [as alias]
+    at_directive: $ => seq(
+      '@',
+      field('name', choice('imp', 'cppimp')),
+      '(',
+      field('path', choice($.string, $.lib_path)),
+      ')',
+      optional(seq('as', field('alias', $._name))),
+    ),
+
+    // 库引用/路径：允许标识符、数字与 '/' '.' '-' 组成的路径（如 /collections/vec、./mylib、cpp/greet.hpp）
+    lib_path: $ => prec.left(seq(
+      repeat(choice('/', '.')),
+      choice($.identifier, $.integer, $.string),
+      repeat(choice('/', '.', '-', $.identifier, $.integer)),
+    )),
 
     // prec.right：macro 花括号体内 `return (expr)` 优先将表达式并入返回值
     return_statement: $ => prec.right(seq('return', optional(field('value', $._expression)))),

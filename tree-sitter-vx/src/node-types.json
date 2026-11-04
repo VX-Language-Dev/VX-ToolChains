@@ -203,6 +203,58 @@
     }
   },
   {
+    "type": "at_directive",
+    "named": true,
+    "fields": {
+      "alias": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "new",
+            "named": false
+          },
+          {
+            "type": "soft_keyword",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "cppimp",
+            "named": false
+          },
+          {
+            "type": "imp",
+            "named": false
+          }
+        ]
+      },
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "lib_path",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "attribute",
     "named": true,
     "fields": {
@@ -394,6 +446,10 @@
       "types": [
         {
           "type": "annotated_assignment",
+          "named": true
+        },
+        {
+          "type": "at_directive",
           "named": true
         },
         {
@@ -1122,6 +1178,29 @@
     "fields": {}
   },
   {
+    "type": "lib_path",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "integer",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "list",
     "named": true,
     "fields": {},
@@ -1574,6 +1653,10 @@
           "named": true
         },
         {
+          "type": "at_directive",
+          "named": true
+        },
+        {
           "type": "break_statement",
           "named": true
         },
@@ -2013,6 +2096,10 @@
     "named": false
   },
   {
+    "type": "@",
+    "named": false
+  },
+  {
     "type": "[",
     "named": false
   },
@@ -2056,6 +2143,10 @@
   {
     "type": "continue_statement",
     "named": true
+  },
+  {
+    "type": "cppimp",
+    "named": false
   },
   {
     "type": "elif",
@@ -2107,6 +2198,10 @@
   },
   {
     "type": "if",
+    "named": false
+  },
+  {
+    "type": "imp",
     "named": false
   },
   {

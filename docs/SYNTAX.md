@@ -111,6 +111,9 @@ extern func add(a: int, b: int) -> int   # func 关键字可选
 > 文件与参数能力由内置运行时（`vxrt`）提供，链接期并入 `libvxrt.a`。
 > 执行 shell 命令的 `system` 属于 `sys` 导入库：`@imp(sys)` 后以
 > `sys.system(cmd)` 调用（`headers/sys.vxh` + `headers/sys.c`）。
+> 多进程原语属于 `proc` 导入库：`@imp(proc)` 后以 `proc.fork()` /
+> `proc.waitpid(pid, nil, 0)` / `proc.kill` / `proc.sleep` 调用
+> （`headers/proc.vxh`，无 `.c` 实现，链接期直连系统 libc）。
 
 ### 3.4 类与结构
 
@@ -147,6 +150,7 @@ export lexer                # 导出声明
 @imp(math)                    # headers 根目录库
 @imp(/collections/vec)        # 子目录库，库名取末段 vec
 @imp(./mylib)                 # 相对源文件目录
+@imp(proc)                    # 进程原语库（仅 .vxh，链接期直连系统 libc）
 @cppimp(cpp/greet.hpp)        # C++ 头文件（链接期生成 C++→VX ABI shim）
 @imp(math) as m               # 可选别名
 
@@ -163,6 +167,8 @@ func main() -> int:
 - 库文件 = `.vxh` 声明头 + 同名 `.c`/`.a`/`.dylib`/`.cpp` 实现；
   `@cppimp` 的签名取同目录同主名 `.vxh` 伴生文件（头文件命中系统目录时，
   伴生 `.vxh` 可在 `-I` / 库根中按同主名提供）。
+  **例外**：`proc` 库只有 `.vxh` 无实现文件——emitter 按 `_vx_proc_*` 符号
+  直接发射对系统 libc 的调用（进程原语 `fork`/`waitpid`/`kill`/`sleep` 等）。
 - 符号命名 VX ABI：`_vx_<库名>_<符号名>`。
 - 详见 README「库导入与 VX ABI」。
 

@@ -1,0 +1,19 @@
+# proc 库 — 进程原语（VX ABI 声明头，无配套 C 实现文件）
+# 与 math/sys 等库不同：本库没有 headers/proc.c。链接期 emitter 识别
+# _vx_proc_* 符号后直接发射对系统 libc 的调用（fork/waitpid/...），
+# 实现由操作系统 libc 提供，零 C/C++ 源码。
+# 用法：@imp(proc) 后以 proc.fork() / proc.waitpid(...) 访问。
+#
+# 返回值约定（POSIX，macOS / Linux 一致）：
+#   fork     父进程返回子进程 PID（>0），子进程返回 0，失败 -1
+#   waitpid  成功返回已回收的子进程 PID，失败 -1；
+#            options=0 阻塞等待，options=1（WNOHANG）非阻塞轮询，
+#            status 传 nil（或 0）表示不采集子进程退出状态
+#   kill     信号编号：0=存活探测 / 2=SIGINT / 15=SIGTERM / 9=SIGKILL
+#   sleep    睡眠秒数，返回剩余未睡秒数（0 = 睡满）
+extern func fork() -> int
+extern func getpid() -> int
+extern func getppid() -> int
+extern func waitpid(pid: int, status: ptr, options: int) -> int
+extern func kill(pid: int, sig: int) -> int
+extern func sleep(seconds: int) -> int

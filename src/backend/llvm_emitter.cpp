@@ -64,7 +64,8 @@ struct Builtin {
   VT ret;
 };
 
-// 键为 VX 源码中可见的调用名，sym 为链接期实际符号（可与键不同）。
+// 键为 VX 源码中可见的调用名（_vx_proc_* 为例外：proc 库无 C 实现，
+// 键取其 VX ABI 符号，命中后直连系统 libc）。
 // 注意：使用函数内静态避免静态初始化顺序 / 抛异常问题（throwing-static-init）。
 static const std::map<std::string_view, Builtin>& builtin_table() {
   static const std::map<std::string_view, Builtin> t = {
@@ -92,6 +93,14 @@ static const std::map<std::string_view, Builtin>& builtin_table() {
       {"file_read", {"vx_file_read", {VT::PTR}, true, VT::PTR}},
       {"file_write", {"vx_file_write", {VT::PTR, VT::PTR}, true, VT::I32}},
       {"file_exists", {"vx_file_exists", {VT::PTR}, true, VT::I32}},
+      // 进程原语（headers/proc.vxh 声明，无 C 实现）：键为 VX ABI 符号，
+      // 值为 libc 符号与签名；调用经 libc 直连，status 实参可传 nil / 0（NULL）
+      {"_vx_proc_fork", {"fork", {}, true, VT::I32}},
+      {"_vx_proc_getpid", {"getpid", {}, true, VT::I32}},
+      {"_vx_proc_getppid", {"getppid", {}, true, VT::I32}},
+      {"_vx_proc_waitpid", {"waitpid", {VT::I32, VT::PTR, VT::I32}, true, VT::I32}},
+      {"_vx_proc_kill", {"kill", {VT::I32, VT::I32}, true, VT::I32}},
+      {"_vx_proc_sleep", {"sleep", {VT::I32}, true, VT::I32}},
   };
   return t;
 }
@@ -1153,7 +1162,21 @@ private:
     for (std::size_t i = 0; i < args.size(); ++i) {
       if (i != 0U)
         call += ", ";
-      call += std::string(vt_name(arg_vts[i])) + " " + args[i].val;
+      std::string operand = args[i].val;
+      // 实参值类型与形参声明不一致时按位型互转：FFI 边界放行任意实参类型
+      // （如 waitpid(pid, 0, ...) 用整型 0 表示 NULL 的 ptr 形参），不转则 IR 类型不匹配。
+      if (args[i].vt != arg_vts[i]) {
+        if (arg_vts[i] == VT::PTR && args[i].vt == VT::I32) {
+          const std::string t = new_temp();
+          line(t + " = inttoptr i32 " + operand + " to ptr");
+          operand = t;
+        } else if (arg_vts[i] == VT::I32 && args[i].vt == VT::PTR) {
+          const std::string t = new_temp();
+          line(t + " = ptrtoint ptr " + operand + " to i32");
+          operand = t;
+        }
+      }
+      call += std::string(vt_name(arg_vts[i])) + " " + operand;
     }
     call += ")";
     line(call);

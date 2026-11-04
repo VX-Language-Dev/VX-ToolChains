@@ -341,6 +341,58 @@ void test_emitter_unknown_call() {
   CHECK(r.error.find("未知调用目标") != std::string::npos);
 }
 
+void test_emitter_proc_libc_bridge() {
+  // proc 库（headers/proc.vxh）：_vx_proc_* 按 ABI 符号命中 builtin 表，
+  // 直连 libc（无 C 实现），且优先于 linkage 的 extern 声明（不发 @_vx_proc_*）。
+  ir::ModuleIR mod;
+  ir::LinkEntry le;
+  le.name = "fork";
+  le.abi_symbol = "_vx_proc_fork";
+  le.ret_type = "int";
+  le.lib = "proc";
+  mod.linkage.push_back(le);
+
+  ir::FuncIR f;
+  f.name = "main";
+  f.ret_type = "int";
+  f.local_count = 0;
+  ir::Inst call_fork;
+  call_fork.op = ir::OP_CALL;
+  call_fork.args = "f;_vx_proc_fork";
+  ir::Inst pid;
+  pid.op = ir::OP_CONST_INT;
+  pid.args = "i7";
+  ir::Inst status;
+  status.op = ir::OP_CONST_INT;
+  status.args = "i0"; // 整型 0 → ptr 形参：发射 inttoptr 转换为 NULL
+  ir::Inst opts;
+  opts.op = ir::OP_CONST_INT;
+  opts.args = "i1";
+  ir::Inst call_wait;
+  call_wait.op = ir::OP_CALL;
+  call_wait.args = "f;_vx_proc_waitpid";
+  ir::Inst ret;
+  ret.op = ir::OP_RETURN;
+  f.instructions = {call_fork, pid, status, opts, call_wait, ret};
+  mod.funcs.push_back(std::move(f));
+
+  auto r = backend::emit_llvm_ir(mod, kTriple);
+  CHECK(r.ok);
+  if (!r.ok) {
+    std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
+    return;
+  }
+  const std::string& ir = r.ir;
+  CHECK(ir.find("declare i32 @fork()") != std::string::npos);
+  CHECK(ir.find("call i32 @fork()") != std::string::npos);
+  CHECK(ir.find("declare i32 @waitpid(i32, ptr, i32)") != std::string::npos);
+  CHECK(ir.find("call i32 @waitpid(i32") != std::string::npos);
+  // int 0 → ptr NULL 的位型互转（无转换则 IR 类型不匹配）
+  CHECK(ir.find("inttoptr i32 0 to ptr") != std::string::npos);
+  // builtin 桥接优先：不发 VX ABI extern 声明（库无实现文件，发了必链不过）
+  CHECK(ir.find("@_vx_proc") == std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -359,6 +411,7 @@ int main() {
   test_emitter_unsupported_opcode();
   test_emitter_unknown_call();
   test_emitter_system_builtins();
+  test_emitter_proc_libc_bridge();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "backend tests: all passed\n");

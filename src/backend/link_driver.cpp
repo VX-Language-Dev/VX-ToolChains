@@ -49,7 +49,8 @@ int run_subprocess(const std::string& exe, std::vector<std::string>& args, const
 
   const pid_t pid = ::fork();
   if (pid < 0) {
-    if (err_msg) *err_msg = "fork 失败";
+    if (err_msg)
+      *err_msg = "fork 失败";
     return -1;
   }
   if (pid == 0) {
@@ -65,10 +66,13 @@ int run_subprocess(const std::string& exe, std::vector<std::string>& args, const
     ::_exit(127);
   }
   int status = 0;
-  while (::waitpid(pid, &status, 0) < 0) {}
-  if (!WIFEXITED(status)) return -1;
+  while (::waitpid(pid, &status, 0) < 0) {
+  }
+  if (!WIFEXITED(status))
+    return -1;
   const int code = WEXITSTATUS(status);
-  if (code != 0 && err_msg) *err_msg = read_text(log_file);
+  if (code != 0 && err_msg)
+    *err_msg = read_text(log_file);
   return code;
 }
 
@@ -82,7 +86,8 @@ struct MemorySource {
 struct TempDirGuard {
   fs::path path;
   ~TempDirGuard() {
-    if (path.empty()) return;
+    if (path.empty())
+      return;
     std::error_code ec;
     fs::remove_all(path, ec);
   }
@@ -92,15 +97,18 @@ fs::path executable_dir() {
 #if defined(__APPLE__)
   std::uint32_t size = 0;
   ::_NSGetExecutablePath(nullptr, &size);
-  if (size == 0) return {};
+  if (size == 0)
+    return {};
   std::string buf(size, '\0');
-  if (::_NSGetExecutablePath(buf.data(), &size) != 0) return {};
+  if (::_NSGetExecutablePath(buf.data(), &size) != 0)
+    return {};
   buf.resize(size > 0 ? size - 1 : 0);
   return fs::path(buf).parent_path();
 #elif defined(__linux__)
   std::vector<char> buf(4096);
   const ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
-  if (n <= 0) return {};
+  if (n <= 0)
+    return {};
   buf[static_cast<std::size_t>(n)] = '\0';
   return fs::path(buf.data()).parent_path();
 #else
@@ -123,7 +131,8 @@ std::string find_vxrt_lib() {
   cands.push_back(fs::current_path() / "build" / "libvxrt.a");
   for (const fs::path& p : cands) {
     std::error_code ec;
-    if (fs::is_regular_file(p, ec) && !ec) return p.string();
+    if (fs::is_regular_file(p, ec) && !ec)
+      return p.string();
   }
   return {};
 }
@@ -140,15 +149,22 @@ std::string find_lld() {
 std::string find_tool_or_env(std::initializer_list<std::string_view> env_vars,
                              std::initializer_list<std::string_view> candidates) {
   for (std::string_view v : env_vars) {
-    if (const char* env = std::getenv(std::string(v).c_str()); env != nullptr && env[0] != '\0' && ::access(env, X_OK) == 0)
+    if (const char* env = std::getenv(std::string(v).c_str());
+        env != nullptr && env[0] != '\0' && ::access(env, X_OK) == 0)
       return env;
   }
   return vx::util::find_in_path(candidates);
 }
 
-std::string find_llc() { return find_tool_or_env({"VX_LLC"}, {"llc"}); }
-std::string find_cc()  { return find_tool_or_env({"VX_CC"},  {"cc", "gcc", "clang"}); }
-std::string find_cxx() { return find_tool_or_env({"VX_CXX"}, {"c++", "g++", "clang++"}); }
+std::string find_llc() {
+  return find_tool_or_env({"VX_LLC"}, {"llc"});
+}
+std::string find_cc() {
+  return find_tool_or_env({"VX_CC"}, {"cc", "gcc", "clang"});
+}
+std::string find_cxx() {
+  return find_tool_or_env({"VX_CXX"}, {"c++", "g++", "clang++"});
+}
 
 // 链接器选择：macOS 用 ld64.lld / ld，Linux 用 ld.lld / ld.gold / ld.bfd
 std::string find_linker() {
@@ -164,7 +180,8 @@ std::string find_linker() {
 // ---- 旧版 clang 驱动实现（作为回退） ----
 LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std::string_view target,
                           const std::vector<std::string>& extra_files, const std::vector<MemorySource>& extra_sources,
-                          bool shared, const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags) {
+                          bool shared, const std::vector<std::string>& cflags,
+                          const std::vector<std::string>& ldflags) {
   LinkResult r;
   const std::string clang = find_clang();
   if (clang.empty()) {
@@ -175,7 +192,10 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
   std::vector<char> tmpl_buf(tmpl.begin(), tmpl.end());
   tmpl_buf.push_back('\0');
   const char* dir = ::mkdtemp(tmpl_buf.data());
-  if (dir == nullptr) { r.error = "无法创建临时目录"; return r; }
+  if (dir == nullptr) {
+    r.error = "无法创建临时目录";
+    return r;
+  }
   TempDirGuard guard{fs::path(dir)};
   const fs::path& tmp = guard.path;
   const fs::path ll_file = tmp / "module.ll";
@@ -206,8 +226,14 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
     args.push_back(p.string());
     r.command += " " + p.string();
   }
-  for (const std::string& f : extra_files) { args.push_back(f); r.command += " " + f; }
-  for (const std::string& f : cflags) { args.push_back(f); r.command += " " + f; }
+  for (const std::string& f : extra_files) {
+    args.push_back(f);
+    r.command += " " + f;
+  }
+  for (const std::string& f : cflags) {
+    args.push_back(f);
+    r.command += " " + f;
+  }
   args.emplace_back("-Wno-override-module");
   r.command += " -Wno-override-module";
   args.emplace_back("-lm");
@@ -223,9 +249,11 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
   }
   bool any_cxx = false;
   for (const MemorySource& src : extra_sources)
-    if (src.name.ends_with(".cpp") || src.name.ends_with(".cc") || src.name.ends_with(".cxx")) any_cxx = true;
+    if (src.name.ends_with(".cpp") || src.name.ends_with(".cc") || src.name.ends_with(".cxx"))
+      any_cxx = true;
   for (const std::string& f : extra_files)
-    if (f.ends_with(".cpp") || f.ends_with(".cc") || f.ends_with(".cxx")) any_cxx = true;
+    if (f.ends_with(".cpp") || f.ends_with(".cc") || f.ends_with(".cxx"))
+      any_cxx = true;
   if (any_cxx) {
     const std::string cxx_lib = vx::util::host_os() == "macosx" ? "-lc++" : "-lstdc++";
     args.push_back(cxx_lib);
@@ -239,7 +267,10 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
   args.emplace_back("-o");
   args.emplace_back(exe_path);
   r.command += " -o " + std::string(exe_path);
-  for (const std::string& f : ldflags) { args.push_back(f); r.command += " " + f; }
+  for (const std::string& f : ldflags) {
+    args.push_back(f);
+    r.command += " " + f;
+  }
 
   std::string err;
   const int code = run_subprocess(clang, args, log_file, &err);
@@ -247,18 +278,22 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
     r.error = "clang 链接失败 (exit " + std::to_string(code) + "):\n" + (err.empty() ? "(无输出)" : err);
     return r;
   }
-  if (!fs::exists(exe_path)) { r.error = "clang 报告成功但未生成可执行文件"; return r; }
+  if (!fs::exists(exe_path)) {
+    r.error = "clang 报告成功但未生成可执行文件";
+    return r;
+  }
   r.ok = true;
   return r;
 }
 
 // ---- 新版分段链路：llc + cc/c++ + lld ----
 LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, std::string_view target,
-                             const std::vector<std::string>& extra_files, const std::vector<MemorySource>& extra_sources,
-                             bool shared, const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags) {
+                             const std::vector<std::string>& extra_files,
+                             const std::vector<MemorySource>& extra_sources, bool shared,
+                             const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags) {
   LinkResult r;
   const std::string llc = find_llc();
-  const std::string cc  = find_cc();
+  const std::string cc = find_cc();
   const std::string cxx = find_cxx();
   const std::string linker = find_linker();
   if (llc.empty() || cc.empty() || linker.empty()) {
@@ -270,26 +305,28 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   std::vector<char> tmpl_buf(tmpl.begin(), tmpl.end());
   tmpl_buf.push_back('\0');
   const char* dir = ::mkdtemp(tmpl_buf.data());
-  if (dir == nullptr) { r.error = "无法创建临时目录"; return r; }
+  if (dir == nullptr) {
+    r.error = "无法创建临时目录";
+    return r;
+  }
   TempDirGuard guard{fs::path(dir)};
   const fs::path& tmp = guard.path;
   const std::string host = vx::backend::host_triple();
   const std::string triple = target.empty() ? host : std::string(target);
 
-  std::vector<fs::path> obj_files;   // 所有 .o 文件（llc + cc + cxx 产出）
-  std::vector<std::string> extra_a_files;    // 预编译 .a（libvxrt.a, 用户 --lib .a）
+  std::vector<fs::path> obj_files;            // 所有 .o 文件（llc + cc + cxx 产出）
+  std::vector<std::string> extra_a_files;     // 预编译 .a（libvxrt.a, 用户 --lib .a）
   std::vector<std::string> extra_dylib_files; // .dylib/.so（用户 --lib）
 
   // ---- 1. 写 .ll → llc → module.o ----
   const fs::path ll_file = tmp / "module.ll";
-  const fs::path obj_vx  = tmp / "module.o";
+  const fs::path obj_vx = tmp / "module.o";
   {
     std::ofstream(ll_file, std::ios::binary) << std::string(ll_ir);
   }
   {
-    std::vector<std::string> args = {
-      llc, "--filetype=obj", "--mtriple=" + triple, "-o", obj_vx.string(), ll_file.string()
-    };
+    std::vector<std::string> args = {llc,  "--filetype=obj", "--mtriple=" + triple,
+                                     "-o", obj_vx.string(),  ll_file.string()};
     const fs::path log = tmp / "llc.log";
     std::string err;
     if (run_subprocess(llc, args, log, &err) != 0) {
@@ -306,7 +343,7 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
     extra_a_files.push_back(vxrt_lib);
   } else {
     const fs::path rt_file = tmp / "vxrt.c";
-    const fs::path rt_obj  = tmp / "vxrt.o";
+    const fs::path rt_obj = tmp / "vxrt.o";
     std::ofstream(rt_file, std::ios::binary) << kVxrtSource;
     std::vector<std::string> args = {cc, "-c", "-o", rt_obj.string(), rt_file.string()};
     for (const auto& f : cflags) {
@@ -319,7 +356,8 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
       args.emplace_back("-target");
       args.emplace_back(target);
     }
-    if (shared) args.emplace_back("-fPIC");
+    if (shared)
+      args.emplace_back("-fPIC");
     const fs::path log = tmp / "cc_vxrt.log";
     std::string err;
     if (run_subprocess(cc, args, log, &err) != 0) {
@@ -346,8 +384,12 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
       if (f.starts_with("-W") || f.starts_with("-O") || f.starts_with("-I") || f.starts_with("-D") ||
           f.starts_with("-std"))
         args.push_back(f);
-    if (!target.empty()) { args.emplace_back("-target"); args.emplace_back(target); }
-    if (shared) args.emplace_back("-fPIC");
+    if (!target.empty()) {
+      args.emplace_back("-target");
+      args.emplace_back(target);
+    }
+    if (shared)
+      args.emplace_back("-fPIC");
     const fs::path log = tmp / (std::string(is_cxx ? "cxx_" : "cc_") + p.stem().string() + ".log");
     std::string err;
     if (run_subprocess(compiler, args, log, &err) != 0) {
@@ -363,8 +405,14 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
     const bool is_cxx = f.ends_with(".cpp") || f.ends_with(".cc") || f.ends_with(".cxx");
     const bool is_lib_a = f.ends_with(".a");
     const bool is_lib_dylib = f.ends_with(".dylib") || f.ends_with(".so") || f.ends_with(".dylib.a");
-    if (is_lib_a) { extra_a_files.push_back(f); continue; }
-    if (is_lib_dylib) { extra_dylib_files.push_back(f); continue; }
+    if (is_lib_a) {
+      extra_a_files.push_back(f);
+      continue;
+    }
+    if (is_lib_dylib) {
+      extra_dylib_files.push_back(f);
+      continue;
+    }
     const std::string& compiler = is_cxx ? cxx : cc;
     if (compiler.empty()) {
       r.error = "需要 " + std::string(is_cxx ? "C++ 编译器" : "C 编译器") + " 但未找到";
@@ -377,8 +425,12 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
       if (cf.starts_with("-W") || cf.starts_with("-O") || cf.starts_with("-I") || cf.starts_with("-D") ||
           cf.starts_with("-std"))
         args.push_back(cf);
-    if (!target.empty()) { args.emplace_back("-target"); args.emplace_back(target); }
-    if (shared) args.emplace_back("-fPIC");
+    if (!target.empty()) {
+      args.emplace_back("-target");
+      args.emplace_back(target);
+    }
+    if (shared)
+      args.emplace_back("-fPIC");
     const fs::path log = tmp / (std::string(is_cxx ? "cxx_" : "cc_") + in_path.stem().string() + ".log");
     std::string err;
     if (run_subprocess(compiler, args, log, &err) != 0) {
@@ -394,7 +446,8 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
 #if defined(__APPLE__)
   // macOS：ld64.lld 直接用，需要 syslibroot 找 libSystem
   std::string arch = triple.substr(0, triple.find('-'));
-  if (arch == "aarch64") arch = "arm64";
+  if (arch == "aarch64")
+    arch = "arm64";
   link_args.push_back("-arch");
   link_args.push_back(arch);
   link_args.push_back("-platform_version");
@@ -430,7 +483,8 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   }
 #else
   // Linux ld.lld：--shared 产生 .so
-  if (shared) link_args.push_back("--shared");
+  if (shared)
+    link_args.push_back("--shared");
 #endif
   for (const auto& obj : obj_files)
     link_args.push_back(obj.string());
@@ -449,9 +503,11 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
 #endif
   bool any_cxx = false;
   for (const MemorySource& src : extra_sources)
-    if (src.name.ends_with(".cpp") || src.name.ends_with(".cc") || src.name.ends_with(".cxx")) any_cxx = true;
+    if (src.name.ends_with(".cpp") || src.name.ends_with(".cc") || src.name.ends_with(".cxx"))
+      any_cxx = true;
   for (const std::string& f : extra_files)
-    if (f.ends_with(".cpp") || f.ends_with(".cc") || f.ends_with(".cxx")) any_cxx = true;
+    if (f.ends_with(".cpp") || f.ends_with(".cc") || f.ends_with(".cxx"))
+      any_cxx = true;
   if (any_cxx) {
 #if defined(__APPLE__)
     link_args.push_back("-lc++");
@@ -461,21 +517,28 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   }
   link_args.push_back("-o");
   link_args.push_back(std::string(exe_path));
-  for (const auto& f : ldflags) link_args.push_back(f);
+  for (const auto& f : ldflags)
+    link_args.push_back(f);
 
   const fs::path link_log = tmp / "lld.log";
   std::string link_err;
   r.command += " && " + linker;
   bool first_arg = true;
   for (const auto& a : link_args) {
-    if (first_arg) { first_arg = false; continue; } // link_args[0] 就是 linker，跳过避免重复
+    if (first_arg) {
+      first_arg = false;
+      continue;
+    } // link_args[0] 就是 linker，跳过避免重复
     r.command += " " + a;
   }
   if (run_subprocess(linker, link_args, link_log, &link_err) != 0) {
     r.error = "链接失败 (" + linker + "):\n" + link_err;
     return r;
   }
-  if (!fs::exists(exe_path)) { r.error = "链接成功但未生成产物"; return r; }
+  if (!fs::exists(exe_path)) {
+    r.error = "链接成功但未生成产物";
+    return r;
+  }
   r.ok = true;
   return r;
 }
@@ -488,7 +551,8 @@ LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path, std::str
   // 分段链路先决条件：llc + cc + linker 都在；任一缺失则回退 clang 驱动
   if (!find_llc().empty() && !find_cc().empty() && !find_linker().empty()) {
     auto r = link_via_pipeline(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags);
-    if (r.ok) return r;
+    if (r.ok)
+      return r;
     // 失败则回退 clang（保留 r.error 便于诊断，clang 回退信息会附在 LinkResult.error）
     if (!find_clang().empty()) {
       auto fallback = link_via_clang(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags);
@@ -516,7 +580,8 @@ std::string find_clang() {
 }
 
 std::string find_lld() {
-  if (const char* off = std::getenv("VX_NO_LLD"); off != nullptr && off[0] != '\0') return {};
+  if (const char* off = std::getenv("VX_NO_LLD"); off != nullptr && off[0] != '\0')
+    return {};
   return vx::util::find_in_path({"ld.lld"});
 }
 
@@ -530,22 +595,29 @@ std::string generate_cpp_shim(const vx::compiler::ir::ModuleIR& mod) {
   out += "#include <cstdint>\n";
   std::vector<std::string> headers;
   for (const vx::compiler::ir::LibDep& d : mod.libs) {
-    if (!d.from_cpp || d.cpp_header.empty()) continue;
+    if (!d.from_cpp || d.cpp_header.empty())
+      continue;
     bool seen = false;
-    for (const std::string& h : headers) seen = seen || h == d.cpp_header;
-    if (!seen) headers.push_back(d.cpp_header);
+    for (const std::string& h : headers)
+      seen = seen || h == d.cpp_header;
+    if (!seen)
+      headers.push_back(d.cpp_header);
   }
   for (const std::string& h : headers)
     out += "#include \"" + h + "\"\n";
   out += "\nextern \"C\" {\n";
   for (const vx::compiler::ir::LinkEntry& e : mod.linkage) {
-    if (!e.from_cpp) continue;
+    if (!e.from_cpp)
+      continue;
     const std::string sym = e.abi_symbol.empty() ? e.name : e.abi_symbol;
     const std::string_view ret = vx::compiler::abi::c_type_of(e.ret_type);
     out += std::string(ret) + " " + sym + "(";
     std::string call_args;
     for (std::size_t i = 0; i < e.params.size(); ++i) {
-      if (i != 0) { out += ", "; call_args += ", "; }
+      if (i != 0) {
+        out += ", ";
+        call_args += ", ";
+      }
       const std::string pname = e.params[i].name.empty() ? ("a" + std::to_string(i)) : e.params[i].name;
       out += std::string(vx::compiler::abi::c_type_of(e.params[i].type)) + " " + pname;
       call_args += pname;
@@ -567,17 +639,22 @@ LinkResult link_module(std::string_view ll_ir, const vx::compiler::ir::ModuleIR&
                        const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags) {
   std::vector<std::string> extra_files;
   for (const vx::compiler::ir::LibDep& d : mod.libs) {
-    if (d.impl_file.empty()) continue;
+    if (d.impl_file.empty())
+      continue;
     std::error_code ec;
-    if (fs::exists(d.impl_file, ec)) extra_files.push_back(d.impl_file);
+    if (fs::exists(d.impl_file, ec))
+      extra_files.push_back(d.impl_file);
   }
-  for (const std::string& lib : native_libs) extra_files.push_back(lib);
+  for (const std::string& lib : native_libs)
+    extra_files.push_back(lib);
   std::vector<MemorySource> extra_sources;
   bool any_cpp = false;
   for (const vx::compiler::ir::LibDep& d : mod.libs) {
-    if (d.from_cpp && !d.cpp_header.empty()) any_cpp = true;
+    if (d.from_cpp && !d.cpp_header.empty())
+      any_cpp = true;
   }
-  if (any_cpp) extra_sources.push_back({"vxshim.cpp", generate_cpp_shim(mod)});
+  if (any_cpp)
+    extra_sources.push_back({"vxshim.cpp", generate_cpp_shim(mod)});
   return link_impl(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags);
 }
 
