@@ -372,9 +372,10 @@ vmake clean -B <构建目录>            # 彻底重建
 - `-I <dir>`（可多次）指定头文件搜索目录，原样透传给每次 `vxc` 调用，
   并纳入增量依赖签名（目录内容变化会触发重编）。
 - 未设置 `VX_HEADERS_DIR` / `VX_HEADERS` 时，vmake 自动尝试 `<项目根>/headers/`，其次编译器旁的
-  `headers/`（最多向上 4 级）。
+  `headers/`（解析符号链接到真实二进制位置后，最多向上 4 级）。
 - 可用环境变量 `VX_HEADERS_DIR` 覆盖导入库根目录（`VX_HEADERS` 为兼容别名）。
-- 查找顺序与 vxc 一致：`-I` 目录（按序）→ headers 根；`@cppimp` 的 C/C++
+- 查找顺序与 vxc 一致：`-I` 目录（按序）→ headers 根（环境变量 → 项目
+  `headers/` → 编译器旁 `headers/` 向上查找）；`@cppimp` 的 C/C++
   头文件再追加探测系统 C/C++ 编译器的头目录；`./` 相对引用只查源文件目录。
 
 ## 7. CLI 选项

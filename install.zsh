@@ -15,10 +15,10 @@ cp ./build/tools/vmake/vmake ~/.local/bin/vmake
 cp ./build/tools/vmake-lsp/vmake-lsp ~/.local/bin/vmake-lsp
 cp ./build/tools/vfmt/vfmt ~/.local/bin/vfmt
 cp ./build/tools/vx/vx ~/.local/bin/vx
-# Install import-library headers next to the binaries: vxc / vxls / vx resolve
-# @imp/@cppimp libraries from <executable_dir>/headers by default
-# (extra search dirs via -I; library root overridden via VX_HEADERS_DIR,
-#  VX_HEADERS kept as legacy alias)
+# Install import-library headers next to the binaries: vxc / vxls resolve
+# @imp/@cppimp libraries from, in order: $VX_HEADERS_DIR/$VX_HEADERS,
+# ./headers (project root, same priority as vmake), <executable_dir>/headers
+# and its parent directories (extra search dirs via -I)
 if [ -d headers ]; then
     rm -rf ~/.local/bin/headers
     cp -R headers ~/.local/bin/headers

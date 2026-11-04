@@ -3,7 +3,7 @@
 > **从零自研的编程语言工具链** — C++23 实现，一条纯自研的编译链路把 `.vx` 源码变成原生机器码
 >
 > ![Language](https://img.shields.io/badge/language-C%2B%2B23-blue)
-> ![Version](https://img.shields.io/badge/version-v1.16.4-blue)
+> ![Version](https://img.shields.io/badge/version-v1.16.5-blue)
 > ![Tests](https://img.shields.io/badge/tests-20%20suites%20100%25%20passing-brightgreen)
 > ![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
 > ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
@@ -36,7 +36,7 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 | **静态类型 + var 推断** | 显式标注或 `var` 推断；无隐式类型转换；方法支持按参数类型重载解析 |
 | **跨平台中间格式** | VXOBJ v4 不携带平台特征，同一份 `.vxobj` 可在任意 clang 宿主上链接出对应平台的可执行文件 |
 | **混合语言互操作** | `@imp(lib)` 导入 C 库，`@cppimp(header.hpp)` 一行接入 C++ 头文件——链接期自动生成 ABI shim，不需手写桥接代码 |
-| **开发工具全家桶** | `vxc` 编译器 · `vlnk` 链接器 · `vmake` 增量构建（内容哈希签名 + 并行编译）· `vxls` LSP 服务器（跨文件补全/悬停/跳转/重命名）· `vx-tidy` 静态分析引擎 · `vfmt` 格式化工具（保留注释 + AST 结构自检） |
+| **开发工具全家桶** | `vxc` 编译器 · `vlnk` 链接器 · `vmake` 增量构建（内容哈希签名 + 并行编译）· `vxls` LSP 服务器（跨文件补全/悬停/跳转/重命名/内嵌提示）· `vx-tidy` 静态分析引擎 · `vfmt` 格式化工具（保留注释 + AST 结构自检） |
 | **增量构建** | `vmake` 基于内容哈希签名（非 mtime），未变化的目标跳过；修改编译参数仅重链不重编 |
 
 ---
@@ -66,11 +66,11 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 | `vxc` | 编译器前端：lex → parse → semantics → codegen → .vxobj | ✅ 可用 | 0.5.0 |
 | `vlnk` | 原生链接器：.vxobj → llc 生成 .o → lld 链接（自动探测系统 C/C++ 编译器，无 llc/lld 时回退 clang 驱动） | ✅ 可用 | 0.2.1 |
 | `vmake` | 项目构建编排：VMakeSet.vmake 驱动 vxc/vlnk/ar | ✅ 可用 | 0.4.0 |
-| `vxls` | LSP 语言服务器：补全/悬停/跳转/重命名（集成 vx-tidy） | ✅ 可用 | 0.4.0 |
+| `vxls` | LSP 语言服务器：补全/悬停/跳转/重命名/内嵌提示（集成 vx-tidy） | ✅ 可用 | 0.5.0 |
 | `vmake-lsp` | VMakeSet.vmake 语言服务器 | ✅ 可用 | 0.3.0 |
 | `vfmt` | 源码格式化（保留注释 + AST 结构自检） | ✅ 可用 | 0.1.0 |
 | `vx-tidy` | 静态分析引擎（纯动态库 libvxtidy） | ✅ 可用 | — |
-| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.16.4 |
+| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.16.5 |
 | VPM 包管理器 | 多语言包管理 | 🚧 规划 | — |
 | 反编译器 vxde | VXOBJ → VX 源码还原 | 🚧 规划 | — |
 
@@ -91,6 +91,19 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 - [许可](#许可)
 
 ---
+
+## 当前局限（VX 能力边界）
+
+VX 目前适合编写以计算、文件读写为主的程序；**尚不能完整实现 VMAKE 这类系统编排工具**。主要限制：
+
+- **进程与并发**：仅 `sys.system(cmd)` 阻塞调用，无 `spawn`/`wait`/`pipe`/线程/任务池，无法并行编译与可靠捕获子进程输出。
+- **文件系统**：仅有 `file_read`/`file_write`/`file_exists`，无目录创建/删除/列举/路径规范化，无法管理构建目录与头文件树。
+- **字符串处理**：仅拼接/比较/长度，无子串、查找、分割、trim、字符索引与字符串↔整数解析，难以编写解析器与签名器。
+- **集合与内存**：列表/字典为 P4 MVP（8 字节统一槽），无动态追加/扩容/迭代器；`std/` 标准库未接入编译器构建。
+- **错误处理**：无异常/Result 类型，I/O 仅返回哨兵值，难以聚合结构化诊断。
+- **自举范围**：`compiler/*.vx` 仅覆盖前端语法/代码生成，不包含系统层能力；VMAKE 等工具链编排器仍以 C++ 实现。
+
+> 若要用 VX 编写 VMAKE 等价物，需先补齐系统运行时（进程/目录/并发）、字符串与集合标准库，以及错误模型。
 
 ## 路线图（规划中）
 
@@ -368,9 +381,16 @@ func main():
     out(greet.greet("VX"))    # greet 库 → shim 包装 C++ 符号
 ```
 
-**库查找规则**：`-I <dir>` 指定的搜索目录（可多次，按序）优先；随后是库根
-——默认 vxc 可执行文件同级的 `headers/` 目录及其子目录（可用环境变量
-`VX_HEADERS_DIR`（优先）/ `VX_HEADERS` 覆盖）。`@cppimp` 的 C/C++ 头文件在未命中上述目录时，会继续
+**库查找规则**：`-I <dir>` 指定的搜索目录（可多次，按序）优先；随后是库根，
+按以下顺序解析、先命中先用（与 `vmake` 的库根优先级一致）：
+
+1. 环境变量 `VX_HEADERS_DIR`（优先）/ `VX_HEADERS`——显式覆盖；
+2. 当前工作目录（项目根）的 `headers/`——`vxc` / `vxls` 单独调用与 `vmake`
+   构建因此解析到**同一个**库根；
+3. vxc 可执行文件同级的 `headers/`，未命中则向上逐级查找（最多 4 级，
+   覆盖 `build/vxc` → `build` → 仓库根的构建树布局）。
+
+`@cppimp` 的 C/C++ 头文件在未命中上述目录时，会继续
 探测系统 C/C++ 编译器（`c++`/`clang++`/`g++` 等）的头文件搜索目录；此时
 VX 签名的 `.vxh` 伴生文件可在 `-I` / 库根中按同主名提供。
 
@@ -497,7 +517,7 @@ vxls 位于 `tools/vxls/`，C++ 实现的 LSP 服务器（stdio 传输），
 | 引用查找 | textDocument/references 跨文件引用查找                     | ✅   |
 | 重命名   | textDocument/rename 跨文件重命名                           | ✅   |
 | 工作区符号 | workspace/symbol 跨文档符号搜索                            | ✅   |
-| 内嵌提示 | 类型推断、参数名提示                                       | 🚧 开发中 |
+| 内嵌提示 | 类型推断（字面量/`new`/函数返回/导入库返回值）与调用参数名提示；跨文件解析其它打开文档的函数签名，导入库经 `.vxh` 获取返回类型与形参名 | ✅   |
 
 ```bash
 cmake -G Ninja -B build -S . && ninja -C build vxls

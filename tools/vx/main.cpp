@@ -32,7 +32,7 @@
 
 namespace fs = std::filesystem;
 
-static constexpr const char* kVersion = "1.16.4";
+static constexpr const char* kVersion = "1.16.5";
 
 static std::string find_sibling(const std::string& name) {
   // Try next to this executable, searching up to 3 parent directories
@@ -85,37 +85,6 @@ static std::string find_sibling(const std::string& name) {
     }
   }
   return name; // hope it's in PATH
-}
-
-// 解析导入库根目录（headers），供子进程继承：
-//   VX_HEADERS_DIR > VX_HEADERS > <vx 二进制所在目录>/headers > 仓库/安装目录 headers
-static std::string resolve_vx_headers() {
-  for (const char* var : {"VX_HEADERS_DIR", "VX_HEADERS"}) {
-    if (const char* env = std::getenv(var); (env != nullptr) && (env[0] != '\0'))
-      return env;
-  }
-  // vx 二进制所在目录
-  char buf[4096];
-  fs::path exe_dir;
-#if defined(__APPLE__)
-  uint32_t size = sizeof(buf);
-  if (_NSGetExecutablePath(buf, &size) == 0) {
-    exe_dir = fs::path(buf).parent_path();
-  }
-#else
-  ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-  if (len > 0) {
-    buf[len] = '\0';
-    exe_dir = fs::path(buf).parent_path();
-  }
-#endif
-  if (!exe_dir.empty()) {
-    std::error_code ec;
-    fs::path cand = exe_dir / "headers";
-    if (fs::is_directory(cand, ec) && !ec)
-      return cand.string();
-  }
-  return {};
 }
 
 static void print_help() {
@@ -302,13 +271,10 @@ int main(int argc, char** argv) {
     }
   }
 
-  // 把导入库根目录传播给子进程（vxc/vxls/vmake 通过 VX_HEADERS_DIR 解析）；
-  // 用户已显式设置时保持原值。
-  if (std::getenv("VX_HEADERS_DIR") == nullptr || std::getenv("VX_HEADERS_DIR")[0] == '\0') {
-    const std::string hdrs = resolve_vx_headers();
-    if (!hdrs.empty())
-      setenv("VX_HEADERS_DIR", hdrs.c_str(), 1);
-  }
+  // 导入库根不做预设传播：vxc / vxls / vmake 各自按「显式环境变量 > 项目
+  // headers/ > 二进制旁 headers/」的同一优先级自行解析。此处若抢先写入
+  // VX_HEADERS_DIR，会遮蔽 vmake 的「项目 headers/ 优先」，导致 `vx build`
+  // 在带自有 headers/ 的项目里反而找不到库。
 
   // Build argv for exec
   std::vector<char*> new_argv;

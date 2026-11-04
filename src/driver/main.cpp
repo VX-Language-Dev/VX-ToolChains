@@ -59,8 +59,10 @@ static void print_help() {
                "Options:\n"
                "  -o <file>       Output VXOBJ file (default: <source>.vxobj)\n"
                "  -I <dir>        Add header search directory for @imp/@cppimp\n"
-               "                  (repeatable; searched before the default headers/;\n"
-               "                  also accepts -I<dir>)\n"
+               "                  (repeatable; searched before the headers root:\n"
+               "                  $VX_HEADERS_DIR/$VX_HEADERS > ./headers/ >\n"
+               "                  headers/ next to vxc and its parents; also\n"
+               "                  accepts -I<dir>)\n"
                "  --std-lib <dir> VX standard library directory (default: auto-detect\n"
                "                  std/ next to the executable)\n"
                "  --target <tpl>  Cross-compile target triple (e.g. x86_64-linux-gnu)\n"
@@ -236,10 +238,10 @@ int main(int argc, char** argv) {
   }
 
   // --- 阶段 3.5: 库导入解析（@imp / @cppimp）---
-  // 搜索顺序：-I 目录（按序）→ headers 根（VX_HEADERS 或 vxc 同级 headers/）
-  // → @cppimp 追加系统 C/C++ 编译器头目录；相对引用只查源文件目录。
-  // 搜索顺序：-I 目录（按序）→ headers 根（VX_HEADERS_DIR / VX_HEADERS 或
-  // vxc 同级 headers/，亦可由 vx 元命令通过 VX_HEADERS_DIR 传入）
+  // 搜索顺序：-I 目录（按序）→ headers 根 → @cppimp 追加系统 C/C++ 编译器头目录；
+  // 相对引用只查源文件目录。headers 根按「VX_HEADERS_DIR / VX_HEADERS 环境变量 →
+  // 当前工作目录 headers/（项目库根）→ vxc 同级 headers/ 及其上级目录」解析，
+  // 与 vmake 的库根优先级一致（vx 元命令只做转发，不预设环境变量）。
   fs::path headers_root = vx::compiler::resolve_headers_root(argv[0]);
   ImportContext imp_ctx;
   imp_ctx.headers_root = headers_root;

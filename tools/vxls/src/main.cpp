@@ -36,7 +36,7 @@ using vxls::LspPosition;
 using vxls::LspRange;
 using vxls::json::Value;
 
-constexpr const char* kVersion = "0.4.0";
+constexpr const char* kVersion = "0.5.0";
 
 // 打开的文档集合（uri → 全文）
 std::map<std::string, std::string> g_docs;
@@ -151,6 +151,7 @@ void handle_initialize(const LspMessage& req) {
           }),
       },
       {"codeActionProvider", Value::boolean(true)},
+      {"inlayHintProvider", Value::object({{"resolveProvider", Value::boolean(false)}})},
       {"workspaceSymbolProvider", Value::boolean(true)},
       {
           "completionProvider",
@@ -346,6 +347,65 @@ void handle_document_highlight(const LspMessage& req) {
     out.push_back(Value::object({{"range", range_value(r)}, {"kind", Value::number(1)}}));
   }
   vxls::send_response(req, Value::array(out));
+}
+
+// 位置是否落在请求范围内（LSP Range：start ≤ pos < end）
+bool pos_in_range(const LspPosition& pos, const LspRange& range) {
+  auto before = [](const LspPosition& a, const LspPosition& b) {
+    return a.line < b.line || (a.line == b.line && a.character < b.character);
+  };
+  return !before(pos, range.start) && before(pos, range.end);
+}
+
+void handle_inlay_hints(const LspMessage& req) {
+  std::string uri;
+  const Value* td = req.params.find("textDocument");
+  if (td != nullptr)
+    uri = std::string(td->str_or("uri"));
+  auto it = g_docs.find(uri);
+  if (it == g_docs.end()) {
+    vxls::send_response(req, Value::array({}));
+    return;
+  }
+  // 类型推断 + 参数名提示（导入库经 headers 根解析，跨文件取已打开文档）
+  const std::vector<vxls::LspInlayHint> hints =
+      vxls::inlay_hints(it->second, g_headers_root, g_include_dirs, g_docs, uri);
+
+  LspRange range;
+  bool has_range = false;
+  if (const Value* r = req.params.find("range")) {
+    if (const Value* s = r->find("start")) {
+      range.start.line = s->int_or("line", 0);
+      range.start.character = s->int_or("character", 0);
+    }
+    if (const Value* e = r->find("end")) {
+      range.end.line = e->int_or("line", 0);
+      range.end.character = e->int_or("character", 0);
+    }
+    has_range = true;
+  }
+
+  std::vector<Value> out;
+  out.reserve(hints.size());
+  for (const auto& h : hints) {
+    if (has_range && !pos_in_range(h.position, range))
+      continue;
+    std::vector<std::pair<std::string, Value>> fields;
+    fields.emplace_back("position", Value::object({
+                                        {"line", Value::number(h.position.line)},
+                                        {"character", Value::number(h.position.character)},
+                                    }));
+    fields.emplace_back("label", Value::string(h.label));
+    fields.emplace_back("kind", Value::number(h.kind));
+    if (!h.tooltip.empty())
+      fields.emplace_back("tooltip", Value::string(h.tooltip));
+    if (h.padding_left)
+      fields.emplace_back("paddingLeft", Value::boolean(true));
+    if (h.padding_right)
+      fields.emplace_back("paddingRight", Value::boolean(true));
+    out.push_back(Value::object(std::move(fields)));
+  }
+  vxls::send_response(req, Value::array(std::move(out)));
 }
 
 void handle_semantic_tokens(const LspMessage& req) {
@@ -584,6 +644,7 @@ void handle_workspace_symbol(const LspMessage& req) {
 
 void print_help() {
   std::fputs("vxls — VX 语言服务器（LSP over stdio）\n"
+             "LSP 能力：诊断 / 悬停 / 补全 / 跳转 / 引用 / 重命名 / 内嵌提示（类型与参数名）\n"
              "Usage: vxls [options] [--only-tidy <file.vx>...]\n"
              "Options:\n"
              "  --stdio          标准 LSP 传输（默认，供编辑器配置兼容）\n"
@@ -700,8 +761,8 @@ int main(int argc, char** argv) {
     tidy_files.emplace_back(a); // 位置参数仅 --only-tidy 时使用
   }
 
-  // headers 根：VX_HEADERS_DIR / VX_HEADERS 环境变量 或 可执行文件同级 headers/
-  // （导入库 hover）；vx 元命令会通过 VX_HEADERS_DIR 传入
+  // headers 根：VX_HEADERS_DIR / VX_HEADERS 环境变量 → 当前工作目录 headers/
+  // → 可执行文件同级 headers/（含向上查找），解析规则与 vxc 完全一致（导入库 hover）
   g_headers_root = vx::compiler::resolve_headers_root(argv[0]);
 
   if (only_tidy) {
@@ -742,6 +803,8 @@ int main(int argc, char** argv) {
       handle_definition(m);
     } else if (m.method == "textDocument/documentHighlight") {
       handle_document_highlight(m);
+    } else if (m.method == "textDocument/inlayHint") {
+      handle_inlay_hints(m);
     } else if (m.method == "textDocument/semanticTokens/full") {
       handle_semantic_tokens(m);
     } else if (m.method == "textDocument/codeAction") {

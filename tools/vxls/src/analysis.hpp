@@ -55,6 +55,16 @@ struct LspCompletion {
   bool is_snippet = false;   // true 时 insert_text 为 LSP snippet（$1 占位）
 };
 
+// 内嵌提示（textDocument/inlayHint）
+struct LspInlayHint {
+  LspPosition position;
+  std::string label;   // 展示文本（如 ": int" / "a:"）
+  int kind = 1;        // 1=Type 2=Parameter
+  std::string tooltip; // 悬停说明（空 = 无）
+  bool padding_left = false;
+  bool padding_right = false;
+};
+
 // 一次完整分析的结果（字符串均已自有，无 arena 依赖）
 struct Analysis {
   std::vector<vx::compiler::Diagnostic> diags;
@@ -133,6 +143,19 @@ std::vector<LspCompletion> completion_at(std::string_view text, int line, int ch
 LspSignatureHelp signature_help_at(std::string_view text, int line, int character,
                                    const std::filesystem::path& headers_root = {},
                                    const std::vector<std::filesystem::path>& include_dirs = {});
+
+// 内嵌提示：类型推断 + 调用参数名。
+//   - 类型：`var x = <expr>` 未标注类型时，按初始化表达式推断（字面量 / new /
+//     本文件与其它打开文档的顶层函数返回值 / 导入库符号返回值 / 内置运行时）
+//     并在变量名后给出 `: T`
+//   - 参数：函数调用实参前给出形参名（`f(1, 2)` → `f(a: 1, b: 2)`），
+//     解析顺序为当前文档 → 其它打开文档 → 内置运行时；`库前缀.符号` 形态
+//     经 @imp/@cppimp 导入表解析 .vxh 签名（需 headers_root）
+// docs 为全部已打开文档（uri → 全文），uri 用于跳过当前文档自身。
+// headers_root 为空时跳过导入库解析（其余提示不受影响）。
+std::vector<LspInlayHint> inlay_hints(std::string_view text, const std::filesystem::path& headers_root = {},
+                                      const std::vector<std::filesystem::path>& include_dirs = {},
+                                      const std::map<std::string, std::string>& docs = {}, const std::string& uri = {});
 
 // vx-tidy 静态检查结果 → LSP 诊断（经 vxtidy 动态库）。
 // VXTIDY900（语法错误透传）会被跳过：该类问题由前端诊断负责，避免重复。

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <string>
 #include <utility>
 
 #include <cerrno>
@@ -15,6 +16,9 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -259,6 +263,32 @@ const ImportedSymbol* ImportTable::find_symbol(const ImportedLib& lib, std::stri
 }
 
 fs::path executable_dir(std::string_view argv0) {
+  // 优先取本进程真实可执行路径：`vxc` / `vxls` 经 PATH 调用时 argv0 是裸名，
+  // 按 argv0 解析只会得到当前工作目录，无法定位二进制所在目录。
+#if defined(__APPLE__)
+  std::uint32_t size = 0;
+  ::_NSGetExecutablePath(nullptr, &size);
+  if (size > 0) {
+    std::string buf(size, '\0');
+    if (::_NSGetExecutablePath(buf.data(), &size) == 0) {
+      buf.resize(size > 0 ? size - 1 : 0);
+      std::error_code ec;
+      fs::path canon = fs::canonical(buf, ec);
+      if (!ec && !canon.empty())
+        return canon.parent_path();
+    }
+  }
+#elif defined(__linux__)
+  std::string buf(4096, '\0');
+  const ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
+  if (n > 0) {
+    buf.resize(static_cast<std::size_t>(n));
+    std::error_code ec;
+    fs::path canon = fs::canonical(buf, ec);
+    if (!ec && !canon.empty())
+      return canon.parent_path();
+  }
+#endif
   if (argv0.empty())
     return {};
   fs::path p(argv0);
@@ -270,17 +300,33 @@ fs::path executable_dir(std::string_view argv0) {
 }
 
 fs::path resolve_headers_root(std::string_view argv0) {
+  // 1) 显式环境变量（用户手动覆盖，最高优先；空值视为未设置）
   for (const char* var : {"VX_HEADERS_DIR", "VX_HEADERS"}) {
     if (const char* env = std::getenv(var); (env != nullptr) && (env[0] != '\0'))
       return {env};
   }
-  const fs::path exe_dir = executable_dir(argv0);
-  if (!exe_dir.empty()) {
+  // 2) 项目 headers/（当前工作目录）——与 vmake「清单目录 headers/ 优先」一致，
+  //    使 vxc / vxls 单独调用与 vmake 构建解析到同一个库根
+  {
     std::error_code ec;
-    const fs::path cand = exe_dir / "headers";
+    if (fs::is_directory("headers", ec) && !ec)
+      return {"headers"};
+  }
+  // 3) 可执行文件同级 headers/，未命中则向上逐级查找（最多 4 级，与 vmake 的
+  //    headers_near 一致，覆盖构建树 build/vxc → build → 仓库根）
+  const fs::path exe_dir = executable_dir(argv0);
+  fs::path dir = exe_dir;
+  for (int i = 0; i < 4 && !dir.empty(); ++i) {
+    std::error_code ec;
+    const fs::path cand = dir / "headers";
     if (fs::is_directory(cand, ec) && !ec)
       return cand;
+    const fs::path parent = dir.parent_path();
+    if (parent.empty() || parent == dir)
+      break;
+    dir = parent;
   }
+  // 4) 兜底：当前工作目录 headers/（不存在时仅用于给出期望路径的诊断信息）
   return {"headers"};
 }
 

@@ -81,13 +81,17 @@ struct ImportContext {
 const std::vector<std::filesystem::path>& system_include_dirs();
 
 // 由可执行文件路径推导其所在目录（用于定位同级 headers/）。
+// 优先取本进程真实可执行路径（argv0 为裸名时按 argv0 只能得到当前工作目录），
+// 平台接口不可用时回退到 argv0 的 canonical / 绝对路径。
 std::filesystem::path executable_dir(std::string_view argv0);
 
-// 解析导入库根目录（headers 根）：
+// 解析导入库根目录（headers 根），优先级与 vmake 保持一致：
 //   1. VX_HEADERS_DIR 环境变量（手动指定，优先）
 //   2. VX_HEADERS 环境变量（兼容旧名）
-//   3. <argv0 所在目录>/headers
-//   4. "headers"（当前工作目录）
+//   3. 当前工作目录的 headers/（项目库根，与 vmake 的清单目录 headers/ 优先一致）
+//   4. 可执行文件同级 headers/，未命中向上逐级查找（最多 4 级，
+//      覆盖构建树 build/vxc → build → 仓库根）
+//   5. "headers"（当前工作目录，仅在均未命中时作为诊断期望路径）
 // 任一步命中即返回；空环境变量值视为未设置。
 std::filesystem::path resolve_headers_root(std::string_view argv0);
 

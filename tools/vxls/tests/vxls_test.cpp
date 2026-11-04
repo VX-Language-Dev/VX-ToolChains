@@ -408,6 +408,178 @@ void test_completion_snippet() {
   }
 }
 
+// 内嵌提示：本文件类型推断（字面量 / new / 函数返回 / 内置运行时）+ 参数名
+void test_inlay_hints_local() {
+  const std::string src = "func add(a: int, b: int) -> int:\n"
+                          "    return a + b\n"
+                          "\n"
+                          "func main() -> int:\n"
+                          "    var n = 1\n"
+                          "    var f = 1.5\n"
+                          "    var s = \"x\"\n"
+                          "    var b = true\n"
+                          "    var r = add(1, 2)\n"
+                          "    var p = new Point()\n"
+                          "    var content = file_read(\"a.txt\")\n"
+                          "    return 0\n";
+  auto hints = vxls::inlay_hints(src);
+
+  int type_count = 0;
+  int param_count = 0;
+  for (const auto& h : hints) {
+    if (h.kind == 1)
+      ++type_count;
+    if (h.kind == 2)
+      ++param_count;
+  }
+  CHECK(type_count == 7);  // n/f/s/b/r/p/content
+  CHECK(param_count == 3); // add(a, b) + file_read(path)
+
+  auto label_at = [&](int line, int character) -> std::string {
+    for (const auto& h : hints) {
+      if (h.position.line == line && h.position.character == character)
+        return h.label;
+    }
+    return {};
+  };
+  CHECK(label_at(4, 9) == ": int");
+  CHECK(label_at(5, 9) == ": float");
+  CHECK(label_at(6, 9) == ": string");
+  CHECK(label_at(7, 9) == ": bool");
+  CHECK(label_at(8, 9) == ": int");      // add 返回 int
+  CHECK(label_at(9, 9) == ": Point");    // new Point()
+  CHECK(label_at(10, 15) == ": string"); // file_read 返回 string
+  // 显式类型标注不产生提示
+  const std::string annotated = "func main():\n    var x: int = 1\n";
+  auto ann = vxls::inlay_hints(annotated);
+  CHECK(ann.empty());
+}
+
+// 内嵌提示：调用实参名（本文件函数）
+void test_inlay_hints_params() {
+  const std::string src = "func add(a: int, b: int) -> int:\n"
+                          "    return a + b\n"
+                          "\n"
+                          "func main():\n"
+                          "    add(1, 2)\n";
+  auto hints = vxls::inlay_hints(src);
+  CHECK(hints.size() == 2);
+  if (hints.size() == 2) {
+    const auto& h0 = hints[0];
+    CHECK(h0.position.line == 4 && h0.position.character == 8);
+    CHECK(h0.label == "a:");
+    CHECK(h0.kind == 2 && h0.padding_right);
+    CHECK(h0.tooltip.find("函数") != std::string::npos);
+    const auto& h1 = hints[1];
+    CHECK(h1.position.line == 4 && h1.position.character == 11);
+    CHECK(h1.label == "b:");
+    CHECK(h1.kind == 2 && h1.padding_right);
+  }
+  // 函数声明参数不产生提示
+  const std::string decl_only = "func add(a: int, b: int) -> int:\n    return a + b\n";
+  CHECK(vxls::inlay_hints(decl_only).empty());
+}
+
+// 内嵌提示：导入库符号（@imp(math) → .vxh 返回类型与参数名）
+void test_inlay_hints_import_lib() {
+  const std::string src = "@imp(math)\n"
+                          "func main() -> int:\n"
+                          "    var total = math.add(1, 2)\n"
+                          "    math.mul(3, 4)\n"
+                          "    return total\n";
+  auto hints = vxls::inlay_hints(src, std::filesystem::path(VX_SOURCE_DIR) / "headers");
+  CHECK(hints.size() == 5); // 1 类型 + add(a,b) + mul(a,b)
+  bool has_type = false;
+  int params = 0;
+  for (const auto& h : hints) {
+    if (h.kind == 1) {
+      has_type = true;
+      CHECK(h.position.line == 2 && h.position.character == 13);
+      CHECK(h.label == ": int");
+    }
+    if (h.kind == 2) {
+      ++params;
+      CHECK(h.tooltip.find("导入库 math") != std::string::npos);
+      CHECK(h.label == "a:" || h.label == "b:");
+    }
+  }
+  CHECK(has_type);
+  CHECK(params == 4);
+  // 未提供 headers 根时无法解析库符号（跨文件解析需库根）
+  auto no_root = vxls::inlay_hints(src);
+  CHECK(no_root.empty());
+}
+
+// 内嵌提示：-I 搜索目录中的自定义导入库
+void test_inlay_hints_include_dirs() {
+  std::error_code ec;
+  const std::filesystem::path inc = std::filesystem::temp_directory_path(ec) / "vxls_inlay_inc";
+  if (ec)
+    return;
+  std::filesystem::remove_all(inc, ec);
+  std::filesystem::create_directories(inc, ec);
+  {
+    std::ofstream f(inc / "mylib.vxh");
+    f << "extern func triple(x: int) -> int\n";
+  }
+  const std::string src = "@imp(mylib)\n"
+                          "func main():\n"
+                          "    var v = mylib.triple(5)\n"
+                          "    mylib.triple(7)\n";
+  auto hints = vxls::inlay_hints(src, std::filesystem::path(VX_SOURCE_DIR) / "headers", {inc});
+  CHECK(hints.size() == 3); // 1 类型 + 两处 x:
+  bool has_type = false;
+  int params = 0;
+  for (const auto& h : hints) {
+    if (h.kind == 1) {
+      has_type = true;
+      CHECK(h.label == ": int");
+    }
+    if (h.kind == 2) {
+      ++params;
+      CHECK(h.label == "x:");
+      CHECK(h.tooltip.find("导入库 mylib") != std::string::npos);
+    }
+  }
+  CHECK(has_type && params == 2);
+  std::filesystem::remove_all(inc, ec);
+}
+
+// 内嵌提示：跨文件语义（其它打开文档的函数返回值与参数名）
+void test_inlay_hints_cross_file() {
+  const std::string a = "func compute() -> int:\n"
+                        "    return 1\n"
+                        "\n"
+                        "func helper(x: int) -> int:\n"
+                        "    return x\n";
+  const std::string b = "func main():\n"
+                        "    var v = compute()\n"
+                        "    var w = helper(5)\n";
+  std::map<std::string, std::string> docs;
+  docs.emplace("file:///a.vx", a);
+  docs.emplace("file:///b.vx", b);
+  auto hints = vxls::inlay_hints(b, {}, {}, docs, "file:///b.vx");
+  CHECK(hints.size() == 3); // v: int / w: int / helper 的 x:（均来自跨文件解析）
+  auto label_at = [&](int line, int character, int kind) -> std::string {
+    for (const auto& h : hints) {
+      if (h.position.line == line && h.position.character == character && h.kind == kind)
+        return h.label;
+    }
+    return {};
+  };
+  CHECK(label_at(1, 9, 1) == ": int");
+  CHECK(label_at(2, 9, 1) == ": int");
+  CHECK(label_at(2, 19, 2) == "x:");
+  // 参数名提示来源标记为跨文件
+  for (const auto& h : hints) {
+    if (h.kind == 2)
+      CHECK(h.tooltip.find("跨文件") != std::string::npos);
+  }
+  // 不提供其它文档时无法解析跨文件符号，不产生提示
+  auto local_only = vxls::inlay_hints(b);
+  CHECK(local_only.empty());
+}
+
 } // namespace
 
 int main() {
@@ -424,6 +596,11 @@ int main() {
   test_completion_import_lib();
   test_completion_include_dirs();
   test_completion_snippet();
+  test_inlay_hints_local();
+  test_inlay_hints_params();
+  test_inlay_hints_import_lib();
+  test_inlay_hints_include_dirs();
+  test_inlay_hints_cross_file();
 
   if (g_failures == 0) {
     std::fputs("vxls tests: all passed\n", stdout);

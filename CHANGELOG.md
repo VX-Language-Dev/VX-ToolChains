@@ -1,6 +1,28 @@
 # CHANGELOG
 
+## v1.16.5 (2026-11-04)
+
+### LSP 语言服务器（`vxls` 0.5.0）
+
+- **新增内嵌提示 `textDocument/inlayHint`**，`initialize` 注册 `inlayHintProvider`（`resolveProvider: false`）：
+  - **类型提示**：`var x = <expr>` 未显式标注类型时，在变量名后显示 `: T`；推断来源覆盖字面量、`new Class()`、本文件与其它打开文档的顶层函数返回值、`@imp` / `@cppimp` 导入库符号返回值（经 `.vxh`）以及内置运行时（`file_read` 等）
+  - **参数名提示**：函数调用实参前显示形参名（`f(1, 2)` → `f(a: 1, b: 2)`），解析顺序为当前文档 → 其它打开文档 → 内置运行时；`库.符号(...)` 形态经导入表读取 `.vxh` 形参名，`-I` 搜索目录优先级与 `vxc` 一致
+  - 提示携带 tooltip 标注来源（`函数（跨文件）` / `导入库 math` / `内置运行时`）；按请求 `range` 过滤，增量编辑后即时刷新
+- 版本号 `vxls` 0.4.0 → 0.5.0（与 `vxc` 保持一致）；`vxls --help` 补充 LSP 能力说明
+- `vxls_tests` 新增 5 组内嵌提示用例（本文件类型/参数名、`@imp` 导入库、`-I` 自定义库、跨文件返回值与参数名）
+- README 功能表「内嵌提示」由 🚧 开发中更新为 ✅ 可用；徽章与 `vx` 元命令版本 1.16.4 → 1.16.5
+
 ## v1.16.4 (2026-11-03)
+
+### 导入库根解析一致性（修复）
+
+- **修复「`vx build` 与 `vxc` 单独编译找不到头文件、`vmake` 却正常」**（既有缺陷），根因两处：
+  - `vx` 元命令在转发前抢先写入 `VX_HEADERS_DIR`（指向二进制旁 `headers/`），而 vmake 把继承的环境变量视为显式覆盖——在自带 `headers/` 的项目里 `vx build` 反而遮蔽了 vmake 的「项目 `headers/` 优先」，报找不到库；现 `vx` 只做转发，库根由各工具按同一优先级自行解析
+  - `vxc` / `vxls` 的库根只按「二进制同级 `headers/` → 当前目录 `headers/`」查找：构建树里的 `build/vxc` 没有同级 `headers/`，而自带 `headers/` 的项目里二进制旁 `headers/` 又会先命中，两种情形下结果都与 vmake 不一致
+- `resolve_headers_root` 统一为「`VX_HEADERS_DIR` / `VX_HEADERS` → 当前工作目录 `headers/` → 二进制同级 `headers/` 及其上级目录（最多 4 级）」，与 vmake 的库根优先级对齐（`-I` 仍最优先）
+- `executable_dir` 优先取本进程真实可执行路径：`vxc` / `vxls` 经 PATH 以裸名调用时 argv0 只是命令名，按 argv0 推导只会得到当前工作目录
+- vmake 的 `headers_near` 先解析符号链接再找 `headers/`：PATH 中的软链（如 `~/.local/bin/vxc` → 实际安装目录）此前会按软链位置命中遗留的旧 `headers/`
+- 同步更新 `vxc --help`、README、docs/SYNTAX.md、docs/VMAKE_SYNTAX.md 中的库查找规则说明
 
 ### 格式化工具（`vfmt` 0.1.0，新增）
 

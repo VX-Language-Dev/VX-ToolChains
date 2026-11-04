@@ -221,9 +221,12 @@ static bool color_enabled(std::string_view mode) {
 }
 
 // 在可执行文件上级目录中寻找 headers/（覆盖 build/tools/vmake → build →
-// 仓库根）
+// 仓库根）。先解析符号链接：PATH 中的软链（如 ~/.local/bin/vxc → 实际安装目录）
+// 按软链位置查找会命中遗留的旧 headers/，应以真实二进制所在目录为准。
 static std::optional<fs::path> headers_near(const fs::path& exe) {
-  fs::path dir = exe.parent_path();
+  std::error_code canon_ec;
+  const fs::path resolved = fs::canonical(exe, canon_ec);
+  fs::path dir = (canon_ec ? exe : resolved).parent_path();
   if (dir.empty())
     return std::nullopt;
   for (int i = 0; i < 4; ++i) {
