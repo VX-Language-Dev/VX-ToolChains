@@ -570,6 +570,14 @@ private:
       }
       return {};
     }
+    if (t->kind == NodeKind::Deref) {
+      const auto* d = static_cast<const Deref*>(t);
+      VarInfo base = check_expr(d->ptr);
+      if (base.type != TypeTag::TYPE_UNKNOWN && base.type != TypeTag::TYPE_POINTER) {
+        err(diag_code::sem_type_mismatch, "指针解引用要求 ptr 类型（实际 '" + type_text(base) + "'）", t->line);
+      }
+      return {TypeTag::TYPE_INT, false, ""}; // *p 的 32 位字按 int 读写
+    }
     err(diag_code::sem_undefined, "不支持的赋值目标: " + std::string(node_kind_name(t->kind)), t->line);
     return {};
   }
@@ -633,6 +641,17 @@ private:
         err_undefined_var(id->name, e->line);
         return {};
       }
+      case NodeKind::Deref: {
+        const auto* d = static_cast<const Deref*>(e);
+        VarInfo base = check_expr(d->ptr);
+        if (base.type != TypeTag::TYPE_UNKNOWN && base.type != TypeTag::TYPE_POINTER) {
+          err(diag_code::sem_type_mismatch, "指针解引用要求 ptr 类型（实际 '" + type_text(base) + "'）", e->line);
+        }
+        return {TypeTag::TYPE_INT, false, ""};
+      }
+      case NodeKind::FuncRef:
+        // 函数值：符号在链接期解析，语义层不做存在性检查（支持跨文件 &fn）
+        return {TypeTag::TYPE_POINTER, false, ""};
       case NodeKind::ListLit: {
         const auto* l = static_cast<const ListLit*>(e);
         // 元素类型由首个可推断元素决定，后续元素须与之相同（无隐式转换）；

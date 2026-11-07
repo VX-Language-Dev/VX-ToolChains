@@ -25,6 +25,8 @@ enum class NodeKind : std::uint8_t {
   New,
   Unary,
   Binary,
+  Deref,   // *p：指针解引用（读取 32 位字）
+  FuncRef, // &fn：取函数地址（函数值）
   // 语句
   ExprStmt,
   VarDecl,
@@ -125,6 +127,14 @@ struct Binary : Expr { // op 为运算符原文（and/or 用关键字文本）
   const Expr* right;
   Binary(std::string_view o, const Expr* a, const Expr* b, int l)
       : Expr{NodeKind::Binary, l}, op(o), left(a), right(b) {}
+};
+struct Deref : Expr { // *p
+  const Expr* ptr;
+  explicit Deref(const Expr* p, int l) : Expr{NodeKind::Deref, l}, ptr(p) {}
+};
+struct FuncRef : Expr { // &fn：函数值（链接期解析符号）
+  std::string_view name;
+  FuncRef(std::string_view n, int l) : Expr{NodeKind::FuncRef, l}, name(n) {}
 };
 
 // ===== 语句 =====

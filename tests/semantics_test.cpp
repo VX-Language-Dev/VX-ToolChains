@@ -391,6 +391,34 @@ void test_call_arg_types() {
   CHECK(codes.empty());
 }
 
+// 函数值与指针解引用：&fn 允许跨文件（不做存在性检查）；*p 仅接受 ptr
+void test_func_value_and_deref() {
+  bool ok = true;
+  auto codes = check_src("func worker(x: int) -> int:\n"
+                         "    return x\n"
+                         "func main():\n"
+                         "    var f = &worker\n"
+                         "    var p = malloc(8)\n"
+                         "    *p = 1\n"
+                         "    out_int(*p)\n",
+                         &ok);
+  CHECK(ok);
+  CHECK(codes.empty());
+
+  // 未声明的函数名也放行（符号在 vlnk 合并模块后解析，支持跨文件 &fn）
+  codes = check_src("func main():\n"
+                    "    var f = &unknown_worker\n",
+                    &ok);
+  CHECK(ok);
+  CHECK(codes.empty());
+
+  // 对非 ptr 解引用报类型错误
+  codes = check_src("func main():\n"
+                    "    var n = 1\n"
+                    "    *n = 2\n");
+  CHECK(has_code(codes, diag_code::sem_type_mismatch));
+}
+
 } // namespace
 
 // 诊断 note/help：E0010 help 建议、E0011 指向首次定义、E0012 作用域泄漏
@@ -437,6 +465,7 @@ int main() {
   test_var_inference();
   test_method_overloads();
   test_call_arg_types();
+  test_func_value_and_deref();
   test_diag_notes();
 
   if (g_failures == 0) {

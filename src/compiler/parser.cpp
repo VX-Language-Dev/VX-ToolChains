@@ -792,6 +792,22 @@ private:
 
   const Expr* parse_unary() {
     const Token& t = peek();
+    if (t.kind == Tok::Star) {
+      advance();
+      const Expr* operand = parse_unary();
+      if (operand == nullptr) {
+        return nullptr;
+      }
+      return arena_.create<Deref>(operand, t.line);
+    }
+    if (t.kind == Tok::Amp) {
+      advance();
+      std::string_view name;
+      if (!parse_name(name)) {
+        return nullptr;
+      }
+      return arena_.create<FuncRef>(name, t.line);
+    }
     if (t.kind == Tok::Minus) {
       advance();
       const Expr* operand = parse_unary();
@@ -1025,6 +1041,10 @@ std::string_view node_kind_name(NodeKind kind) {
       return "Unary";
     case NodeKind::Binary:
       return "Binary";
+    case NodeKind::Deref:
+      return "Deref";
+    case NodeKind::FuncRef:
+      return "FuncRef";
     case NodeKind::ExprStmt:
       return "ExprStmt";
     case NodeKind::VarDecl:

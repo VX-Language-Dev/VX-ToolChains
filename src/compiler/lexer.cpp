@@ -460,6 +460,10 @@ private:
         advance();
         emit(Tok::Not, "!");
         return true;
+      case '&':
+        advance();
+        emit(Tok::Amp, "&");
+        return true;
       case ':':
         advance();
         emit(Tok::Colon, ":");
@@ -593,6 +597,8 @@ std::string_view tok_name(Tok kind) {
       return "Arrow";
     case Tok::And:
       return "And";
+    case Tok::Amp:
+      return "Amp";
     case Tok::Or:
       return "Or";
     case Tok::Not:

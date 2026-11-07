@@ -613,6 +613,43 @@ void test_float_var_propagation() {
   CHECK(has_str_eq);
 }
 
+// 函数值 &fn 与指针解引用 *p 的 IR 发射
+void test_func_value_and_deref_codegen() {
+  auto m = gen_src("func worker(x: int) -> int:\n"
+                   "    return x\n"
+                   "func main():\n"
+                   "    var f = &worker\n"
+                   "    var p = malloc(8)\n"
+                   "    *p = 5\n"
+                   "    out_int(*p)\n");
+  CHECK(m);
+  if (!m) {
+    return;
+  }
+  std::size_t main_idx = 0;
+  for (std::size_t i = 0; i < m->funcs.size(); ++i) {
+    if (m->funcs[i].name == "main")
+      main_idx = i;
+  }
+  const auto& f = m->funcs[main_idx];
+  bool has_func = false;
+  bool has_store = false;
+  bool has_load = false;
+  for (std::size_t i = 0; i < f.instructions.size(); ++i) {
+    if (f.instructions[i].op == ir::OP_CONST_FUNC) {
+      has_func = true;
+      CHECK(f.instructions[i].args == "f;worker");
+    }
+    if (f.instructions[i].op == ir::OP_DEREF_STORE)
+      has_store = true;
+    if (f.instructions[i].op == ir::OP_DEREF)
+      has_load = true;
+  }
+  CHECK(has_func);
+  CHECK(has_store);
+  CHECK(has_load);
+}
+
 } // namespace
 
 int main() {
@@ -635,6 +672,7 @@ int main() {
   test_power();
   test_float_var_propagation();
   test_bare_return();
+  test_func_value_and_deref_codegen();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "codegen tests: all passed\n");

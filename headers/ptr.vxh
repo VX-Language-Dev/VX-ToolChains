@@ -1,0 +1,17 @@
+# ptr 库 — 原始指针运算（VX ABI 声明头，无配套 C 实现文件）
+# 语言层已支持 `*p` 读写（32 位字）与 `&fn` 取函数值；本库提供指针运算
+# 与整数互转，全部由后端直接发射 IR，无 C/C++ 实现。
+#
+#   add       p 前进 offset 字节（返回新 ptr，不修改原值）
+#   to_int    ptr → int（用于打印/比较地址）
+#   from_int  int → ptr（与 to_int 往返）
+#
+# 典型用法（读取管道返回的两个 fd）：
+#   @imp(proc)
+#   @imp(ptr)
+#   var fds = proc.pipe()
+#   var rfd = *fds
+#   var wfd = *(ptr.add(fds, 4))
+extern func add(p: ptr, offset: int) -> ptr
+extern func to_int(p: ptr) -> int
+extern func from_int(v: int) -> ptr

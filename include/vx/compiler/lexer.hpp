@@ -48,6 +48,7 @@ enum class Tok : std::uint8_t {
   And,      // &&（等价关键字 and）
   Or,       // ||（等价关键字 or）
   Not,      // !（等价关键字 not）
+  Amp,      // &（函数取址：&fn）
   LParen,   // (
   RParen,   // )
   LBracket, // [

@@ -114,6 +114,12 @@ extern func add(a: int, b: int) -> int   # func 关键字可选
 > 多进程原语属于 `proc` 导入库：`@imp(proc)` 后以 `proc.fork()` /
 > `proc.waitpid(pid, nil, 0)` / `proc.kill` / `proc.sleep` 调用
 > （`headers/proc.vxh`，无 `.c` 实现，链接期直连系统 libc）。
+> 线程与任务池同属 `proc`：`proc.spawnN(&fn, ...)` / `proc.join_*` /
+> `proc.pool_start(n)` / `proc.pool_submitN(&fn, ...)` / `proc.pool_wait()` /
+> `proc.pool_stop()`；任务以函数值 `&fn` 传入，后端生成 pthread 与通用适配器 IR，
+> 符号链接期解析（支持跨文件）。任务可 0~4 个 int 参数，返回类型由 join_* 决定。
+> 管道与输出捕获：`proc.pipe()` / `proc.read_str` / `proc.write_str` /
+> `proc.capture(cmd)`；指针运算见 `ptr` 库与 §6.5。
 
 ### 3.4 类与结构
 
@@ -168,7 +174,8 @@ func main() -> int:
   `@cppimp` 的签名取同目录同主名 `.vxh` 伴生文件（头文件命中系统目录时，
   伴生 `.vxh` 可在 `-I` / 库根中按同主名提供）。
   **例外**：`proc` 库只有 `.vxh` 无实现文件——emitter 按 `_vx_proc_*` 符号
-  直接发射对系统 libc 的调用（进程原语 `fork`/`waitpid`/`kill`/`sleep` 等）。
+  直接发射对系统 libc 的调用（进程原语 `fork`/`waitpid`/`kill`/`sleep` 等），
+  并为线程/任务池 API 生成 pthread 调用、任务分派表与工作线程循环 IR。
 - 符号命名 VX ABI：`_vx_<库名>_<符号名>`。
 - 详见 README「库导入与 VX ABI」。
 
@@ -228,7 +235,8 @@ true        false       nil
 | 6 | `*` `/` `%` |
 | 7 | `^`（幂，右结合） |
 
-一元：`-`（取负）、`not` / `!`。`^` 由运行时提供：整数走 `vx_pow_i32`
+一元：`-`（取负）、`not` / `!`、`*`（指针解引用）、`&`（取函数地址）。
+`^` 由运行时提供：整数走 `vx_pow_i32`
 （负指数按 0），浮点走 `vx_pow_f64`（libc `pow`，支持分数指数）。
 
 ### 6.3 后缀链
@@ -253,6 +261,28 @@ vec.push(x)         # 导入库调用 → CALL f;_vx_<lib>_<name>
 - `^` 按操作数类型分派：整数 `vx_pow_i32` 快速幂（负指数结果为 0），
   浮点 `vx_pow_f64`；两侧类型须一致，int/float 混合在 codegen 直接诊断。
 
+### 6.5 指针解引用与函数值
+
+```vx
+*p                 # 读 32 位字 → int（OP_DEREF）
+*p = 5             # 写 32 位字（OP_DEREF_STORE）；要求 p 为 ptr
+&worker            # 取函数地址 → ptr（OP_CONST_FUNC）；符号链接期解析
+```
+
+- `*p` 的地址由任意 `ptr` 表达式给出（`malloc` 返回值、`proc.pipe()` 等）；
+  按 32 位字访问，需自行保证 4 字节对齐。
+- `ptr` 库提供 `add(p, offset)`（字节偏移）、`to_int` / `from_int`：
+  ```vx
+  @imp(ptr)
+  var fds = proc.pipe()
+  var rfd = *fds
+  var wfd = *(ptr.add(fds, 4))
+  ```
+- `&fn` 结果可存入 `var`、作为 `ptr` 形参传递。`proc.spawnN` / `pool_submitN`
+  会在 vlnk 合并模块内为被取址函数生成通用适配器 `i64(i64,i64,i64,i64)`，
+  因此任务函数可跨文件、参数与返回类型不限（经适配器转换）。
+- 函数值当前只支持顶层函数（不支持方法 `&obj.m` 与闭包捕获）。
+
 ## 7. 编译流水线与产物
 
 ```
@@ -275,5 +305,7 @@ vlnk hello.vxobj -o hello   # → 可执行文件（--lib 链接原生库，--cf
   对应的参数/文件能力通过内置运行时函数提供（见 §3.3 的 `sys_argv_*` /
   `file_*`），`system` 经 `@imp(sys)` 提供。
 - 后端已覆盖 ARRAY/MAP/INDEX/FIELD 基础发射（P4 MVP：8 字节统一槽，字符串/整数键映射）；浮点数组精度与复杂布局仍受限。
+- 指针解引用 `*p` 为 32 位字语义，不支持按类型/字节宽度区分；函数值 `&fn` 仅支持顶层函数，
+  不支持方法取址与闭包捕获。
 - `std/` 标准库为设计参考（v1.0 按已废弃的 VM 路线编写，未接入编译器构建），
   语法缺口清单见 `std/README.md`。

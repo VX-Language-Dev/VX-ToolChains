@@ -1,5 +1,52 @@
 # CHANGELOG
 
+## v1.16.9 (2026-11-05)
+
+### 函数值与指针解引用（语言 / 后端新增）
+
+- **语言新增两个一元表达式**：`&fn` 取函数地址（`NodeKind::FuncRef`）、`*p` 指针解引用
+  （`NodeKind::Deref`，32 位字语义）。词法新增 `&` token；parser 一元层处理；语义层
+  `&fn → ptr`（不做存在性检查，支持跨文件）、`*p` 要求 ptr 并产 int；codegen 发射
+  `OP_CONST_FUNC` / `OP_DEREF` / `OP_DEREF_STORE`（TypeIR 新增 95/96 两个操作码）。
+- **后端函数值适配器**：被 `&fn` 取址的函数生成通用适配器 `i64(i64,i64,i64,i64)`，
+  按目标签名转换 int/float/ptr 参数与返回值；符号在 vlnk 合并模块后解析，任务函数
+  可跨文件、可存入变量。函数值最多 4 个参数，引用不存在的函数在发射期报错。
+- **线程 / 任务池移除旧限制**：任务 API 改为 `spawn0..spawn4` / `pool_submit0..4`
+  （0~4 个 int 参数）与 `join_int` / `join_float` / `join_str` / `join_ptr`（任意返回类型）；
+  删除编译期「任务 id + 分派表 + 字符串字面量」机制，改为函数指针 + 适配器。
+- **指针运算库 `headers/ptr.vxh`（新增）**：`add`（字节偏移）/ `to_int` / `from_int`，
+  由 emitter 直接发射 `getelementptr` / `ptrtoint` / `inttoptr` IR，无 C 实现。
+- **管道与输出捕获（`headers/proc.vxh` 扩展）**：`pipe` / `read` / `write` / `read_str` /
+  `write_str` / `capture` / `close`。`capture` 由后端生成 popen + 分块 fread（容量翻倍）
+  IR，直接返回命令 stdout；`pipe` 返回指向两个 fd 的 ptr，配合 `*p` 与 `ptr.add` 使用。
+- **declare 去重**：输出 IR 前按行合并 declare，避免后端 helper 与 builtin / linkage
+  声明同名（如 `close`/`malloc`）导致 llc 报重复定义；Linux 链接继续补 `-lpthread`。
+- **vfmt 适配新语法**：`&` 与一元 `*` 作为前缀运算符紧贴操作数（`&fn`、`*p`、
+  `* (expr)` → `*(expr)`）；`return -x` 等关键字后前缀运算符保留空格；
+  AST 结构自检补充 Deref/FuncRef。
+- **vx-tidy / vxls 适配**：tidy 遍历 Deref 子表达式，FuncRef 不参与未声明检查；
+  vxls 类型推断 `*p → int`、`&fn → ptr`。
+- 测试：新增 codegen / semantics 用例（`&fn`、`*p`、`ptr.add`）、
+  backend IR 用例（适配器、指针读写、缺失函数报错）与 import_e2e 用例
+  （多参数线程 + 管道回读 + capture），vfmt 新增前缀运算符间距用例；CTest **20/20 全绿**。
+- 文档：README 局限/§3 示例与目录结构、docs/SYNTAX.md（§6.2 / 新增 §6.5 / §8）、
+  std/README 同步；版本号 1.16.8 → 1.16.9。
+
+## v1.16.8 (2026-11-05)
+
+### 线程与任务池（后端 IR 生成 + `proc` 库）
+
+- **后端新增 pthread 线程 / 任务池 IR 生成**（`src/backend/llvm_emitter.cpp`），仍零 C/C++ 实现文件：
+  - **任务注册与分派**：把 vlnk 合并模块内所有顶层函数中「非 main / 非方法、单参数（int/bool/var/ptr）、返回 int/bool/var/void」者按名字排序分配 1 起任务 id；生成 `vx_task_dispatch`，按 id 直接调用目标函数（无需函数值，也不做运行期字符串查表）
+  - **线程**：`spawn` 发射 pthread_create + 线程入口 + 句柄槽/结果槽，`join` 回收线程并返回任务函数返回值；线程句柄上限 1024
+  - **任务池**：固定工作线程 + 1024 槽有界队列，用 pthread mutex/cond 保护；`pool_start` 线程数夹到 1..64，`pool_submit` 队列满返回 0，`pool_wait` 等待全部完成，`pool_stop` 关闭、回收并销毁同步对象
+  - **任务名编译期解析**：`spawn` / `pool_submit` 的任务名必须是字符串字面量；传变量会得到明确发射错误。目标函数可位于同一链接的其它 `.vxobj`（vlnk 合并后再发射）
+  - Linux 链接补充 `-lpthread`（旧版 glibc 的 pthread 符号不在 libc 中）
+- `headers/proc.vxh` 新增 `spawn` / `join` / `pool_start` / `pool_submit` / `pool_wait` / `pool_stop` 声明；该库仍只有 `.vxh`、无任何 `.c` 文件
+- 测试：`backend_tests` 新增线程/池 IR 用例（分派调用、辅助函数、字面量校验）与变量传名失败用例；`import_e2e_tests` 新增线程/任务池端到端用例（spawn 返回值 + 单工作线程 FIFO 顺序稳定断言）；CTest **20/20 全绿**
+- 文档：README「当前局限」进程与并发条目更新为线程/池可用（仍如实保留无管道回读、无函数值）、§3 新增线程/池示例；docs/SYNTAX.md §3.3/§4、std/README 能力表同步
+- 版本号：徽章与 `vx` 元命令 1.16.7 → 1.16.8
+
 ## v1.16.7 (2026-11-04)
 
 ### 进程与并发（`proc` 导入库，新增）

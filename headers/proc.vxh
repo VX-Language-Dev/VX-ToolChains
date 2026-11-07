@@ -1,10 +1,9 @@
-# proc 库 — 进程原语（VX ABI 声明头，无配套 C 实现文件）
+# proc 库 — 进程 / 线程 / 任务池 / 管道（VX ABI 声明头，无配套 C 实现文件）
 # 与 math/sys 等库不同：本库没有 headers/proc.c。链接期 emitter 识别
-# _vx_proc_* 符号后直接发射对系统 libc 的调用（fork/waitpid/...），
-# 实现由操作系统 libc 提供，零 C/C++ 源码。
-# 用法：@imp(proc) 后以 proc.fork() / proc.waitpid(...) 访问。
+# _vx_proc_* 符号后直接发射对系统 libc / pthread 的调用或生成 IR，
+# 实现由操作系统运行时提供，零 C/C++ 源码。
 #
-# 返回值约定（POSIX，macOS / Linux 一致）：
+# ---- 进程原语（POSIX，macOS / Linux 一致）----
 #   fork     父进程返回子进程 PID（>0），子进程返回 0，失败 -1
 #   waitpid  成功返回已回收的子进程 PID，失败 -1；
 #            options=0 阻塞等待，options=1（WNOHANG）非阻塞轮询，
@@ -17,3 +16,51 @@ extern func getppid() -> int
 extern func waitpid(pid: int, status: ptr, options: int) -> int
 extern func kill(pid: int, sig: int) -> int
 extern func sleep(seconds: int) -> int
+
+# ---- 线程（pthread，后端生成入口与函数适配器 IR）----
+# 任务以函数值 &fn 传入（链接期解析符号，支持跨文件）；任务函数可带
+# 0~4 个 int 参数，返回值类型不限（由 join_* 按类型取出）。
+#   spawn0..spawn4  启动线程，返回句柄（>=1），失败 0；最多 1024 个句柄
+#   join_int        阻塞回收并取回 int 返回值（join 为同义别名），失败 -1
+#   join_float      取回 float 返回值；join_str / join_ptr 取回 string / ptr
+#   每个句柄只可 join 一次
+extern func spawn0(fn: ptr) -> int
+extern func spawn1(fn: ptr, a: int) -> int
+extern func spawn2(fn: ptr, a: int, b: int) -> int
+extern func spawn3(fn: ptr, a: int, b: int, c: int) -> int
+extern func spawn4(fn: ptr, a: int, b: int, c: int, d: int) -> int
+extern func join(handle: int) -> int
+extern func join_int(handle: int) -> int
+extern func join_float(handle: int) -> float
+extern func join_str(handle: int) -> string
+extern func join_ptr(handle: int) -> ptr
+
+# ---- 任务池（固定工作线程 + 有界任务队列）----
+#   pool_start     启动 n 个工作线程（夹到 1..64），返回实际线程数；已启动则直接返回
+#   pool_submitN   提交任务（&fn + 0~4 个 int 实参），成功 1；队列满（1024）或未启动 0
+#   pool_wait      阻塞直到已提交任务全部完成，返回 0
+#   pool_stop      置关闭标志、等待在途任务完成、回收工作线程并销毁同步对象，返回 0
+extern func pool_start(workers: int) -> int
+extern func pool_submit0(fn: ptr) -> int
+extern func pool_submit1(fn: ptr, a: int) -> int
+extern func pool_submit2(fn: ptr, a: int, b: int) -> int
+extern func pool_submit3(fn: ptr, a: int, b: int, c: int) -> int
+extern func pool_submit4(fn: ptr, a: int, b: int, c: int, d: int) -> int
+extern func pool_wait() -> int
+extern func pool_stop() -> int
+
+# ---- 管道 / 输出捕获（配合 ptr 库的 *p 读取 fd）----
+#   pipe       创建管道，返回 ptr（指向两个 int：读 fd、写 fd，第二个用 *ptr.add(p, 4) 读取）
+#   read       从 fd 读取最多 count 字节到 buf，返回实际字节数（-1 失败）
+#   write      向 fd 写入 buf 的前 count 字节，返回实际字节数（-1 失败）
+#   read_str   从 fd 读取最多 max_bytes 字节并返回 string（自动 NUL 结尾）
+#   write_str  向 fd 写入整个字符串，返回写入字节数（-1 失败）
+#   capture    执行 shell 命令并返回其标准输出（popen + fread，失败返回空串）
+#   close      关闭 fd，返回 0 / -1
+extern func pipe() -> ptr
+extern func read(fd: int, buf: ptr, count: int) -> int
+extern func write(fd: int, buf: ptr, count: int) -> int
+extern func read_str(fd: int, max_bytes: int) -> string
+extern func write_str(fd: int, data: string) -> int
+extern func capture(cmd: string) -> string
+extern func close(fd: int) -> int

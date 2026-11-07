@@ -393,6 +393,149 @@ void test_emitter_proc_libc_bridge() {
   CHECK(ir.find("@_vx_proc") == std::string::npos);
 }
 
+void test_emitter_thread_pool_ir() {
+  // proc 线程/任务池：任务以函数值（&fn）传入，后端生成通用适配器；
+  // 参数 0~4 个 int，返回值可在 join_* 处按类型转换。
+  ir::ModuleIR mod;
+  ir::FuncIR worker;
+  worker.name = "worker";
+  worker.ret_type = "int";
+  worker.params.push_back(vx::compiler::Param{std::string_view("x"), std::string_view("int")});
+  worker.params.push_back(vx::compiler::Param{std::string_view("y"), std::string_view("int")});
+  worker.local_count = 2;
+  ir::Inst wload;
+  wload.op = ir::OP_LOAD_VAR;
+  wload.args = "0";
+  ir::Inst wret;
+  wret.op = ir::OP_RETURN;
+  worker.instructions = {wload, wret};
+  mod.funcs.push_back(std::move(worker));
+
+  ir::FuncIR mainf;
+  mainf.name = "main";
+  mainf.ret_type = "int";
+  mainf.local_count = 0;
+  auto push_const = [](std::vector<ir::Inst>& v, std::uint8_t op, std::string args) {
+    ir::Inst i;
+    i.op = op;
+    i.args = std::move(args);
+    v.push_back(std::move(i));
+  };
+  push_const(mainf.instructions, ir::OP_CONST_FUNC, "f;worker");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i20");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i22");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_spawn2");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_join");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i2");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_pool_start");
+  push_const(mainf.instructions, ir::OP_CONST_FUNC, "f;worker");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i3");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i4");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_pool_submit2");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_pool_wait");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_pool_stop");
+  push_const(mainf.instructions, ir::OP_RETURN, "");
+  mod.funcs.push_back(std::move(mainf));
+
+  auto r = backend::emit_llvm_ir(mod, kTriple);
+  CHECK(r.ok);
+  if (!r.ok) {
+    std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
+    return;
+  }
+  const std::string& ir = r.ir;
+  CHECK(ir.find("declare i32 @pthread_create(ptr, ptr, ptr, ptr)") != std::string::npos);
+  // 通用适配器 + 跨类型参数转换
+  CHECK(ir.find("define i64 @vx_adapter_worker(i64 %a0, i64 %a1, i64 %a2, i64 %a3)") != std::string::npos);
+  CHECK(ir.find("%p0 = trunc i64 %a0 to i32") != std::string::npos);
+  CHECK(ir.find("%r = call i32 @worker(i32 %p0, i32 %p1)") != std::string::npos);
+  CHECK(ir.find("define i32 @vx_thread_spawn_impl") != std::string::npos);
+  CHECK(ir.find("call i32 @vx_thread_spawn_impl(ptr @vx_adapter_worker, i32 20, i32 22, i32 0, i32 0)") !=
+        std::string::npos);
+  CHECK(ir.find("define i64 @vx_thread_join_raw") != std::string::npos);
+  CHECK(ir.find("define i32 @vx_pool_start_impl") != std::string::npos);
+  CHECK(ir.find("define i32 @vx_pool_submit_impl") != std::string::npos);
+  CHECK(ir.find("call i32 @vx_pool_submit_impl(ptr @vx_adapter_worker, i32 3, i32 4, i32 0, i32 0)") !=
+        std::string::npos);
+  CHECK(ir.find("define ptr @vx_pool_worker(ptr %unused)") != std::string::npos);
+  CHECK(ir.find("@_vx_proc_") == std::string::npos);
+}
+
+void test_emitter_func_value_and_ptr_ops() {
+  // &fn → 适配器地址；*p 读写；ptr.add 字节偏移
+  ir::ModuleIR mod;
+  ir::FuncIR worker;
+  worker.name = "worker";
+  worker.ret_type = "int";
+  worker.params.push_back(vx::compiler::Param{std::string_view("x"), std::string_view("int")});
+  worker.local_count = 1;
+  ir::Inst wload;
+  wload.op = ir::OP_LOAD_VAR;
+  wload.args = "0";
+  ir::Inst wret;
+  wret.op = ir::OP_RETURN;
+  worker.instructions = {wload, wret};
+  mod.funcs.push_back(std::move(worker));
+
+  ir::FuncIR mainf;
+  mainf.name = "main";
+  mainf.ret_type = "int";
+  mainf.local_count = 0;
+  auto push_const = [](std::vector<ir::Inst>& v, std::uint8_t op, std::string args) {
+    ir::Inst i;
+    i.op = op;
+    i.args = std::move(args);
+    v.push_back(std::move(i));
+  };
+  push_const(mainf.instructions, ir::OP_CONST_FUNC, "f;worker"); // 函数值
+  push_const(mainf.instructions, ir::OP_POP, "");                // 丢弃，仅验证适配器生成
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_ptr_from_int"); // ptr 0
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i7");
+  push_const(mainf.instructions, ir::OP_DEREF_STORE, ""); // *p = 7
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_ptr_from_int");
+  push_const(mainf.instructions, ir::OP_DEREF, ""); // *p
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i4");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_ptr_add"); // ptr.add
+  push_const(mainf.instructions, ir::OP_POP, "");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_RETURN, "");
+  mod.funcs.push_back(std::move(mainf));
+
+  auto r = backend::emit_llvm_ir(mod, kTriple);
+  CHECK(r.ok);
+  if (!r.ok) {
+    std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
+    return;
+  }
+  const std::string& ir = r.ir;
+  CHECK(ir.find("define i64 @vx_adapter_worker") != std::string::npos);
+  CHECK(ir.find("store i32 7, ptr") != std::string::npos);
+  CHECK(ir.find("load i32, ptr") != std::string::npos);
+  CHECK(ir.find("getelementptr i8, ptr") != std::string::npos);
+}
+
+void test_emitter_func_value_missing() {
+  // &fn 指向不存在的函数：发射期报错（跨文件时在链接合并后同样能查出）
+  ir::ModuleIR mod;
+  ir::FuncIR f;
+  f.name = "main";
+  f.ret_type = "void";
+  f.local_count = 0;
+  ir::Inst ref;
+  ref.op = ir::OP_CONST_FUNC;
+  ref.args = "f;missing";
+  ir::Inst ret;
+  ret.op = ir::OP_RETURN_VOID;
+  f.instructions = {ref, ret};
+  mod.funcs.push_back(std::move(f));
+
+  auto r = backend::emit_llvm_ir(mod, kTriple);
+  CHECK(!r.ok);
+  CHECK(r.error.find("函数值引用的函数不存在") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -412,6 +555,9 @@ int main() {
   test_emitter_unknown_call();
   test_emitter_system_builtins();
   test_emitter_proc_libc_bridge();
+  test_emitter_thread_pool_ir();
+  test_emitter_func_value_and_ptr_ops();
+  test_emitter_func_value_missing();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "backend tests: all passed\n");

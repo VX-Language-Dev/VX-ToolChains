@@ -317,6 +317,15 @@ private:
       case NodeKind::Call:
         gen_call(static_cast<const Call*>(e));
         break;
+      case NodeKind::Deref: {
+        const auto* d = static_cast<const Deref*>(e);
+        gen_expr(d->ptr);
+        emit(ir::OP_DEREF);
+        break;
+      }
+      case NodeKind::FuncRef:
+        emit(ir::OP_CONST_FUNC, "f;" + std::string(static_cast<const FuncRef*>(e)->name));
+        break;
       default:
         fail("unsupported expression: " + std::string(node_kind_name(e->kind)), e->line);
     }
@@ -659,6 +668,14 @@ private:
         emit(ir::OP_INDEX_SET);
         break;
       }
+      case NodeKind::Deref: {
+        // *p：先求指针表达式，再按 32 位字读写
+        const auto* d = static_cast<const Deref*>(t);
+        gen_expr(d->ptr);
+        gen_expr(a->value);
+        emit(ir::OP_DEREF_STORE);
+        break;
+      }
       default:
         fail("unsupported assignment target: " + std::string(node_kind_name(t->kind)), a->line);
     }
@@ -720,6 +737,17 @@ private:
         } else {
           emit(ir::OP_INDEX_SET);
         }
+        break;
+      }
+      case NodeKind::Deref: {
+        // *p op= value → ptr, DUP, DEREF, value, binop, DEREF_STORE
+        const auto* d = static_cast<const Deref*>(t);
+        gen_expr(d->ptr);
+        emit(ir::OP_DUP);
+        emit(ir::OP_DEREF);
+        gen_expr(a->value);
+        emit_binary_op(std::string_view(&bin_op, 1), d, a->value, a->line);
+        emit(ir::OP_DEREF_STORE);
         break;
       }
       default:

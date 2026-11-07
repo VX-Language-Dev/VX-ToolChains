@@ -3,7 +3,7 @@
 > **从零自研的编程语言工具链** — C++23 实现，一条纯自研的编译链路把 `.vx` 源码变成原生机器码
 >
 > ![Language](https://img.shields.io/badge/language-C%2B%2B23-blue)
-> ![Version](https://img.shields.io/badge/version-v1.16.7-blue)
+> ![Version](https://img.shields.io/badge/version-v1.16.9-blue)
 > ![Tests](https://img.shields.io/badge/tests-20%20suites%20100%25%20passing-brightgreen)
 > ![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
 > ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
@@ -70,7 +70,7 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 | `vmake-lsp` | VMakeSet.vmake 语言服务器 | ✅ 可用 | 0.3.0 |
 | `vfmt` | 源码格式化（保留注释 + AST 结构自检） | ✅ 可用 | 0.1.0 |
 | `vx-tidy` | 静态分析引擎（纯动态库 libvxtidy） | ✅ 可用 | — |
-| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.16.7 |
+| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.16.9 |
 | VPM 包管理器 | 多语言包管理 | 🚧 规划 | — |
 | 反编译器 vxde | VXOBJ → VX 源码还原 | 🚧 规划 | — |
 
@@ -96,10 +96,12 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 
 VX 目前适合编写以计算、文件读写为主的程序；**尚不能完整实现 VMAKE 这类系统编排工具**。主要限制：
 
-- **进程与并发**：已提供 `proc` 进程原语库（`fork`/`waitpid`/`kill`/`sleep`/`getpid`，
-  仅 `.vxh` 声明、链接期直连系统 libc），配合 `file_read`/`file_write` 可做多进程并发与文件 IPC；
-  仍无线程/任务池（VX 无函数值，`pthread_create` 无法接线）、无管道数据回读（VX 无指针解引用），
-  捕获子进程 stdout、并行编译等场景暂不可行。
+- **进程与并发**：`proc` 库提供进程原语（`fork`/`waitpid`/`kill`/`sleep`/`getpid`）、
+  线程/任务池（`spawnN`/`join_*`/`pool_*`）与管道/输出捕获（`pipe`/`read_str`/`capture`），
+  仅 `.vxh` 声明：链接期直连 libc / 由后端生成 pthread 与函数适配器 IR，零 C/C++ 源码。
+  **函数值 `&fn`** 与 **指针解引用 `*p`** 已进入语言与后端：任务函数可跨文件、可存变量、
+  支持 0~4 个 int 参数与任意返回类型；`*p` 读写 32 位字，配合 `ptr` 库可做原始内存与 fd 访问。
+  尚未支持闭包捕获与 64 位整型值。
 - **文件系统**：仅有 `file_read`/`file_write`/`file_exists`，无目录创建/删除/列举/路径规范化，无法管理构建目录与头文件树。
 - **字符串处理**：仅拼接/比较/长度，无子串、查找、分割、trim、字符索引与字符串↔整数解析，难以编写解析器与签名器。
 - **集合与内存**：列表/字典为 P4 MVP（8 字节统一槽），无动态追加/扩容/迭代器；`std/` 标准库未接入编译器构建。
@@ -398,6 +400,52 @@ func main() -> int:
     proc.waitpid(pid, nil, 0)      # 阻塞回收；status 传 nil/0 = 不采集退出状态
     out_bool(proc.waitpid(proc.getpid(), 0, 1) == -1)  # options=1（WNOHANG）非阻塞轮询
     out("\n")
+    return 0
+```
+
+**线程与任务池（`proc` 库同一套零 C/C++ 实现）**：任务以**函数值 `&fn`** 传入，
+后端为每个被取址函数生成通用适配器（`i64(i64,i64,i64,i64)`），符号在链接期解析，
+因此任务函数可跨文件、可存入变量。任务可带 0~4 个 int 参数，返回值类型不限
+（由 `join_int` / `join_float` / `join_str` / `join_ptr` 按类型取回）：
+
+```vx
+@imp(proc)
+func worker(x: int, y: int) -> int:
+    proc.sleep(1)
+    return x * y
+
+func main() -> int:
+    var h = proc.spawn2(&worker, 6, 7)
+    out_int(proc.join_int(h))    # 42（阻塞回收并按 int 取回）
+    out("\n")
+
+    proc.pool_start(4)               # 4 个工作线程（夹到 1..64）
+    proc.pool_submit2(&worker, 1, 2)
+    proc.pool_submit2(&worker, 3, 4)
+    proc.pool_wait()                 # 阻塞到全部任务完成
+    proc.pool_stop()                 # 关闭并回收工作线程
+    return 0
+```
+
+> 任务池为固定工作线程 + 1024 槽有界队列；`pool_submitN` 在队列满或未启动时返回 0。
+> 线程句柄上限 1024，每个句柄只可 join 一次。
+
+**指针、管道与子进程输出捕获**：语言层新增 `*p` 读写（32 位字）与 `&fn` 取函数值；
+`ptr` 库提供字节偏移与整数互转；`proc` 提供 `pipe` / `read_str` / `write_str` / `capture`：
+
+```vx
+@imp(proc)
+@imp(ptr)
+func main() -> int:
+    var fds = proc.pipe()                 # 返回 ptr：两个 int 的 fd 对
+    var rfd = *fds                        # 读端（*p 解引用）
+    var wfd = *(ptr.add(fds, 4))          # 写端（字节偏移 + 解引用）
+    proc.write_str(wfd, "hello")
+    proc.close(wfd)
+    out(proc.read_str(rfd, 64))           # → hello
+    proc.close(rfd)
+
+    out(proc.capture("echo hi"))          # 捕获 shell 命令 stdout → hi
     return 0
 ```
 
@@ -769,7 +817,8 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 │   ├── math.* / text.*       # 根目录库：int / string+bool+void
 │   ├── fmath.*               # 根目录库：float（double ABI）
 │   ├── collections/vec.*     # 子目录库（@imp(/collections/vec)）
-│   ├── proc.vxh              # 进程原语库（仅 .vxh 声明，链接期直连系统 libc，无 .c）
+│   ├── proc.vxh              # 进程/线程/任务池/管道库（仅 .vxh，直连 libc + 后端 IR，无 .c）
+│   ├── ptr.vxh               # 指针运算库（add / to_int / from_int，仅 .vxh）
 │   └── cpp/greet.{hpp,vxh,cpp} # @cppimp 样例（C++ 头文件 + 伴生声明 + 实现）
 ├── tests/                    # C++ 单元测试 + .vx 端到端样例
 │   ├── *_test.cpp            # util/diag/lexer/parser/codegen/semantics/vxobj/e2e/backend/import 测试

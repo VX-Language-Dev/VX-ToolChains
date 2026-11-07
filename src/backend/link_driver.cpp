@@ -238,6 +238,11 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
   r.command += " -Wno-override-module";
   args.emplace_back("-lm");
   r.command += " -lm";
+#if !defined(__APPLE__)
+  // Linux 旧版 glibc 的 pthread 符号不在 libc 中；新版多已合并，-lpthread 仍安全
+  args.emplace_back("-lpthread");
+  r.command += " -lpthread";
+#endif
   if (target.empty() && !find_lld().empty()) {
     args.emplace_back("-fuse-ld=lld");
     r.command += " -fuse-ld=lld";
@@ -497,9 +502,10 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   // macOS 全部系统库（libc/libm/pthread/...）合并进 libSystem
   link_args.push_back("-lSystem");
 #else
-  // Linux 显式链接 libc + libm
+  // Linux 显式链接 libc + libm + pthread（旧版 glibc 的 pthread 需单独链接）
   link_args.push_back("-lc");
   link_args.push_back("-lm");
+  link_args.push_back("-lpthread");
 #endif
   bool any_cxx = false;
   for (const MemorySource& src : extra_sources)

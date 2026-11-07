@@ -179,6 +179,55 @@ int main() {
            "    return 0\n",
            "child\ntrue\ntrue\n0\ntrue\ntrue\n", "proc");
 
+  // @imp(proc) 线程与任务池：任务以 &fn 传入（函数值），参数 0~4 个 int，
+  // join_int 取回结果；1 个工作线程时队列 FIFO 顺序确定，可稳定断言
+  run_case("@imp(proc)\n"
+           "func task(x: int) -> int:\n"
+           "    return x * 2\n"
+           "func show(x: int) -> int:\n"
+           "    out_int(x)\n"
+           "    out(\"\\n\")\n"
+           "    return x\n"
+           "func main() -> int:\n"
+           "    var h = proc.spawn1(&task, 21)\n"
+           "    out_int(proc.join_int(h))\n"
+           "    out(\"\\n\")\n"
+           "    var n = proc.pool_start(1)\n"
+           "    out_int(n)\n"
+           "    out(\"\\n\")\n"
+           "    proc.pool_submit1(&show, 1)\n"
+           "    proc.pool_submit1(&show, 2)\n"
+           "    proc.pool_submit1(&show, 3)\n"
+           "    proc.pool_wait()\n"
+           "    proc.pool_stop()\n"
+           "    return 0\n",
+           "42\n1\n1\n2\n3\n", "threadpool");
+
+  // 管道数据回读 + 指针解引用 + 多参数任务 + 输出捕获（零 C 实现）
+  run_case("@imp(proc)\n"
+           "@imp(ptr)\n"
+           "func mul(a: int, b: int) -> int:\n"
+           "    return a * b\n"
+           "func main() -> int:\n"
+           "    var h = proc.spawn2(&mul, 6, 7)\n"
+           "    out_int(proc.join_int(h))\n"
+           "    out(\"\\n\")\n"
+           "    var p = malloc(8)\n"
+           "    *p = 11\n"
+           "    out_int(*p)\n"
+           "    out(\"\\n\")\n"
+           "    var fds = proc.pipe()\n"
+           "    var rfd = *fds\n"
+           "    var wfd = *(ptr.add(fds, 4))\n"
+           "    proc.write_str(wfd, \"pipe-ok\")\n"
+           "    proc.close(wfd)\n"
+           "    out(proc.read_str(rfd, 32))\n"
+           "    out(\"\\n\")\n"
+           "    proc.close(rfd)\n"
+           "    out(proc.capture(\"echo cap\"))\n"
+           "    return 0\n",
+           "42\n11\npipe-ok\ncap\n", "pipeptr");
+
   // 整套库：int/float/bool/string/void + 子目录 + 别名 + C++ 混合导入
   run_case("@imp(math)\n"
            "@imp(collections/vec)\n"

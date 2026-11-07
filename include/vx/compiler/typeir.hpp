@@ -105,6 +105,9 @@ enum Op : std::uint8_t {
   OP_IMPORT = 92,
   OP_HALT = 93,
   OP_STR_CONCAT = 94,
+  // 函数值 / 指针解引用（v1.16.8 起）
+  OP_DEREF_STORE = 95, // 弹出 [ptr, value] 并写回 32 位字
+  OP_CONST_FUNC = 96,  // args = "f;<函数名>"：取函数值（后端生成适配器）
 };
 
 // 单条指令：op + 文本形式 args。
