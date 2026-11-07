@@ -1,0 +1,202 @@
+# ============================================================
+# std::string & std::io 测试套件
+# 验证字符串处理和 I/O 功能
+# ============================================================
+
+import std.string.util
+import std.io.file
+import std.error
+
+func test_string_basic():
+    out("=== Test String Basic ===")
+    var s: string = "Hello, World!"
+    
+    # 测试长度
+    if len(s) != 13:
+        out("FAIL: length should be 13")
+        return
+    
+    # 测试大小写转换
+    var upper: string = s.to_upper()
+    if upper != "HELLO, WORLD!":
+        out("FAIL: to_upper failed")
+        return
+    
+    var lower: string = upper.to_lower()
+    if lower != "hello, world!":
+        out("FAIL: to_lower failed")
+        return
+    
+    # 测试包含
+    if s.contains("World") == false:
+        out("FAIL: contains should find 'World'")
+        return
+    
+    if s.contains("world"):
+        out("FAIL: contains should not find 'world' (case sensitive)")
+        return
+    
+    # 测试分割
+    var parts: vec.Vec = s.split(", ")
+    if parts.size() != 2:
+        out("FAIL: split should produce 2 parts")
+        return
+    
+    if parts.get(0) != "Hello":
+        out("FAIL: first part should be 'Hello'")
+        return
+    
+    if parts.get(1) != "World!":
+        out("FAIL: second part should be 'World!'")
+        return
+    
+    # 测试替换
+    var replaced: string = s.replace("World", "VX")
+    if replaced != "Hello, VX!":
+        out("FAIL: replace failed")
+        return
+    
+    # 测试裁剪
+    var trimmed: string = "  hello  ".trim()
+    if trimmed != "hello":
+        out("FAIL: trim failed")
+        return
+    
+    # 测试子串
+    var substr: string = s.substring(0, 5)
+    if substr != "Hello":
+        out("FAIL: substring failed")
+        return
+    
+    out("PASS: test_string_basic")
+
+func test_string_util():
+    out("=== Test StringUtil ===")
+    
+    # 测试行分割
+    var text: string = "line1\nline2\nline3"
+    var lines: vec.Vec = StringUtil.lines(text)
+    
+    if lines.size() != 3:
+        out("FAIL: lines should produce 3 lines")
+        return
+    
+    # 测试连接
+    var joined: string = StringUtil.join(lines, ", ")
+    if joined != "line1, line2, line3":
+        out("FAIL: join failed")
+        return
+    
+    # 测试重复
+    var repeated: string = StringUtil.repeat("ab", 3)
+    if repeated != "ababab":
+        out("FAIL: repeat failed")
+        return
+    
+    # 测试填充
+    var padded: string = StringUtil.pad_left("5", 3, "0")
+    if padded != "005":
+        out("FAIL: pad_left failed")
+        return
+    
+    padded = StringUtil.pad_right("hi", 5, "-")
+    if padded != "hi---":
+        out("FAIL: pad_right failed")
+        return
+    
+    out("PASS: test_string_util")
+
+func test_file_operations():
+    out("=== Test File Operations ===")
+    
+    # 测试文件写入和读取
+    var f: file.File = file.File.open("/tmp/test_vx.txt", "w")
+    if f.is_open() == false:
+        out("FAIL: file should be open for writing")
+        return
+    
+    f.write_all("Hello from VX!")
+    f.close()
+    
+    # 验证文件存在
+    if file.exists("/tmp/test_vx.txt") == false:
+        out("FAIL: file should exist after write")
+        return
+    
+    # 读取文件内容
+    f = file.File.open("/tmp/test_vx.txt", "r")
+    var result: Result = f.read_all()
+    
+    if result.is_ok == false:
+        out("FAIL: read_all should succeed")
+        return
+    
+    if result.value != "Hello from VX!":
+        out("FAIL: content mismatch: " + result.value)
+        return
+    
+    f.close()
+    
+    # 清理测试文件
+    file.remove("/tmp/test_vx.txt")
+    
+    out("PASS: test_file_operations")
+
+func test_error_handling():
+    out("=== Test Error Handling ===")
+    
+    # 测试错误创建
+    var err: error.VXError = error.io_error("test error")
+    
+    if err.message() != "test error":
+        out("FAIL: error message should match")
+        return
+    
+    # 测试 Result 类型
+    var success: Result = Result.ok(42)
+    var failure: Result = Result.err(error.runtime_error("something went wrong"))
+    
+    if success.is_ok == false:
+        out("FAIL: ok result should have is_ok=true")
+        return
+    
+    if success.value != 42:
+        out("FAIL: value should be 42")
+        return
+    
+    if failure.is_ok:
+        out("FAIL: err result should have is_ok=false")
+        return
+    
+    if failure.error.message() != "something went wrong":
+        out("FAIL: error message should match")
+        return
+    
+    # 测试 unwrap 和 expect
+    var val: int = success.unwrap()
+    if val != 42:
+        out("FAIL: unwrap should return value")
+        return
+    
+    # 测试 or_else
+    var fallback: int = failure.or_else(0)
+    if fallback != 0:
+        out("FAIL: or_else should return default")
+        return
+    
+    out("PASS: test_error_handling")
+
+func run_all_tests():
+    out("\n🧪 Running String & I/O Tests\n")
+    out("=" * 50 + "\n")
+    
+    test_string_basic()
+    test_string_util()
+    test_file_operations()
+    test_error_handling()
+    
+    out("\n" + "=" * 50)
+    out("✅ All string & I/O tests completed!\n")
+
+func main():
+    run_all_tests()

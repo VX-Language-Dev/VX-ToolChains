@@ -1,0 +1,5 @@
+extern out(msg: string)
+
+func main() -> int:
+    out("Hello, VX!\n")
+    return 0

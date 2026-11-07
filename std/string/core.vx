@@ -1,0 +1,28 @@
+# Core string operations via extern C functions
+
+extern strcmp(a: string, b: string) -> int
+extern strlen(s: string) -> int
+extern memcpy(dst: string, src: string, size: int) -> string
+
+func str_eq(a: string, b: string) -> int:
+    var r: int = strcmp(a, b)
+    if r == 0:
+        return 1
+    return 0
+
+func str_len(s: string) -> int:
+    return strlen(s)
+
+func str_cat(a: string, b: string) -> string:
+    var la: int = strlen(a)
+    var lb: int = strlen(b)
+    var total: int = la + lb + 1
+    var result = malloc(total)
+    var _ = memcpy(result, a, la)
+    # copy second string after first
+    var _ = memcpy(result + la, b, lb)
+    # null terminate
+    (result + la + lb)[0] = 0
+    return result
+
+extern malloc(size: int) -> string

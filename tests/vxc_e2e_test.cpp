@@ -72,7 +72,12 @@ std::optional<ir::ModuleIR> gen_src(std::string_view src, std::string_view filen
 void test_sample(std::string_view name, std::string_view filename, std::size_t expect_funcs_min = 1) {
   fs::path p = fs::current_path();
   while (!p.empty() && !fs::exists(p / "tests" / filename)) {
-    p = p.parent_path();
+    const fs::path parent = p.parent_path();
+    if (parent == p) {
+      p.clear(); // 已到根目录：parent_path() 返回自身，标记为未找到
+      break;
+    }
+    p = parent;
   }
   CHECK(!p.empty());
   if (p.empty()) {
@@ -101,7 +106,12 @@ void test_simple() {
   // test_simple.vx：extern out + func main
   fs::path p = fs::current_path();
   while (!p.empty() && !fs::exists(p / "tests" / "test_simple.vx")) {
-    p = p.parent_path();
+    const fs::path parent = p.parent_path();
+    if (parent == p) {
+      p.clear(); // 已到根目录：parent_path() 返回自身，标记为未找到
+      break;
+    }
+    p = parent;
   }
   CHECK(!p.empty());
   if (p.empty()) {
