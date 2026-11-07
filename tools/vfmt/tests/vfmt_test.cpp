@@ -75,6 +75,15 @@ void test_unary_spacing() {
   expect_eq("var x = a * -b\n", "var x = a * -b\n");
 }
 
+// 函数值与指针解引用：&fn 紧贴函数名，*p 紧贴操作数 / 括号
+void test_deref_func_ref_spacing() {
+  expect_eq("var f = & worker\n", "var f = &worker\n");
+  expect_eq("var x = *  p\n", "var x = *p\n");
+  expect_eq("var x = * (ptr.add(p, 4))\n", "var x = *(ptr.add(p, 4))\n");
+  expect_eq("*  p = 5\n", "*p = 5\n");
+  expect_eq("var x = a * b\n", "var x = a * b\n");
+}
+
 // 括号、逗号、下标内部不留空格
 void test_call_and_subscript_spacing() {
   expect_eq("var x = f( a , b )\n", "var x = f(a, b)\n");
@@ -273,6 +282,7 @@ int main() {
   test_indent_width();
   test_binary_operator_spacing();
   test_unary_spacing();
+  test_deref_func_ref_spacing();
   test_call_and_subscript_spacing();
   test_colon_spacing();
   test_control_keyword_paren();

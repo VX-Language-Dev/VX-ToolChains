@@ -2359,6 +2359,10 @@ private:
       }
       case NodeKind::New:
         return std::string(static_cast<const vx::compiler::New*>(e)->class_name);
+      case NodeKind::Deref:
+        return "int"; // *p 读取 32 位字
+      case NodeKind::FuncRef:
+        return "ptr"; // &fn 取函数值
       case NodeKind::Unary: {
         const auto* u = static_cast<const vx::compiler::Unary*>(e);
         if (u->op == "!" || u->op == "not")

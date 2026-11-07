@@ -131,6 +131,20 @@ void fp_expr(std::string& out, const Expr* e) {
       out += ')';
       break;
     }
+    case NodeKind::Deref: {
+      const auto* d = static_cast<const Deref*>(e);
+      out += "d(";
+      fp_expr(out, d->ptr);
+      out += ')';
+      break;
+    }
+    case NodeKind::FuncRef: {
+      const auto* f = static_cast<const FuncRef*>(e);
+      out += "g";
+      put_str(out, f->name);
+      out += ';';
+      break;
+    }
     default:
       out += "?e;";
       break;

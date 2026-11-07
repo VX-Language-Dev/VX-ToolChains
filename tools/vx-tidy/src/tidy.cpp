@@ -302,6 +302,13 @@ private:
         walk_expr(u->operand);
         break;
       }
+      case NodeKind::Deref: {
+        const auto* d = static_cast<const Deref*>(e);
+        walk_expr(d->ptr);
+        break;
+      }
+      case NodeKind::FuncRef:
+        break; // 函数值不涉及局部变量
       case NodeKind::Binary: {
         const auto* b = static_cast<const Binary*>(e);
         walk_expr(b->left);

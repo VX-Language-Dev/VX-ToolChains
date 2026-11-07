@@ -189,6 +189,8 @@ std::string token_text(const Token& t) {
       return "or";
     case Tok::Not:
       return "!";
+    case Tok::Amp:
+      return "&";
     case Tok::Plus:
       return "+";
     case Tok::Minus:
@@ -291,20 +293,21 @@ bool is_operator_token(const Token* t) {
     case Tok::And:
     case Tok::Or:
     case Tok::Not:
+    case Tok::Amp:
       return true;
     default:
       return false;
   }
 }
 
-// 是否前缀（一元）运算符：'-' / '+' / '!'。
-// '-' 与 '+' 依前一个 token 判定：前一个结束一个值则为中缀（二元）。
+// 是否前缀（一元）运算符：'-' / '+' / '!' / '&' / '*'。
+// '-', '+', '*' 依前一个 token 判定：前一个结束一个值则为中缀（二元）。
 bool is_prefix_op(const std::vector<const Token*>& toks, std::size_t j) {
   const Token* t = toks[j];
-  if (t->kind == Tok::Not) {
+  if (t->kind == Tok::Not || t->kind == Tok::Amp) {
     return true;
   }
-  if (t->kind != Tok::Minus && t->kind != Tok::Plus) {
+  if (t->kind != Tok::Minus && t->kind != Tok::Plus && t->kind != Tok::Star) {
     return false;
   }
   if (j == 0) {
@@ -366,10 +369,13 @@ bool need_space(const std::vector<const Token*>& toks, std::size_t i, const std:
       break;
   }
 
-  // 左括号：函数名 / 下标紧贴（被调用者），运算符、赋值与控制流关键字后留空格
+  // 左括号：函数名 / 下标紧贴（被调用者），运算符、赋值与控制流关键字后留空格；
+  // 前缀运算符（*p / &fn）后的括号紧贴，避免 `* (expr)` 这类松散写法
   switch (c->kind) {
     case Tok::LParen:
     case Tok::LBracket:
+      if (is_prefix_op(toks, i - 1))
+        return false;
       return !is_callee_end(p) || is_control_kw(p);
     case Tok::LBrace:
       // 字典字面量的 '{'：紧贴左括号 / 中括号，其余留一个空格
@@ -396,7 +402,7 @@ bool need_space(const std::vector<const Token*>& toks, std::size_t i, const std:
 
   // 前缀运算符：与操作数紧贴；与另一个运算符相邻时留空格避免粘连
   if (is_prefix_op(toks, i)) {
-    return is_operator_token(p);
+    return is_operator_token(p) || p->kind == Tok::Kw;
   }
   // 前缀运算符与其操作数之间：紧贴
   if (is_prefix_op(toks, i - 1)) {
