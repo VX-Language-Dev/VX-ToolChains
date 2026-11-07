@@ -89,6 +89,28 @@ else
   printf "  ⏭  clang-format 未安装，跳过格式检查\n"
 fi
 
+# ── 1.6. 静态检查 (clang-tidy，告警基线门禁) ────────
+# 存量告警由 TIDY_MAX_WARNINGS 设基线（默认 250）；总数超过基线视为新增告警并失败。
+# 清理存量后应同步下调该值，逐步收敛到 0。
+if command -v clang-tidy >/dev/null 2>&1; then
+  step "clang-tidy 检查"
+  TIDY_MAX="${TIDY_MAX_WARNINGS:-250}"
+  tidy_log="build/clang-tidy.log"
+  if cmake --build build --target tidy >"$tidy_log" 2>&1; then
+    tidy_count=$(grep -c ': warning:' "$tidy_log" || true)
+    tidy_count=${tidy_count:-0}
+    if [ "$tidy_count" -le "$TIDY_MAX" ]; then
+      ok "clang-tidy 告警 ${tidy_count} 条（基线 ${TIDY_MAX}）"
+    else
+      fail "clang-tidy 告警 ${tidy_count} 条，超过基线 ${TIDY_MAX} — 修复新增告警（详见 ${tidy_log}）"
+    fi
+  else
+    fail "clang-tidy 运行失败（详见 ${tidy_log}）"
+  fi
+else
+  printf "  ⏭  clang-tidy 未安装，跳过静态检查\n"
+fi
+
 # ── 2. 测试 ──────────────────────────────────────────
 # Unix Makefiles 单配置：产物直接落在 build/ 下。主项目测试直接运行二进制
 # （也绕开 ctest 对 tools/ 子项目可执行路径解析的已知问题），

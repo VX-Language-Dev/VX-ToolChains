@@ -20,5 +20,5 @@ Checks: >
   -altera-*,
   -modernize-use-nodiscard
 WarningsAsErrors: ''
-HeaderFilterRegex: 'include/vx/.*'
+HeaderFilterRegex: '(src|tools|include/vx)/.*'
 FormatStyle: file

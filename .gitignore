@@ -11,6 +11,7 @@ target/
 *.swo
 *~
 .venv/
+.cache/
 
 # OS
 .DS_Store
@@ -22,17 +23,14 @@ Thumbs.db
 *.vack
 *.out
 
-# Test/build binaries
-hello
-ret0
-ret0_*
-test_*
-vxedit
+# Test/build binaries（仅根目录产物；tests/、std/ 下的同名源码仍需跟踪）
+/hello
+/ret0
+/ret0_*
+/test_*
+/vxedit
 zig-out/
 bootstrap/vxbootstrap
-*.vx
-!compiler/
-!compiler/*.vx
 # Debug
 .dbg/
 logs/
@@ -44,11 +42,11 @@ package/
 *.tar.gz
 
 # Misc
+# 注：不按扩展名忽略 *.sh / *.bash —— scripts/、completions/ 下的脚本属于项目源码。
 rpm.py
-*.bash
-*.sh
 *.bat
 *.cmd
+/zcc.sh
 # Test build artifacts (not test source code)
 tests/*/lib_*.dylib
 tests/*/lib_*.so

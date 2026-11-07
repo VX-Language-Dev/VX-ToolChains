@@ -32,6 +32,20 @@
 - 文档：README 局限/§3 示例与目录结构、docs/SYNTAX.md（§6.2 / 新增 §6.5 / §8）、
   std/README 同步；版本号 1.16.8 → 1.16.9。
 
+### 工程修复（2026-11-07）
+
+- **移除未实现的 `--std-lib` 选项**：该参数此前只出现在 `--help` 与 `Options` 结构体中，
+  参数解析没有对应分支（传入即报 unknown option），已一并删除；标准库目录语义确定后再补。
+- **修正 `.gitignore` 误忽略**：`*.vx` / `*.sh` / `*.bash` 全局规则会把 std 源码、
+  `scripts/` 发布脚本与 `completions/` 补全脚本静默排除在版本控制之外；改为仅锚定根目录
+  编译产物（`/test_*` 等），显式忽略本地 `zcc.sh`，并补充 `.cache/`。
+- **CI 纳入 clang-tidy**：`ci/check.sh` 新增静态检查步骤，用 `TIDY_MAX_WARNINGS`
+  设定告警基线（默认 250，实测 249 条），超出基线视为新增告警并失败；同时修正
+  `.clang-tidy` 的 `HeaderFilterRegex`（原 `include/vx/.*` 令源码告警全部被抑制，门禁形同虚设）。
+- **e2e 测试健壮性**：`tests/vxc_e2e_test.cpp` 向上查找样例目录时，`fs::path("/").parent_path()`
+  返回自身导致找不到样例时死循环，已补根目录终止条件；`tests/test_*.vx` 五个样例此前被
+  `test_*` 规则排除在版本控制外，本次重建并纳入，避免新 clone 无法运行 e2e。
+
 ## v1.16.8 (2026-11-05)
 
 ### 线程与任务池（后端 IR 生成 + `proc` 库）

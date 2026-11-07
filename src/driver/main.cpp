@@ -34,7 +34,6 @@ struct Options {
   std::string target;                // --target <triple>：空则用 host_triple()
   std::string color = "auto";        // auto | always | never
   std::vector<std::string> includes; // -I 头文件搜索目录（按序，可多次）
-  std::string std_lib;               // --std-lib <dir>：VX 标准库目录（空则自动检测）
   bool verbose = false;
   bool help = false;
   bool version = false;
@@ -63,8 +62,6 @@ static void print_help() {
                "                  $VX_HEADERS_DIR/$VX_HEADERS > ./headers/ >\n"
                "                  headers/ next to vxc and its parents; also\n"
                "                  accepts -I<dir>)\n"
-               "  --std-lib <dir> VX standard library directory (default: auto-detect\n"
-               "                  std/ next to the executable)\n"
                "  --target <tpl>  Cross-compile target triple (e.g. x86_64-linux-gnu)\n"
                "                  (default: auto-detect host triple)\n"
                "  --check         Type-check only; do not write output\n"
