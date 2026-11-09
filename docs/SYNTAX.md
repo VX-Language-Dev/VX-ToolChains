@@ -55,8 +55,12 @@ and or not as in const export
 
 ## 2. 类型
 
-内建类型：`int`（i32）、`float`（double）、`bool`、`string`、`void`、
-`var`（未标注/泛型槽位）。类名/结构名可作类型标注。
+内建类型：`int`（i32）、`float`（double）、`bool`、`string`、`ptr`（原生指针，
+`malloc` / `&fn` / `ptr.*` 库的结果；支持 `*p` 读写与作为类字段/形参/返回值标注）、
+`void`、`var`（未标注/泛型槽位）。类名/结构名可作类型标注。
+
+> `var` 槽的 ABI 位宽为 i32：类实例（指针）不能作为 `-> var` 的返回值，
+> 需要返回/传递实例或指针时用 `ptr` 标注。
 
 ## 3. 声明
 
@@ -117,7 +121,17 @@ extern func add(a: int, b: int) -> int   # func 关键字可选
 > 线程与任务池同属 `proc`：`proc.spawnN(&fn, ...)` / `proc.join_*` /
 > `proc.pool_start(n)` / `proc.pool_submitN(&fn, ...)` / `proc.pool_wait()` /
 > `proc.pool_stop()`；任务以函数值 `&fn` 传入，后端生成 pthread 与通用适配器 IR，
-> 符号链接期解析（支持跨文件）。任务可 0~4 个 int 参数，返回类型由 join_* 决定。
+> 符号链接期解析（支持跨文件）。任务实参按 64 位透传（int 走 sext、ptr/string 走
+> ptrtoint，指针不会被截断），返回值类型由 join_* 决定。
+> 同步原语同属 `proc`：`proc.mutex_init/lock/trylock/unlock/destroy` 与
+> `proc.cond_init/wait/signal/broadcast/destroy`（直连 pthread；`attr` 传 `nil`，
+> 对象内存由调用方 `malloc(64)` 提供），以及微秒级 `proc.usleep(us)`。
+> 原子操作：`proc.atomic_load` / `atomic_store` / `atomic_fetch_add` /
+> `atomic_fetch_sub` / `atomic_cas` / `atomic_fence`，32 位字、4 字节对齐、seq_cst，
+> 后端直接发射 LLVM 原子指令。
+> POSIX 信号量 / 屏障仍不提供（macOS 无名 `sem_init` 不可用且无 `pthread_barrier_*`）；
+> VX 语言层的 Semaphore / Barrier / Channel 封装见 `std/sys/sync.vx`
+> （mutex + cond 实现，可编译执行，见 std/README）。
 > 管道与输出捕获：`proc.pipe()` / `proc.read_str` / `proc.write_str` /
 > `proc.capture(cmd)`；指针运算见 `ptr` 库与 §6.5。
 
@@ -280,7 +294,9 @@ vec.push(x)         # 导入库调用 → CALL f;_vx_<lib>_<name>
   ```
 - `&fn` 结果可存入 `var`、作为 `ptr` 形参传递。`proc.spawnN` / `pool_submitN`
   会在 vlnk 合并模块内为被取址函数生成通用适配器 `i64(i64,i64,i64,i64)`，
-  因此任务函数可跨文件、参数与返回类型不限（经适配器转换）。
+  因此任务函数可跨文件、参数与返回类型不限（经适配器转换）。任务实参在调用点按
+  64 位透传（`int` → `sext`，`ptr` / `string` → `ptrtoint`，`float` → `bitcast`），
+  64 位指针可安全跨线程传递。
 - 函数值当前只支持顶层函数（不支持方法 `&obj.m` 与闭包捕获）。
 
 ## 7. 编译流水线与产物

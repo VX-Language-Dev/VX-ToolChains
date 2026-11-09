@@ -68,6 +68,8 @@ std::string_view tag_name(TypeTag t) {
       return "bool";
     case TypeTag::TYPE_STRING:
       return "string";
+    case TypeTag::TYPE_POINTER:
+      return "ptr";
     case TypeTag::TYPE_STRUCT:
       return "struct";
     case TypeTag::TYPE_ARRAY:
@@ -203,6 +205,10 @@ private:
     }
     if (name == "string") {
       out = TypeTag::TYPE_STRING;
+      return true;
+    }
+    if (name == "ptr") {
+      out = TypeTag::TYPE_POINTER;
       return true;
     }
     if (name == "void") {

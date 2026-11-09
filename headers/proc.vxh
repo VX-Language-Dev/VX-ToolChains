@@ -19,16 +19,18 @@ extern func sleep(seconds: int) -> int
 
 # ---- 线程（pthread，后端生成入口与函数适配器 IR）----
 # 任务以函数值 &fn 传入（链接期解析符号，支持跨文件）；任务函数可带
-# 0~4 个 int 参数，返回值类型不限（由 join_* 按类型取出）。
+# 0~4 个实参，返回值类型不限（由 join_* 按类型取出）。
+# 实参按 64 位透传给适配器，因此 int / ptr / string 均可安全传递
+# （64 位指针不会被截断），适配器再按任务函数自身形参类型转回。
 #   spawn0..spawn4  启动线程，返回句柄（>=1），失败 0；最多 1024 个句柄
 #   join_int        阻塞回收并取回 int 返回值（join 为同义别名），失败 -1
 #   join_float      取回 float 返回值；join_str / join_ptr 取回 string / ptr
 #   每个句柄只可 join 一次
 extern func spawn0(fn: ptr) -> int
-extern func spawn1(fn: ptr, a: int) -> int
-extern func spawn2(fn: ptr, a: int, b: int) -> int
-extern func spawn3(fn: ptr, a: int, b: int, c: int) -> int
-extern func spawn4(fn: ptr, a: int, b: int, c: int, d: int) -> int
+extern func spawn1(fn: ptr, a: var) -> int
+extern func spawn2(fn: ptr, a: var, b: var) -> int
+extern func spawn3(fn: ptr, a: var, b: var, c: var) -> int
+extern func spawn4(fn: ptr, a: var, b: var, c: var, d: var) -> int
 extern func join(handle: int) -> int
 extern func join_int(handle: int) -> int
 extern func join_float(handle: int) -> float
@@ -37,17 +39,69 @@ extern func join_ptr(handle: int) -> ptr
 
 # ---- 任务池（固定工作线程 + 有界任务队列）----
 #   pool_start     启动 n 个工作线程（夹到 1..64），返回实际线程数；已启动则直接返回
-#   pool_submitN   提交任务（&fn + 0~4 个 int 实参），成功 1；队列满（1024）或未启动 0
+#   pool_submitN   提交任务（&fn + 0~4 个实参，类型同 spawnN），成功 1；队列满（1024）或未启动 0
 #   pool_wait      阻塞直到已提交任务全部完成，返回 0
 #   pool_stop      置关闭标志、等待在途任务完成、回收工作线程并销毁同步对象，返回 0
 extern func pool_start(workers: int) -> int
 extern func pool_submit0(fn: ptr) -> int
-extern func pool_submit1(fn: ptr, a: int) -> int
-extern func pool_submit2(fn: ptr, a: int, b: int) -> int
-extern func pool_submit3(fn: ptr, a: int, b: int, c: int) -> int
-extern func pool_submit4(fn: ptr, a: int, b: int, c: int, d: int) -> int
+extern func pool_submit1(fn: ptr, a: var) -> int
+extern func pool_submit2(fn: ptr, a: var, b: var) -> int
+extern func pool_submit3(fn: ptr, a: var, b: var, c: var) -> int
+extern func pool_submit4(fn: ptr, a: var, b: var, c: var, d: var) -> int
 extern func pool_wait() -> int
 extern func pool_stop() -> int
+
+# ---- 互斥锁（pthread_mutex，直连 libpthread，无 C 实现）----
+# 内存由调用方提供：pthread_mutex_t 尺寸随平台而异（macOS 64 字节 /
+# Linux x86_64 40 字节），统一 malloc(64) 即可跨平台安全容纳；malloc 返回
+# 的内存满足对齐要求，无需清零。attr 传 nil 表示默认属性。
+#   mutex_init     初始化（0=成功）
+#   mutex_lock     阻塞加锁（0=成功）
+#   mutex_trylock  非阻塞尝试：拿到锁返回 0；锁已被占用返回非 0（EBUSY，
+#                  平台相关值，请只用「是否为 0」判断）
+#   mutex_unlock   解锁（0=成功，须由持有锁的线程调用）
+#   mutex_destroy  销毁（0=成功，须先 unlock）
+extern func mutex_init(mtx: ptr, attr: ptr) -> int
+extern func mutex_lock(mtx: ptr) -> int
+extern func mutex_trylock(mtx: ptr) -> int
+extern func mutex_unlock(mtx: ptr) -> int
+extern func mutex_destroy(mtx: ptr) -> int
+
+# ---- 条件变量（pthread_cond，需与同一把互斥锁配合）----
+# 内存同样由调用方提供，malloc(64) 可跨平台容纳（macOS 48 / Linux 48 字节）；
+# attr 传 nil 表示默认属性。
+#   cond_init      初始化（0=成功）
+#   cond_wait      原子地解锁 mtx 并阻塞在 cv 上；被唤醒后重新加锁（0=成功）。
+#                  mtx 必须已由当前线程 lock
+#   cond_signal    唤醒至少一个等待者（无等待者返回 0）
+#   cond_broadcast 唤醒全部等待者（无等待者返回 0）
+#   cond_destroy   销毁（0=成功，须无等待者）
+extern func cond_init(cv: ptr, attr: ptr) -> int
+extern func cond_wait(cv: ptr, mtx: ptr) -> int
+extern func cond_signal(cv: ptr) -> int
+extern func cond_broadcast(cv: ptr) -> int
+extern func cond_destroy(cv: ptr) -> int
+
+# ---- 高精度睡眠（补充上面的秒级 sleep）----
+# usleep 以微秒为单位，返回 0=睡满 / -1=失败；超过 1 秒请改用 sleep（秒级）。
+extern func usleep(microseconds: int) -> int
+
+# ---- 原子操作（32 位字、4 字节对齐、seq_cst 顺序，后端直接发射 LLVM 原子指令）----
+# addr 须为 malloc 返回值或经 ptr.add 得到的 4 字节对齐地址；用于无锁计数、
+# 自旋标志等。语义均为「对 *addr 的 32 位整型」。
+#   atomic_load       原子读，返回当前值
+#   atomic_store      原子写（无返回值）
+#   atomic_fetch_add  原子加，返回加之前（旧）值
+#   atomic_fetch_sub  原子减，返回减之前（旧）值
+#   atomic_cas        比较交换：*addr == expected 时写入 desired；
+#                     返回旧值（等于 expected 表示交换成功）
+#   atomic_fence      全局内存栅栏（无返回值）
+extern func atomic_load(addr: ptr) -> int
+extern func atomic_store(addr: ptr, val: int)
+extern func atomic_fetch_add(addr: ptr, delta: int) -> int
+extern func atomic_fetch_sub(addr: ptr, delta: int) -> int
+extern func atomic_cas(addr: ptr, expected: int, desired: int) -> int
+extern func atomic_fence()
 
 # ---- 管道 / 输出捕获（配合 ptr 库的 *p 读取 fd）----
 #   pipe       创建管道，返回 ptr（指向两个 int：读 fd、写 fd，第二个用 *ptr.add(p, 4) 读取）

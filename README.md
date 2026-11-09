@@ -3,7 +3,7 @@
 > **从零自研的编程语言工具链** — C++23 实现，一条纯自研的编译链路把 `.vx` 源码变成原生机器码
 >
 > ![Language](https://img.shields.io/badge/language-C%2B%2B23-blue)
-> ![Version](https://img.shields.io/badge/version-v1.16.9-blue)
+> ![Version](https://img.shields.io/badge/version-v1.19.0-blue)
 > ![Tests](https://img.shields.io/badge/tests-20%20suites%20100%25%20passing-brightgreen)
 > ![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
 > ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
@@ -70,7 +70,7 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 | `vmake-lsp` | VMakeSet.vmake 语言服务器 | ✅ 可用 | 0.3.0 |
 | `vfmt` | 源码格式化（保留注释 + AST 结构自检） | ✅ 可用 | 0.1.0 |
 | `vx-tidy` | 静态分析引擎（纯动态库 libvxtidy） | ✅ 可用 | — |
-| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.16.9 |
+| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.19.0 |
 | VPM 包管理器 | 多语言包管理 | 🚧 规划 | — |
 | 反编译器 vxde | VXOBJ → VX 源码还原 | 🚧 规划 | — |
 
@@ -97,11 +97,17 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 VX 目前适合编写以计算、文件读写为主的程序；**尚不能完整实现 VMAKE 这类系统编排工具**。主要限制：
 
 - **进程与并发**：`proc` 库提供进程原语（`fork`/`waitpid`/`kill`/`sleep`/`getpid`）、
-  线程/任务池（`spawnN`/`join_*`/`pool_*`）与管道/输出捕获（`pipe`/`read_str`/`capture`），
-  仅 `.vxh` 声明：链接期直连 libc / 由后端生成 pthread 与函数适配器 IR，零 C/C++ 源码。
-  **函数值 `&fn`** 与 **指针解引用 `*p`** 已进入语言与后端：任务函数可跨文件、可存变量、
-  支持 0~4 个 int 参数与任意返回类型；`*p` 读写 32 位字，配合 `ptr` 库可做原始内存与 fd 访问。
-  尚未支持闭包捕获与 64 位整型值。
+  线程/任务池（`spawnN`/`join_*`/`pool_*`）、同步原语（`mutex_*`/`cond_*`/`usleep`）、
+  原子操作（`atomic_load`/`atomic_store`/`atomic_fetch_add`/`atomic_fetch_sub`/`atomic_cas`/`atomic_fence`）
+  与管道/输出捕获（`pipe`/`read_str`/`capture`），
+  仅 `.vxh` 声明：链接期直连 libc / 由后端生成 pthread、原子指令与函数适配器 IR，零 C/C++ 源码。
+  **函数值 `&fn`** 与 **指针解引用 `*p`** 已进入语言与后端：任务函数可跨文件、可存变量，
+  任务实参按 64 位透传（`int` / `ptr` / `string` 均可安全传递），`*p` 读写 32 位字，
+  配合 `ptr` 库可做原始内存与 fd 访问。
+  尚未支持闭包捕获与 64 位整型值。POSIX 信号量/屏障不提供（macOS 平台限制），
+  VX 语言层已有 **Mutex / Condvar / Semaphore / Barrier / Channel** 封装
+  （`std/sys/sync.vx`，基于 proc 原语 + mutex/cond 组合实现，可编译执行、e2e 回归覆盖）；
+  但 `std/` 其余模块仍是未接入构建的设计参考。
 - **文件系统**：仅有 `file_read`/`file_write`/`file_exists`，无目录创建/删除/列举/路径规范化，无法管理构建目录与头文件树。
 - **字符串处理**：仅拼接/比较/长度，无子串、查找、分割、trim、字符索引与字符串↔整数解析，难以编写解析器与签名器。
 - **集合与内存**：列表/字典为 P4 MVP（8 字节统一槽），无动态追加/扩容/迭代器；`std/` 标准库未接入编译器构建。
@@ -405,8 +411,10 @@ func main() -> int:
 
 **线程与任务池（`proc` 库同一套零 C/C++ 实现）**：任务以**函数值 `&fn`** 传入，
 后端为每个被取址函数生成通用适配器（`i64(i64,i64,i64,i64)`），符号在链接期解析，
-因此任务函数可跨文件、可存入变量。任务可带 0~4 个 int 参数，返回值类型不限
-（由 `join_int` / `join_float` / `join_str` / `join_ptr` 按类型取回）：
+因此任务函数可跨文件、可存入变量。任务可带 0~4 个实参，返回值类型不限
+（由 `join_int` / `join_float` / `join_str` / `join_ptr` 按类型取回）。
+实参按 **64 位透传**，`int` 走 `sext`、`ptr` / `string` 走 `ptrtoint`，
+因此指针可安全跨线程传递（不再被截断）：
 
 ```vx
 @imp(proc)
@@ -429,6 +437,121 @@ func main() -> int:
 
 > 任务池为固定工作线程 + 1024 槽有界队列；`pool_submitN` 在队列满或未启动时返回 0。
 > 线程句柄上限 1024，每个句柄只可 join 一次。
+
+**同步原语（`proc` 库，直连 pthread）**：互斥锁与条件变量以**裸内存句柄**暴露，
+内存由调用方提供（`malloc(64)` 足以跨平台容纳 macOS 64 字节 / Linux 40 字节的
+`pthread_mutex_t`，`malloc` 返回值满足对齐要求），`attr` 传 `nil` 即默认属性：
+
+```vx
+@imp(proc)
+func main() -> int:
+    var mtx = malloc(64)
+    var cv = malloc(64)
+    proc.mutex_init(mtx, nil)          # 0 = 成功
+    proc.cond_init(cv, nil)
+
+    proc.mutex_lock(mtx)               # 阻塞加锁
+    out_bool(proc.mutex_trylock(mtx) != 0)   # → true：已被本线程持有（EBUSY）
+    proc.cond_wait(cv, mtx)            # 原子解锁并阻塞；须由其它线程 cond_signal 唤醒
+    proc.mutex_unlock(mtx)
+
+    proc.cond_destroy(cv)
+    proc.mutex_destroy(mtx)
+    free(cv)
+    free(mtx)
+
+    proc.usleep(1000)                  # 微秒级睡眠（> 1 秒请用 proc.sleep 秒级）
+    return 0
+```
+
+| 函数 | 说明 |
+| --- | --- |
+| `mutex_init(mtx, attr)` | 初始化（`0` 成功） |
+| `mutex_lock(mtx)` | 阻塞加锁（`0` 成功） |
+| `mutex_trylock(mtx)` | 非阻塞尝试：`0` 拿到锁，非 `0` 已被占用（EBUSY，平台相关值） |
+| `mutex_unlock(mtx)` / `mutex_destroy(mtx)` | 解锁 / 销毁 |
+| `cond_init(cv, attr)` | 初始化条件变量 |
+| `cond_wait(cv, mtx)` | 原子解锁 `mtx` 并阻塞；被唤醒后重新加锁 |
+| `cond_signal(cv)` / `cond_broadcast(cv)` | 唤醒一个 / 全部等待者（无等待者返回 `0`） |
+| `cond_destroy(cv)` | 销毁（须无等待者） |
+| `usleep(us)` | 微秒级睡眠（`0` 睡满 / `-1` 失败） |
+
+> POSIX 信号量与屏障不提供：macOS 的无名 `sem_init` 不可用、且无 `pthread_barrier_*`。
+> VX 语言层的 **Semaphore / Barrier / Channel**（mutex + cond 组合实现）已落地在
+> [`std/sys/sync.vx`](std/sys/sync.vx)，连同 `Mutex` / `Condvar` 一起可被当前工具链
+> 编译执行（回归覆盖：`tests/import_e2e_test.cpp` 的 `synclib` 用例）：
+>
+> ```vx
+> # 构造两步：new X() 只分配字段内存，init(...) 完成初始化
+> var m = new Mutex()
+> m.init()
+> m.lock()
+> # ... 临界区 ...
+> m.unlock()
+>
+> var ch = new Channel()
+> ch.init(8)          # 容量 8 的有界通道（int 值）
+> ch.send(42)
+> out_int(ch.recv())  # → 42
+> ch.close()
+>
+> m.dispose()
+> ch.dispose()
+> ```
+>
+> 当前以同编译单元方式使用（拼接/复制源码）；跨编译单元的类引用待模块系统落地。
+
+**多线程共享状态（指针实参 + 原子操作）**：任务实参按 64 位透传，因此可直接把
+共享缓冲区指针传给工作线程；配合 `mutex_*` 或原子操作即可安全并发修改同一内存：
+
+```vx
+@imp(proc)
+@imp(ptr)
+func bump(shared: ptr) -> int:
+    var i = 0
+    var c = ptr.add(shared, 64)     # 前 64 字节为 mutex，偏移 64 为计数器
+    while i < 500:
+        proc.mutex_lock(shared)
+        *c = *c + 1
+        proc.mutex_unlock(shared)
+        i = i + 1
+    return 0
+
+func main() -> int:
+    var shared = malloc(72)
+    proc.mutex_init(shared, nil)
+    var c = ptr.add(shared, 64)
+    *c = 0
+    var h1 = proc.spawn1(&bump, shared)   # 指针实参不会被截断
+    var h2 = proc.spawn1(&bump, shared)
+    proc.join_int(h1)
+    proc.join_int(h2)
+    out_int(*c)                           # → 1000（无丢失更新）
+    out("\n")
+    proc.mutex_destroy(shared)
+    free(shared)
+
+    # 无锁版本：原子计数器（32 位字、4 字节对齐、seq_cst）
+    var counter = malloc(4)
+    proc.atomic_store(counter, 0)
+    proc.atomic_fetch_add(counter, 1)     # 返回旧值
+    out_int(proc.atomic_load(counter))    # → 1
+    out("\n")
+    free(counter)
+    return 0
+```
+
+| 原子操作 | 说明 |
+| --- | --- |
+| `atomic_load(addr)` | 原子读，返回当前值 |
+| `atomic_store(addr, val)` | 原子写（无返回值） |
+| `atomic_fetch_add(addr, delta)` | 原子加，返回加之前的旧值 |
+| `atomic_fetch_sub(addr, delta)` | 原子减，返回减之前的旧值 |
+| `atomic_cas(addr, expected, desired)` | 比较交换，返回旧值（`== expected` 表示成功） |
+| `atomic_fence()` | 全局内存栅栏（无返回值） |
+
+> 原子操作由后端直接发射 LLVM `load atomic` / `atomicrmw` / `cmpxchg` / `fence`
+> 指令，零外部符号；`addr` 需为 `malloc` 返回值或经 `ptr.add` 得到的 4 字节对齐地址。
 
 **指针、管道与子进程输出捕获**：语言层新增 `*p` 读写（32 位字）与 `&fn` 取函数值；
 `ptr` 库提供字节偏移与整数互转；`proc` 提供 `pipe` / `read_str` / `write_str` / `capture`：

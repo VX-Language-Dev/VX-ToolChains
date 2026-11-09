@@ -1,5 +1,110 @@
 # CHANGELOG
 
+## v1.19.0 (2026-11-08)
+
+### std/sys/sync.vx 原生落地 + `ptr` 成为一等类型标注
+
+- **`std/sys/sync.vx` 按原生路线重写**（原忙等待版作废）：基于 `@imp(proc)` 的
+  pthread mutex / cond 提供 **Mutex / Condvar / Semaphore / Barrier / Channel**
+  五个同步原语类，阻塞全部交给操作系统调度（cond_wait 循环复查标志，
+  无虚假唤醒/丢失唤醒问题）。Semaphore / Barrier 用 mutex + cond 组合实现，
+  规避 macOS 无名 `sem_init` 与 `pthread_barrier_*` 缺失的平台限制；
+  Channel 为有界环形缓冲（int 值，recv 在「已关闭且空」时返回 -1 哨兵）。
+  构造采用两步式 `new X()` + `init(...)`（当前编译器 `new` 不调用构造函数，
+  NEWZ 仅分配字段内存），方法不返回实例（`-> var` 槽为 i32，实例指针无法安全返回）。
+- **语义层 `ptr` 类型标注一等化**（`src/compiler/semantics.cpp`）：
+  `type_name_tag` 此前不识别 `ptr`，类字段 / 形参 / 返回值标注 `ptr` 报 E0003
+  （`TYPE_POINTER(9)` 与 VXOBJ 映射早已存在，仅白名单缺口）。现 `ptr` 解析为
+  `TYPE_POINTER`，`tag_name` 诊断显示补 `ptr`；`*p` 检查、导入库返回类型推断
+  随之获得精确类型（不再走通配放行）。
+- **后端调用实参宽化**（`src/backend/llvm_emitter.cpp`）：通用调用路径的
+  FFI 位型互转补 `i32 ↔ i64`（`sext` / `trunc`）分支，修复
+  `malloc(n * 4)`（size_t 形参为 i64）传 i32 寄存器产生非法 IR 的问题。
+- **测试**：
+  - `tests/import_e2e_test.cpp` 的 `run_case` 流程补语义分析阶段
+    （`check_module` + `Analysis` 传入 `generate_module`，与 vxc 驱动一致；
+    多类同名方法 `init` / `dispose` 的限定符号发射依赖此步）；
+  - 新增 `condwait` 用例：跨线程 `cond_wait` / `cond_signal` 等待-唤醒闭环
+    （工作线程与主线程互相唤醒，两种调度顺序均安全），补上 v1.17.0 遗留的
+    「cond_wait 无端到端覆盖」缺口；
+  - 新增 `synclib` 用例：读取 `std/sys/sync.vx` 源码拼接使用五个类的 main，
+    走完整 编译→链接→运行 流程并断言 12 行输出（Mutex 持锁 try_lock 失败、
+    Semaphore 配额、Channel FIFO/关闭哨兵、Barrier 单线程即过）；
+  - 新增 `ptrclass` 用例：类实例经 `ptr` 形参传入线程任务，跨线程读写实例
+    字段后 join 校验（任务实参 64 位透传 + 方法接收者 ptr 无截断）；
+  - 新增 `channelipc` 用例：Channel 跨线程生产者-消费者——生产者线程发 0..9
+    （容量 4 < 10，send 阻塞）、主线程 recv 阻塞取数求和，close 广播唤醒后
+    recv 返回 -1 哨兵结束（双向阻塞协调无死锁）；
+  - `tests/semantics_test.cpp` 新增 `test_ptr_type_annotation`
+    （形参/返回/类字段标注合法 + ptr/int 混比仍报类型错误）。
+  CTest **20/20 全绿**。
+- 文档：std/README 标注 sync.vx 为「可编译执行」例外；README「当前局限」与
+  §3 同步原语小节更新（VX 层封装已落地 + 两步式构造示例）；
+  docs/SYNTAX.md §2 类型清单补 `ptr`（含 `-> var` 不返回实例的 ABI 说明）、
+  §3.3 更新信号量/屏障说明；版本号 1.18.0 → 1.19.0。
+
+## v1.18.0 (2026-11-08)
+
+### 任务实参 64 位透传 + 原子操作（并发能力补齐）
+
+- **任务实参改为 64 位透传**（`src/backend/llvm_emitter.cpp`）：此前线程/任务池的
+  参数包按 `i32` 承载，64 位指针传入后会被截断，导致工作线程无法访问共享状态。
+  现在 `vx_thread_spawn_impl` / `vx_pool_submit_impl` 的实参为 `i64`，参数包由
+  32 字节扩为 48 字节（`fn` + 4×`i64` + `idx`），线程入口与池工作线程直接以
+  `i64` 调用适配器；调用点按值类型转换：
+  - `int` → `sext i32 ... to i64`
+  - `ptr` / `string` → `ptrtoint ptr ... to i64`
+  - `float` → `bitcast double ... to i64`
+  适配器仍按目标函数自身形参类型做 `trunc` / `inttoptr` / `bitcast`，
+  因此 `int` / `ptr` / `string` 实参均可安全跨线程传递；复用旧通道的
+  `spawn`/`pool_submit` 代码无需改动。
+- **`headers/proc.vxh` 任务形参类型改为 `var`**：`spawnN` / `pool_submitN` 的实参
+  由 `int` 放宽为 `var`（泛型槽位），与新支持的指针/字符串传递语义一致。
+- **新增 6 个原子操作**（`headers/proc.vxh` + 后端专用发射路径）：
+  `atomic_load` / `atomic_store` / `atomic_fetch_add` / `atomic_fetch_sub` /
+  `atomic_cas` / `atomic_fence`。后端直接发射 LLVM 原子指令（`load atomic`、
+  `store atomic`、`atomicrmw add/sub`、`cmpxchg` + `extractvalue`、`fence`），
+  语义为 32 位字、4 字节对齐、`seq_cst`，零外部符号、零 C/C++ 实现。
+  `atomic_cas` 返回旧值（等于 `expected` 表示交换成功）。
+- 测试：`tests/import_e2e_test.cpp` 新增两个端到端用例 ——
+  - `mutexptr`：两个线程各 500 次「mutex 加锁 → 共享计数自增 → 解锁」，
+    指针经 `spawn1` 传递，最终计数必须为 1000（验证无丢失更新与指针不被截断）；
+  - `atomic`：两个线程各 1000 次 `atomic_fetch_add`，最终为 2000，并验证
+    `atomic_cas` 成功/返回值语义、`atomic_fetch_sub` 与 `atomic_fence`。
+  `tests/backend_test.cpp` 新增 `test_emitter_atomic_ops`（断言五类原子指令形态、
+  且无 `_vx_proc_atomic_*` 外部符号残留），并更新线程/任务池 IR 断言为 `i64` 透传；
+  CTest **20/20 全绿**。
+- 文档：README「当前局限」与 §3 线程小节补充 64 位透传说明、新增「多线程共享状态
+  （指针实参 + 原子操作）」示例与原子操作表；docs/SYNTAX.md §3.3 / §6.5 同步；
+  版本号 1.17.0 → 1.18.0。
+
+## v1.17.0 (2026-11-08)
+
+### 同步原语（`proc` 库新增，零 C/C++ 实现）
+
+- **`headers/proc.vxh` 新增 11 个同步原语声明**，继续沿用「仅 `.vxh` + emitter 直连系统
+  符号」的零实现文件路线：
+  - 互斥锁：`mutex_init(mtx, attr)` / `mutex_lock` / `mutex_trylock` /
+    `mutex_unlock` / `mutex_destroy`
+  - 条件变量：`cond_init(cv, attr)` / `cond_wait(cv, mtx)` / `cond_signal` /
+    `cond_broadcast` / `cond_destroy`
+  - 高精度睡眠：`usleep(microseconds)`，补充既有秒级 `sleep`
+- **`src/backend/llvm_emitter.cpp` 内置表新增映射**：`_vx_proc_mutex_*` →
+  `pthread_mutex_*`、`_vx_proc_cond_*` → `pthread_cond_*`、`_vx_proc_usleep` →
+  `usleep`。签名与 pthread 原有 ABI 逐字段对齐（`init` 保留 `attr` 形参，VX 侧传
+  `nil` 即 NULL 默认属性），因此不需要任何 helper IR 或属性默认值注入。
+- **对象内存由调用方提供**：`pthread_mutex_t` / `pthread_cond_t` 尺寸随平台而异，
+  文档统一约定 `malloc(64)`（覆盖 macOS 64/48 字节与 Linux 40/48 字节），
+  `malloc` 返回值满足对齐要求、无需清零。
+- **未纳入本期**：信号量（macOS 无名 `sem_init` 不可用）、屏障
+  （macOS 无 `pthread_barrier_*`）与 `once`。这些将在语言层用 mutex + cond 组合实现，
+  避免平台差异泄漏到 ABI 层。
+- 测试：`tests/import_e2e_test.cpp` 新增 `sync` 用例，覆盖 mutex 初始化/加锁/
+  持锁时 trylock 失败/解锁/trylock 成功/销毁与 cond 初始化/单播/广播/销毁、
+  `usleep`，验证符号解析、链接（libpthread）与基本语义；CTest **20/20 全绿**。
+- 文档：README「当前局限」与 §3 新增同步原语小节（含签名表与平台说明）、
+  docs/SYNTAX.md §3.3 同步；版本号 1.16.9 → 1.17.0。
+
 ## v1.16.9 (2026-11-05)
 
 ### 函数值与指针解引用（语言 / 后端新增）

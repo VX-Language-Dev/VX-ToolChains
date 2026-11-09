@@ -450,13 +450,15 @@ void test_emitter_thread_pool_ir() {
   CHECK(ir.find("%p0 = trunc i64 %a0 to i32") != std::string::npos);
   CHECK(ir.find("%r = call i32 @worker(i32 %p0, i32 %p1)") != std::string::npos);
   CHECK(ir.find("define i32 @vx_thread_spawn_impl") != std::string::npos);
-  CHECK(ir.find("call i32 @vx_thread_spawn_impl(ptr @vx_adapter_worker, i32 20, i32 22, i32 0, i32 0)") !=
-        std::string::npos);
+  // 任务实参按 64 位透传（int 走 sext、ptr 走 ptrtoint，指针不被截断）
+  CHECK(ir.find("sext i32 20 to i64") != std::string::npos);
+  CHECK(ir.find("sext i32 22 to i64") != std::string::npos);
+  CHECK(ir.find("call i32 @vx_thread_spawn_impl(ptr @vx_adapter_worker, i64 ") != std::string::npos);
   CHECK(ir.find("define i64 @vx_thread_join_raw") != std::string::npos);
   CHECK(ir.find("define i32 @vx_pool_start_impl") != std::string::npos);
   CHECK(ir.find("define i32 @vx_pool_submit_impl") != std::string::npos);
-  CHECK(ir.find("call i32 @vx_pool_submit_impl(ptr @vx_adapter_worker, i32 3, i32 4, i32 0, i32 0)") !=
-        std::string::npos);
+  CHECK(ir.find("sext i32 3 to i64") != std::string::npos);
+  CHECK(ir.find("call i32 @vx_pool_submit_impl(ptr @vx_adapter_worker, i64 ") != std::string::npos);
   CHECK(ir.find("define ptr @vx_pool_worker(ptr %unused)") != std::string::npos);
   CHECK(ir.find("@_vx_proc_") == std::string::npos);
 }
@@ -536,6 +538,66 @@ void test_emitter_func_value_missing() {
   CHECK(r.error.find("函数值引用的函数不存在") != std::string::npos);
 }
 
+void test_emitter_atomic_ops() {
+  // proc 原子操作：fetch_add / cas / load / store / fence 直接发射 LLVM 原子指令
+  ir::ModuleIR mod;
+  ir::FuncIR mainf;
+  mainf.name = "main";
+  mainf.ret_type = "int";
+  mainf.local_count = 0;
+  auto push_const = [](std::vector<ir::Inst>& v, std::uint8_t op, std::string args) {
+    ir::Inst i;
+    i.op = op;
+    i.args = std::move(args);
+    v.push_back(std::move(i));
+  };
+  // atomic_fetch_add(ptr 0, 1)
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_ptr_from_int");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i1");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_atomic_fetch_add");
+  push_const(mainf.instructions, ir::OP_POP, "");
+  // atomic_cas(ptr 0, 0, 1)
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_ptr_from_int");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i1");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_atomic_cas");
+  push_const(mainf.instructions, ir::OP_POP, "");
+  // atomic_store(ptr 0, 7)
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_ptr_from_int");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i7");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_atomic_store");
+  push_const(mainf.instructions, ir::OP_POP, "");
+  // atomic_load(ptr 0)
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_ptr_from_int");
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_atomic_load");
+  push_const(mainf.instructions, ir::OP_POP, "");
+  // atomic_fence()
+  push_const(mainf.instructions, ir::OP_CALL, "f;_vx_proc_atomic_fence");
+  push_const(mainf.instructions, ir::OP_POP, "");
+  push_const(mainf.instructions, ir::OP_CONST_INT, "i0");
+  push_const(mainf.instructions, ir::OP_RETURN, "");
+  mod.funcs.push_back(std::move(mainf));
+
+  auto r = backend::emit_llvm_ir(mod, kTriple);
+  CHECK(r.ok);
+  if (!r.ok) {
+    std::fprintf(stderr, "emit error: %s\n", r.error.c_str());
+    return;
+  }
+  const std::string& ir = r.ir;
+  CHECK(ir.find("atomicrmw add ptr") != std::string::npos);
+  CHECK(ir.find("cmpxchg ptr") != std::string::npos);
+  CHECK(ir.find("extractvalue { i32, i1 }") != std::string::npos);
+  CHECK(ir.find("store atomic i32") != std::string::npos);
+  CHECK(ir.find("load atomic i32, ptr") != std::string::npos);
+  CHECK(ir.find("fence seq_cst") != std::string::npos);
+  CHECK(ir.find("@_vx_proc_atomic") == std::string::npos); // 无外部符号残留
+}
+
 } // namespace
 
 int main() {
@@ -558,6 +620,7 @@ int main() {
   test_emitter_thread_pool_ir();
   test_emitter_func_value_and_ptr_ops();
   test_emitter_func_value_missing();
+  test_emitter_atomic_ops();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "backend tests: all passed\n");

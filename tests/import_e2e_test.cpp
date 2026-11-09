@@ -10,6 +10,7 @@
 #include "vx/compiler/importer.hpp"
 #include "vx/compiler/lexer.hpp"
 #include "vx/compiler/parser.hpp"
+#include "vx/compiler/semantics.hpp"
 #include "vx/compiler/vxobj.hpp"
 #include "vx/util/util.hpp"
 
@@ -58,7 +59,7 @@ std::pair<int, std::string> run_capture(const std::string& exe) {
 }
 
 // 全流程：源码（含 @imp/@cppimp）→ 运行，断言 stdout 等于 expected。
-void run_case(const char* src, const std::string& expected, const std::string& tag) {
+void run_case(const std::string& src, const std::string& expected, const std::string& tag) {
   const std::string exe = "/tmp/vx_import_e2e_" + tag + "_" + std::to_string(::getpid());
   static Arena arena;
   DiagBag bag;
@@ -77,7 +78,15 @@ void run_case(const char* src, const std::string& expected, const std::string& t
     return;
   }
 
-  auto mod = generate_module(*prog, "<e2e>", bag, &*imports);
+  // 语义分析（与 vxc 驱动一致）：产出 method_symbols 供 codegen 发射限定方法名，
+  // 多类同名方法（如 init / dispose）依赖此步消歧。
+  Analysis analysis;
+  if (!check_module(*prog, "<e2e>", bag, &*imports, &analysis)) {
+    std::fprintf(stderr, "semantics error (%s):\n%s", tag.c_str(), render_all(bag, src, false).c_str());
+    return;
+  }
+
+  auto mod = generate_module(*prog, "<e2e>", bag, &*imports, &analysis);
   CHECK(mod.has_value());
   if (!mod) {
     std::fprintf(stderr, "codegen error (%s):\n%s", tag.c_str(), render_all(bag, src, false).c_str());
@@ -227,6 +236,267 @@ int main() {
            "    out(proc.capture(\"echo cap\"))\n"
            "    return 0\n",
            "42\n11\npipe-ok\ncap\n", "pipeptr");
+
+  // 同步原语（mutex / cond / usleep）：proc.vxh 只有声明，链接期直连 pthread。
+  // 顺序执行即可验证符号解析与基本语义：加锁后 trylock 必失败，解锁后成功。
+  run_case("@imp(proc)\n"
+           "func main() -> int:\n"
+           "    var mtx = malloc(64)\n"
+           "    out_int(proc.mutex_init(mtx, nil))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.mutex_lock(mtx))\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(proc.mutex_trylock(mtx) != 0)\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.mutex_unlock(mtx))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.mutex_trylock(mtx))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.mutex_unlock(mtx))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.mutex_destroy(mtx))\n"
+           "    out(\"\\n\")\n"
+           "    free(mtx)\n"
+           "    var cv = malloc(64)\n"
+           "    out_int(proc.cond_init(cv, nil))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.cond_signal(cv))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.cond_broadcast(cv))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.cond_destroy(cv))\n"
+           "    out(\"\\n\")\n"
+           "    free(cv)\n"
+           "    out_int(proc.usleep(1000))\n"
+           "    out(\"\\n\")\n"
+           "    return 0\n",
+           "0\n0\ntrue\n0\n0\n0\n0\n0\n0\n0\n0\n0\n", "sync");
+
+  // 多线程互斥：任务实参按 i64 透传，64 位指针可安全跨线程传递。
+  // 两个线程各做 500 次「加锁 → 自增 → 解锁」，共享缓冲区前 64 字节为
+  // pthread_mutex_t、偏移 64 处为计数器，最终必须为 1000（无丢失更新）。
+  run_case("@imp(proc)\n"
+           "@imp(ptr)\n"
+           "func bump(shared: ptr) -> int:\n"
+           "    var i = 0\n"
+           "    var c = ptr.add(shared, 64)\n"
+           "    while i < 500:\n"
+           "        proc.mutex_lock(shared)\n"
+           "        *c = *c + 1\n"
+           "        proc.mutex_unlock(shared)\n"
+           "        i = i + 1\n"
+           "    return 0\n"
+           "func main() -> int:\n"
+           "    var shared = malloc(72)\n"
+           "    proc.mutex_init(shared, nil)\n"
+           "    var c = ptr.add(shared, 64)\n"
+           "    *c = 0\n"
+           "    var h1 = proc.spawn1(&bump, shared)\n"
+           "    var h2 = proc.spawn1(&bump, shared)\n"
+           "    proc.join_int(h1)\n"
+           "    proc.join_int(h2)\n"
+           "    out_int(*c)\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.mutex_destroy(shared))\n"
+           "    out(\"\\n\")\n"
+           "    free(shared)\n"
+           "    return 0\n",
+           "1000\n0\n", "mutexptr");
+
+  // 原子操作：两个线程各 1000 次无锁自增（atomic_fetch_add），最终必须为 2000；
+  // 随后验证 atomic_cas 的返回语义（返回旧值，等于 expected 表示成功）
+  run_case("@imp(proc)\n"
+           "func inc(addr: ptr) -> int:\n"
+           "    var i = 0\n"
+           "    while i < 1000:\n"
+           "        proc.atomic_fetch_add(addr, 1)\n"
+           "        i = i + 1\n"
+           "    return 0\n"
+           "func main() -> int:\n"
+           "    var counter = malloc(4)\n"
+           "    proc.atomic_store(counter, 0)\n"
+           "    var h1 = proc.spawn1(&inc, counter)\n"
+           "    var h2 = proc.spawn1(&inc, counter)\n"
+           "    proc.join_int(h1)\n"
+           "    proc.join_int(h2)\n"
+           "    out_int(proc.atomic_load(counter))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.atomic_cas(counter, 2000, 9999))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(proc.atomic_load(counter))\n"
+           "    out(\"\\n\")\n"
+           "    proc.atomic_fetch_sub(counter, 9)\n"
+           "    out_int(proc.atomic_load(counter))\n"
+           "    out(\"\\n\")\n"
+           "    proc.atomic_fence()\n"
+           "    free(counter)\n"
+           "    return 0\n",
+           "2000\n2000\n9999\n9990\n", "atomic");
+
+  // 跨线程等待-唤醒（cond_wait / cond_signal）：工作线程阻塞在条件变量上，
+  // 主线程置标志并唤醒；工作线程完成后反向唤醒主线程。两种调度顺序均安全
+  // （等待方都在持锁下循环复查标志，无虚假唤醒/丢失唤醒问题）。
+  run_case("@imp(proc)\n"
+           "@imp(ptr)\n"
+           "func waiter(shared: ptr) -> int:\n"
+           "    var cv = ptr.add(shared, 64)\n"
+           "    var flag = ptr.add(shared, 128)\n"
+           "    proc.mutex_lock(shared)\n"
+           "    while *flag == 0:\n"
+           "        proc.cond_wait(cv, shared)\n"
+           "    *flag = 2\n"
+           "    proc.cond_signal(cv)\n"
+           "    proc.mutex_unlock(shared)\n"
+           "    return 0\n"
+           "func main() -> int:\n"
+           "    var shared = malloc(132)\n"
+           "    var cv = ptr.add(shared, 64)\n"
+           "    var flag = ptr.add(shared, 128)\n"
+           "    proc.mutex_init(shared, nil)\n"
+           "    proc.cond_init(cv, nil)\n"
+           "    *flag = 0\n"
+           "    var h = proc.spawn1(&waiter, shared)\n"
+           "    proc.mutex_lock(shared)\n"
+           "    *flag = 1\n"
+           "    proc.cond_signal(cv)\n"
+           "    while *flag != 2:\n"
+           "        proc.cond_wait(cv, shared)\n"
+           "    proc.mutex_unlock(shared)\n"
+           "    proc.join_int(h)\n"
+           "    out_int(*flag)\n"
+           "    out(\"\\n\")\n"
+           "    proc.mutex_destroy(shared)\n"
+           "    proc.cond_destroy(cv)\n"
+           "    free(shared)\n"
+           "    return 0\n",
+           "2\n", "condwait");
+
+  // std/sys/sync.vx 已可被当前工具链编译执行：读取库源码，拼接使用各
+  // 同步原语的 main，走完整 编译→链接→运行 流程并断言输出。
+  {
+    const fs::path sync_path = fs::path(VX_SOURCE_DIR) / "std" / "sys" / "sync.vx";
+    auto content = vx::util::read_file(sync_path.string());
+    CHECK(content.has_value());
+    if (content) {
+      const std::string src = *content + R"VX(
+func main() -> int:
+    var m = new Mutex()
+    m.init()
+    m.lock()
+    out_bool(m.try_lock())
+    out("\n")
+    m.unlock()
+    out_bool(m.try_lock())
+    out("\n")
+    m.unlock()
+    m.dispose()
+
+    var s = new Semaphore()
+    s.init(2)
+    s.acquire()
+    s.acquire()
+    out_bool(s.try_acquire())
+    out("\n")
+    out_int(s.available())
+    out("\n")
+    s.release()
+    out_bool(s.try_acquire())
+    out("\n")
+    s.dispose()
+
+    var ch = new Channel()
+    ch.init(4)
+    ch.send(10)
+    ch.send(20)
+    ch.send(30)
+    out_int(ch.recv())
+    out("\n")
+    out_int(ch.recv())
+    out("\n")
+    out_int(ch.recv())
+    out("\n")
+    out_bool(ch.try_recv() == -1)
+    out("\n")
+    ch.close()
+    out_int(ch.recv())
+    out("\n")
+    out_bool(ch.is_closed())
+    out("\n")
+    ch.dispose()
+
+    var b = new Barrier()
+    b.init(1)
+    b.wait()
+    out("barrier\n")
+    b.dispose()
+    return 0
+)VX";
+      run_case(src, "false\ntrue\nfalse\n0\ntrue\n10\n20\n30\ntrue\n-1\ntrue\nbarrier\n", "synclib");
+    }
+  }
+
+  // 类实例经 ptr 形参传入线程任务：生产者线程通过方法接收者（ptr）读写
+  // 实例字段，join 后主线程读取——验证任务实参 64 位透传 + 接收者无地址截断
+  run_case("@imp(proc)\n"
+           "class Pipe:\n"
+           "    data: ptr\n"
+           "    func init():\n"
+           "        self.data = malloc(4)\n"
+           "        *self.data = 0\n"
+           "func produce(p: ptr) -> int:\n"
+           "    var i = 0\n"
+           "    while i < 10:\n"
+           "        *p.data = *p.data + (i + 1)\n"
+           "        i = i + 1\n"
+           "    return 0\n"
+           "func main() -> int:\n"
+           "    var p = new Pipe()\n"
+           "    p.init()\n"
+           "    var h = proc.spawn1(&produce, p)\n"
+           "    proc.join_int(h)\n"
+           "    out_int(*p.data)\n"
+           "    out(\"\\n\")\n"
+           "    p.data = nil\n"
+           "    return 0\n",
+           "55\n", "ptrclass");
+
+  // Channel 跨线程生产者-消费者：拼接 std/sys/sync.vx，生产者线程发 0..9
+  // （容量 4 < 10，send 阻塞），主线程 recv 阻塞取数求和；close 广播唤醒后
+  // recv 返回 -1 哨兵结束。类实例经 ptr 形参传入任务，跨线程调用类方法。
+  {
+    const fs::path sync_path = fs::path(VX_SOURCE_DIR) / "std" / "sys" / "sync.vx";
+    auto content = vx::util::read_file(sync_path.string());
+    CHECK(content.has_value());
+    if (content) {
+      const std::string src = *content + R"VX(
+func producer(ch: ptr) -> int:
+    var i = 0
+    while i < 10:
+        ch.send(i)
+        i = i + 1
+    ch.close()
+    return 0
+
+func main() -> int:
+    var ch = new Channel()
+    ch.init(4)
+    var h = proc.spawn1(&producer, ch)
+    var total = 0
+    var v = ch.recv()
+    while v != -1:
+        total = total + v
+        v = ch.recv()
+    out_int(total)
+    out("\n")
+    out_bool(ch.is_closed())
+    out("\n")
+    proc.join_int(h)
+    ch.dispose()
+    return 0
+)VX";
+      run_case(src, "45\ntrue\n", "channelipc");
+    }
+  }
 
   // 整套库：int/float/bool/string/void + 子目录 + 别名 + C++ 混合导入
   run_case("@imp(math)\n"

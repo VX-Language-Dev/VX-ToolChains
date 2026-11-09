@@ -1,132 +1,285 @@
 # ============================================================
 # std::sys::sync —— 同步原语
-# 第一版：Mutex、Semaphore、Channel、Once
+# （Mutex / Condvar / Semaphore / Barrier / Channel）
+#
+# 当前定位：可被现有工具链编译执行（v1.19.0 起）。
+# 基于 @imp(proc) 低层原语（pthread mutex / cond），阻塞语义由
+# 操作系统调度，不再使用忙等待自旋。
+# 回归覆盖：tests/import_e2e_test.cpp 的 synclib 用例
+# （读取本文件源码拼接 main 后编译、链接并运行断言）。
+#
+# 使用约定（与当前编译器能力对齐）：
+# - 构造分两步：`var m = new Mutex()` 只分配字段内存，必须再调用
+#   `m.init(...)` 完成初始化（NEWZ 不零填充，init 显式写入全部字段）
+# - 方法不返回实例（`-> var` 槽为 i32，实例指针无法安全返回）
+# - pthread_mutex_t / pthread_cond_t 对象内存统一 malloc(64)
+#   （覆盖 macOS 64/48 字节与 Linux 40/48 字节），attr 传 nil 即默认属性
+# - Condvar.wait 接收互斥锁句柄（mtx.handle），须为已 lock 的锁
+# - Channel 承载非负 int 值；recv 在「已关闭且缓冲空」时返回哨兵 -1
 # ============================================================
 
-import std.error
-import std.collections.vec
+@imp(proc)
+@imp(ptr)
 
-# ---- Mutex 类：互斥锁 ----
+# ---- Mutex：互斥锁 ----
 class Mutex:
-    locked: bool
-    value: var          # 锁保护的值
+    handle: ptr
 
-    func new(val: var) -> var:
-        var m = new Mutex()
-        m.locked = false
-        m.value = val
-        return m
+    func init():
+        self.handle = malloc(64)
+        proc.mutex_init(self.handle, nil)
 
-    # 获取锁（阻塞简化版：忙等待）
-    func lock() -> var:
-        while self.locked:
-            pass
-        self.locked = true
-        return self
+    # 阻塞加锁
+    func lock():
+        proc.mutex_lock(self.handle)
 
-    # 释放锁
+    # 非阻塞尝试：true = 拿到锁
+    func try_lock() -> bool:
+        return proc.mutex_trylock(self.handle) == 0
+
     func unlock():
-        self.locked = false
+        proc.mutex_unlock(self.handle)
 
-    # 尝试获取锁
-    func try_lock() -> var:
-        if self.locked:
-            return nil
-        self.locked = true
-        return self
+    func dispose():
+        proc.mutex_destroy(self.handle)
+        free(self.handle)
+        self.handle = nil
 
-    # 获取内部值
-    func get() -> var:
-        return self.value
+# ---- Condvar：条件变量（须与同一把 Mutex 配合）----
+class Condvar:
+    handle: ptr
 
-    # 设置内部值
-    func set(val: var):
-        self.value = val
+    func init():
+        self.handle = malloc(64)
+        proc.cond_init(self.handle, nil)
 
-# ---- Semaphore 类：信号量 ----
+    # mtx 为已 lock 的 Mutex.handle；原子解锁并阻塞，唤醒后重新加锁
+    func wait(mtx: ptr):
+        proc.cond_wait(self.handle, mtx)
+
+    func signal():
+        proc.cond_signal(self.handle)
+
+    func broadcast():
+        proc.cond_broadcast(self.handle)
+
+    func dispose():
+        proc.cond_destroy(self.handle)
+        free(self.handle)
+        self.handle = nil
+
+# ---- Semaphore：计数信号量（mutex + cond 实现，跨平台一致）----
 class Semaphore:
-    permits: int
+    mtx: ptr
+    cv: ptr
+    permits: ptr  # 4 字节计数槽
 
-    func new(count: int) -> var:
-        var s = new Semaphore()
-        s.permits = count
-        return s
+    func init(count: int):
+        self.mtx = malloc(64)
+        self.cv = malloc(64)
+        self.permits = malloc(4)
+        proc.mutex_init(self.mtx, nil)
+        proc.cond_init(self.cv, nil)
+        *self.permits = count
 
-    # 获取信号量（可能阻塞）
+    # 阻塞获取一个许可
     func acquire():
-        # 忙等待：没有许可时等待
-        while self.permits <= 0:
-            pass
-        self.permits = self.permits - 1
+        proc.mutex_lock(self.mtx)
+        while *self.permits <= 0:
+            proc.cond_wait(self.cv, self.mtx)
+        *self.permits = *self.permits - 1
+        proc.mutex_unlock(self.mtx)
 
-    # 非阻塞尝试
+    # 非阻塞获取：true = 拿到许可
     func try_acquire() -> bool:
-        if self.permits > 0:
-            self.permits = self.permits - 1
-            return true
-        return false
+        proc.mutex_lock(self.mtx)
+        var ok = false
+        if *self.permits > 0:
+            *self.permits = *self.permits - 1
+            ok = true
+        proc.mutex_unlock(self.mtx)
+        return ok
 
-    # 释放信号量
+    # 归还一个许可并唤醒一个等待者
     func release():
-        self.permits = self.permits + 1
+        proc.mutex_lock(self.mtx)
+        *self.permits = *self.permits + 1
+        proc.cond_signal(self.cv)
+        proc.mutex_unlock(self.mtx)
 
-    # 当前可用许可数
     func available() -> int:
-        return self.permits
+        proc.mutex_lock(self.mtx)
+        var n = *self.permits
+        proc.mutex_unlock(self.mtx)
+        return n
 
-# ---- Channel 类：无界通道 ----
-# 基于 Mutex 保护的 Vec
+    func dispose():
+        proc.mutex_destroy(self.mtx)
+        proc.cond_destroy(self.cv)
+        free(self.mtx)
+        free(self.cv)
+        free(self.permits)
+
+# ---- Barrier：会合屏障（全部到场后一起通过）----
+class Barrier:
+    mtx: ptr
+    cv: ptr
+    arrived: ptr  # 本轮已到场数
+    total: ptr  # 目标线程数
+    # 轮次号（广播后递增，等待者据此判定本轮已过）
+    generation: ptr
+
+    func init(n: int):
+        self.mtx = malloc(64)
+        self.cv = malloc(64)
+        self.arrived = malloc(4)
+        self.total = malloc(4)
+        self.generation = malloc(4)
+        proc.mutex_init(self.mtx, nil)
+        proc.cond_init(self.cv, nil)
+        *self.arrived = 0
+        *self.total = n
+        *self.generation = 0
+
+    # 阻塞直到第 n 个线程到场
+    func wait():
+        proc.mutex_lock(self.mtx)
+        var gen = *self.generation
+        *self.arrived = *self.arrived + 1
+        if *self.arrived >= *self.total:
+            *self.arrived = 0
+            *self.generation = gen + 1
+            proc.cond_broadcast(self.cv)
+        else:
+            while *self.generation == gen:
+                proc.cond_wait(self.cv, self.mtx)
+        proc.mutex_unlock(self.mtx)
+
+    func dispose():
+        proc.mutex_destroy(self.mtx)
+        proc.cond_destroy(self.cv)
+        free(self.mtx)
+        free(self.cv)
+        free(self.arrived)
+        free(self.total)
+        free(self.generation)
+
+# ---- Channel：有界阻塞通道（int 值，环形缓冲）----
+# 承载非负 int；recv 在「已关闭且缓冲空」时返回 -1 哨兵。
 class Channel:
-    buffer: var         # Vec 实例
-    closed: bool
-    lock: var           # Mutex 实例
+    mtx: ptr
+    not_empty: ptr
+    not_full: ptr
+    buf: ptr  # cap 个 4 字节槽
+    cap: int
+    head: ptr  # 读下标
+    tail: ptr  # 写下标
+    count: ptr  # 在队元素数
+    closed: ptr  # 关闭标志
 
-    func new() -> var:
-        var ch = new Channel()
-        ch.buffer = new Vec()
-        ch.closed = false
-        ch.lock = new Mutex(ch.buffer)
-        return ch
+    func init(capacity: int):
+        var n = capacity
+        if n < 1:
+            n = 1
+        self.cap = n
+        self.buf = malloc(n * 4)
+        self.mtx = malloc(64)
+        self.not_empty = malloc(64)
+        self.not_full = malloc(64)
+        self.head = malloc(4)
+        self.tail = malloc(4)
+        self.count = malloc(4)
+        self.closed = malloc(4)
+        proc.mutex_init(self.mtx, nil)
+        proc.cond_init(self.not_empty, nil)
+        proc.cond_init(self.not_full, nil)
+        *self.head = 0
+        *self.tail = 0
+        *self.count = 0
+        *self.closed = 0
 
-    # 发送消息
-    func send(val: var):
-        if self.closed:
-            return
-        self.lock.lock()
-        var buf = self.lock.get()
-        buf.push(val)
-        self.lock.unlock()
+    # 发送：缓冲满时阻塞；已关闭则静默丢弃
+    func send(val: int):
+        proc.mutex_lock(self.mtx)
+        while *self.count >= self.cap and *self.closed == 0:
+            proc.cond_wait(self.not_full, self.mtx)
+        if *self.closed == 0:
+            var t = *self.tail
+            var slot = ptr.add(self.buf, t * 4)
+            *slot = val
+            *self.tail = (t + 1) % self.cap
+            *self.count = *self.count + 1
+            proc.cond_signal(self.not_empty)
+        proc.mutex_unlock(self.mtx)
 
-    # 接收消息（阻塞简化版）
-    func recv() -> var:
-        while true:
-            if self.closed:
-                var buf = self.lock.get()
-                if buf.size() == 0:
-                    return nil
-            self.lock.lock()
-            var buf = self.lock.get()
-            if buf.size() > 0:
-                var val = buf.remove(0)
-                self.lock.unlock()
-                return val
-            self.lock.unlock()
+    # 接收：缓冲空时阻塞；已关闭且空返回 -1
+    func recv() -> int:
+        proc.mutex_lock(self.mtx)
+        while *self.count == 0 and *self.closed == 0:
+            proc.cond_wait(self.not_empty, self.mtx)
+        var val = -1
+        if *self.count > 0:
+            var h = *self.head
+            var slot = ptr.add(self.buf, h * 4)
+            val = *slot
+            *self.head = (h + 1) % self.cap
+            *self.count = *self.count - 1
+            proc.cond_signal(self.not_full)
+        proc.mutex_unlock(self.mtx)
+        return val
 
-    # 非阻塞尝试接收
-    func try_recv() -> var:
-        self.lock.lock()
-        var buf = self.lock.get()
-        if buf.size() > 0:
-            var val = buf.remove(0)
-            self.lock.unlock()
-            return val
-        self.lock.unlock()
-        return nil
+    # 非阻塞接收：无数据返回 -1
+    func try_recv() -> int:
+        proc.mutex_lock(self.mtx)
+        var val = -1
+        if *self.count > 0:
+            var h = *self.head
+            var slot = ptr.add(self.buf, h * 4)
+            val = *slot
+            *self.head = (h + 1) % self.cap
+            *self.count = *self.count - 1
+            proc.cond_signal(self.not_full)
+        proc.mutex_unlock(self.mtx)
+        return val
 
-    # 关闭通道
+    # 非阻塞发送：满或已关闭返回 false
+    func try_send(val: int) -> bool:
+        proc.mutex_lock(self.mtx)
+        var ok = false
+        if *self.closed == 0 and *self.count < self.cap:
+            var t = *self.tail
+            var slot = ptr.add(self.buf, t * 4)
+            *slot = val
+            *self.tail = (t + 1) % self.cap
+            *self.count = *self.count + 1
+            proc.cond_signal(self.not_empty)
+            ok = true
+        proc.mutex_unlock(self.mtx)
+        return ok
+
+    # 关闭通道：唤醒全部等待者；send 静默丢弃，recv 取空后返回 -1
     func close():
-        self.closed = true
+        proc.mutex_lock(self.mtx)
+        *self.closed = 1
+        proc.cond_broadcast(self.not_empty)
+        proc.cond_broadcast(self.not_full)
+        proc.mutex_unlock(self.mtx)
 
-    # 检查是否关闭
     func is_closed() -> bool:
-        return self.closed
+        proc.mutex_lock(self.mtx)
+        var c = *self.closed
+        proc.mutex_unlock(self.mtx)
+        return c != 0
+
+    func dispose():
+        proc.mutex_destroy(self.mtx)
+        proc.cond_destroy(self.not_empty)
+        proc.cond_destroy(self.not_full)
+        free(self.mtx)
+        free(self.not_empty)
+        free(self.not_full)
+        free(self.buf)
+        free(self.head)
+        free(self.tail)
+        free(self.count)
+        free(self.closed)

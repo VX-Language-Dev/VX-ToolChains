@@ -188,6 +188,19 @@ static const std::map<std::string_view, Builtin>& builtin_table() {
       {"_vx_proc_waitpid", {"waitpid", {VT::I32, VT::PTR, VT::I32}, true, VT::I32}},
       {"_vx_proc_kill", {"kill", {VT::I32, VT::I32}, true, VT::I32}},
       {"_vx_proc_sleep", {"sleep", {VT::I32}, true, VT::I32}},
+      // 同步原语（headers/proc.vxh 声明，无 C 实现）：直连 pthread，attr 形参
+      // 传 nil（NULL）即默认属性；mutex/cond 对象内存由调用方提供
+      {"_vx_proc_mutex_init", {"pthread_mutex_init", {VT::PTR, VT::PTR}, true, VT::I32}},
+      {"_vx_proc_mutex_lock", {"pthread_mutex_lock", {VT::PTR}, true, VT::I32}},
+      {"_vx_proc_mutex_trylock", {"pthread_mutex_trylock", {VT::PTR}, true, VT::I32}},
+      {"_vx_proc_mutex_unlock", {"pthread_mutex_unlock", {VT::PTR}, true, VT::I32}},
+      {"_vx_proc_mutex_destroy", {"pthread_mutex_destroy", {VT::PTR}, true, VT::I32}},
+      {"_vx_proc_cond_init", {"pthread_cond_init", {VT::PTR, VT::PTR}, true, VT::I32}},
+      {"_vx_proc_cond_wait", {"pthread_cond_wait", {VT::PTR, VT::PTR}, true, VT::I32}},
+      {"_vx_proc_cond_signal", {"pthread_cond_signal", {VT::PTR}, true, VT::I32}},
+      {"_vx_proc_cond_broadcast", {"pthread_cond_broadcast", {VT::PTR}, true, VT::I32}},
+      {"_vx_proc_cond_destroy", {"pthread_cond_destroy", {VT::PTR}, true, VT::I32}},
+      {"_vx_proc_usleep", {"usleep", {VT::I32}, true, VT::I32}},
       // 管道 / 输出捕获（headers/proc.vxh 声明）：helper=true 时由后端生成 IR
       {"_vx_proc_pipe", {"vx_proc_pipe_impl", {}, true, VT::PTR, true}},
       {"_vx_proc_read", {"vx_proc_read_impl", {VT::I32, VT::PTR, VT::I32}, true, VT::I32, true}},
@@ -604,49 +617,45 @@ private:
 
   std::string build_thread_helpers() const {
     std::string s;
-    // 线程入口：参数包 {fn, a0..a3, idx} → 调用适配器，结果写入 i64 结果槽
+    // 线程入口：参数包 {fn, a0..a3（i64）, idx} → 调用适配器，结果写入 i64 结果槽
     s += "define ptr @vx_thread_entry(ptr %mem) {\nentry:\n";
     s += "  %fnp = getelementptr i8, ptr %mem, i64 0\n"
          "  %fn = load ptr, ptr %fnp\n"
          "  %a0p = getelementptr i8, ptr %mem, i64 8\n"
-         "  %a0 = load i32, ptr %a0p\n"
-         "  %a1p = getelementptr i8, ptr %mem, i64 12\n"
-         "  %a1 = load i32, ptr %a1p\n"
-         "  %a2p = getelementptr i8, ptr %mem, i64 16\n"
-         "  %a2 = load i32, ptr %a2p\n"
-         "  %a3p = getelementptr i8, ptr %mem, i64 20\n"
-         "  %a3 = load i32, ptr %a3p\n"
-         "  %idxp = getelementptr i8, ptr %mem, i64 24\n"
+         "  %a0 = load i64, ptr %a0p\n"
+         "  %a1p = getelementptr i8, ptr %mem, i64 16\n"
+         "  %a1 = load i64, ptr %a1p\n"
+         "  %a2p = getelementptr i8, ptr %mem, i64 24\n"
+         "  %a2 = load i64, ptr %a2p\n"
+         "  %a3p = getelementptr i8, ptr %mem, i64 32\n"
+         "  %a3 = load i64, ptr %a3p\n"
+         "  %idxp = getelementptr i8, ptr %mem, i64 40\n"
          "  %idx = load i32, ptr %idxp\n"
-         "  %a064 = zext i32 %a0 to i64\n"
-         "  %a164 = zext i32 %a1 to i64\n"
-         "  %a264 = zext i32 %a2 to i64\n"
-         "  %a364 = zext i32 %a3 to i64\n"
-         "  %r = call i64 %fn(i64 %a064, i64 %a164, i64 %a264, i64 %a364)\n"
+         "  %r = call i64 %fn(i64 %a0, i64 %a1, i64 %a2, i64 %a3)\n"
          "  %i64 = zext i32 %idx to i64\n"
          "  %rp = getelementptr [1024 x i64], ptr @vx_thread_results, i64 0, i64 %i64\n"
          "  store i64 %r, ptr %rp\n"
          "  call void @free(ptr %mem)\n"
          "  ret ptr null\n"
          "}\n\n";
-    // 启动线程：句柄 1 起，0 = 失败
-    s += "define i32 @vx_thread_spawn_impl(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3) {\nentry:\n";
+    // 启动线程：句柄 1 起，0 = 失败；实参按 i64 原样透传（ptr 不会被截断）
+    s += "define i32 @vx_thread_spawn_impl(ptr %fn, i64 %a0, i64 %a1, i64 %a2, i64 %a3) {\nentry:\n";
     s += "  %idx = atomicrmw add ptr @vx_thread_count, i32 1 monotonic\n"
          "  %in = icmp ult i32 %idx, 1024\n"
          "  br i1 %in, label %ok, label %bad\n"
          "ok:\n"
-         "  %mem = call ptr @malloc(i64 32)\n"
+         "  %mem = call ptr @malloc(i64 48)\n"
          "  %fnp = getelementptr i8, ptr %mem, i64 0\n"
          "  store ptr %fn, ptr %fnp\n"
          "  %a0p = getelementptr i8, ptr %mem, i64 8\n"
-         "  store i32 %a0, ptr %a0p\n"
-         "  %a1p = getelementptr i8, ptr %mem, i64 12\n"
-         "  store i32 %a1, ptr %a1p\n"
-         "  %a2p = getelementptr i8, ptr %mem, i64 16\n"
-         "  store i32 %a2, ptr %a2p\n"
-         "  %a3p = getelementptr i8, ptr %mem, i64 20\n"
-         "  store i32 %a3, ptr %a3p\n"
-         "  %idxp = getelementptr i8, ptr %mem, i64 24\n"
+         "  store i64 %a0, ptr %a0p\n"
+         "  %a1p = getelementptr i8, ptr %mem, i64 16\n"
+         "  store i64 %a1, ptr %a1p\n"
+         "  %a2p = getelementptr i8, ptr %mem, i64 24\n"
+         "  store i64 %a2, ptr %a2p\n"
+         "  %a3p = getelementptr i8, ptr %mem, i64 32\n"
+         "  store i64 %a3, ptr %a3p\n"
+         "  %idxp = getelementptr i8, ptr %mem, i64 40\n"
          "  store i32 %idx, ptr %idxp\n"
          "  %i64 = zext i32 %idx to i64\n"
          "  %slot = getelementptr [1024 x ptr], ptr @vx_thread_slots, i64 0, i64 %i64\n"
@@ -695,10 +704,10 @@ private:
            "@vx_pool_cond = global [48 x i8] zeroinitializer, align 8\n"
            "@vx_pool_idle = global [48 x i8] zeroinitializer, align 8\n"
            "@vx_pool_fns = global [1024 x ptr] zeroinitializer\n"
-           "@vx_pool_a0 = global [1024 x i32] zeroinitializer\n"
-           "@vx_pool_a1 = global [1024 x i32] zeroinitializer\n"
-           "@vx_pool_a2 = global [1024 x i32] zeroinitializer\n"
-           "@vx_pool_a3 = global [1024 x i32] zeroinitializer\n"
+           "@vx_pool_a0 = global [1024 x i64] zeroinitializer\n"
+           "@vx_pool_a1 = global [1024 x i64] zeroinitializer\n"
+           "@vx_pool_a2 = global [1024 x i64] zeroinitializer\n"
+           "@vx_pool_a3 = global [1024 x i64] zeroinitializer\n"
            "@vx_pool_head = global i32 0\n"
            "@vx_pool_tail = global i32 0\n"
            "@vx_pool_queued = global i32 0\n"
@@ -737,14 +746,14 @@ private:
          "  %hi = zext i32 %hi32 to i64\n"
          "  %fnp = getelementptr [1024 x ptr], ptr @vx_pool_fns, i64 0, i64 %hi\n"
          "  %fn = load ptr, ptr %fnp\n"
-         "  %a0p = getelementptr [1024 x i32], ptr @vx_pool_a0, i64 0, i64 %hi\n"
-         "  %a0 = load i32, ptr %a0p\n"
-         "  %a1p = getelementptr [1024 x i32], ptr @vx_pool_a1, i64 0, i64 %hi\n"
-         "  %a1 = load i32, ptr %a1p\n"
-         "  %a2p = getelementptr [1024 x i32], ptr @vx_pool_a2, i64 0, i64 %hi\n"
-         "  %a2 = load i32, ptr %a2p\n"
-         "  %a3p = getelementptr [1024 x i32], ptr @vx_pool_a3, i64 0, i64 %hi\n"
-         "  %a3 = load i32, ptr %a3p\n"
+         "  %a0p = getelementptr [1024 x i64], ptr @vx_pool_a0, i64 0, i64 %hi\n"
+         "  %a0 = load i64, ptr %a0p\n"
+         "  %a1p = getelementptr [1024 x i64], ptr @vx_pool_a1, i64 0, i64 %hi\n"
+         "  %a1 = load i64, ptr %a1p\n"
+         "  %a2p = getelementptr [1024 x i64], ptr @vx_pool_a2, i64 0, i64 %hi\n"
+         "  %a2 = load i64, ptr %a2p\n"
+         "  %a3p = getelementptr [1024 x i64], ptr @vx_pool_a3, i64 0, i64 %hi\n"
+         "  %a3 = load i64, ptr %a3p\n"
          "  %h2 = add i32 %head, 1\n"
          "  store i32 %h2, ptr @vx_pool_head\n"
          "  %q2 = sub i32 %q, 1\n"
@@ -753,11 +762,7 @@ private:
          "  %ac2 = add i32 %ac, 1\n"
          "  store i32 %ac2, ptr @vx_pool_active\n"
          "  %ur = call i32 @pthread_mutex_unlock(ptr %mp)\n"
-         "  %a064 = zext i32 %a0 to i64\n"
-         "  %a164 = zext i32 %a1 to i64\n"
-         "  %a264 = zext i32 %a2 to i64\n"
-         "  %a364 = zext i32 %a3 to i64\n"
-         "  %r = call i64 %fn(i64 %a064, i64 %a164, i64 %a264, i64 %a364)\n"
+         "  %r = call i64 %fn(i64 %a0, i64 %a1, i64 %a2, i64 %a3)\n"
          "  %lr2 = call i32 @pthread_mutex_lock(ptr %mp)\n"
          "  %ac3 = load i32, ptr @vx_pool_active\n"
          "  %ac4 = sub i32 %ac3, 1\n"
@@ -823,7 +828,7 @@ private:
          "  ret i32 %nr\n"
          "}\n\n";
     // 提交任务：队列满返回 0（调用方可重试），成功返回 1
-    s += "define i32 @vx_pool_submit_impl(ptr %fn, i32 %a0, i32 %a1, i32 %a2, i32 %a3) {\nentry:\n";
+    s += "define i32 @vx_pool_submit_impl(ptr %fn, i64 %a0, i64 %a1, i64 %a2, i64 %a3) {\nentry:\n";
     s += "  %st = load i32, ptr @vx_pool_started\n"
          "  %run = icmp ne i32 %st, 0\n"
          "  br i1 %run, label %lock, label %bad\n"
@@ -839,14 +844,14 @@ private:
          "  %ti = zext i32 %ti32 to i64\n"
          "  %fnp = getelementptr [1024 x ptr], ptr @vx_pool_fns, i64 0, i64 %ti\n"
          "  store ptr %fn, ptr %fnp\n"
-         "  %p0 = getelementptr [1024 x i32], ptr @vx_pool_a0, i64 0, i64 %ti\n"
-         "  store i32 %a0, ptr %p0\n"
-         "  %p1 = getelementptr [1024 x i32], ptr @vx_pool_a1, i64 0, i64 %ti\n"
-         "  store i32 %a1, ptr %p1\n"
-         "  %p2 = getelementptr [1024 x i32], ptr @vx_pool_a2, i64 0, i64 %ti\n"
-         "  store i32 %a2, ptr %p2\n"
-         "  %p3 = getelementptr [1024 x i32], ptr @vx_pool_a3, i64 0, i64 %ti\n"
-         "  store i32 %a3, ptr %p3\n"
+         "  %p0 = getelementptr [1024 x i64], ptr @vx_pool_a0, i64 0, i64 %ti\n"
+         "  store i64 %a0, ptr %p0\n"
+         "  %p1 = getelementptr [1024 x i64], ptr @vx_pool_a1, i64 0, i64 %ti\n"
+         "  store i64 %a1, ptr %p1\n"
+         "  %p2 = getelementptr [1024 x i64], ptr @vx_pool_a2, i64 0, i64 %ti\n"
+         "  store i64 %a2, ptr %p2\n"
+         "  %p3 = getelementptr [1024 x i64], ptr @vx_pool_a3, i64 0, i64 %ti\n"
+         "  store i64 %a3, ptr %p3\n"
          "  %t2 = add i32 %tail, 1\n"
          "  store i32 %t2, ptr @vx_pool_tail\n"
          "  %q2 = add i32 %q, 1\n"
@@ -1824,6 +1829,8 @@ private:
         return emit_task_call(tc);
       if (name == "_vx_ptr_add" || name == "_vx_ptr_to_int" || name == "_vx_ptr_from_int")
         return emit_ptr_call(name);
+      if (name.starts_with("_vx_proc_atomic_"))
+        return emit_atomic_call(name);
     }
 
     std::string sym;
@@ -1923,6 +1930,15 @@ private:
           const std::string t = new_temp();
           line(t + " = ptrtoint ptr " + operand + " to i32");
           operand = t;
+        } else if (arg_vts[i] == VT::I64 && args[i].vt == VT::I32) {
+          // 宽化：如 malloc(n * 4)（size_t 形参为 i64）
+          const std::string t = new_temp();
+          line(t + " = sext i32 " + operand + " to i64");
+          operand = t;
+        } else if (arg_vts[i] == VT::I32 && args[i].vt == VT::I64) {
+          const std::string t = new_temp();
+          line(t + " = trunc i64 " + operand + " to i32");
+          operand = t;
         }
       }
       call += std::string(vt_name(arg_vts[i])) + " " + operand;
@@ -1956,6 +1972,21 @@ private:
       line(t + " = ptrtoint ptr " + v.val + " to i32");
       return t;
     };
+    // 任务实参按 64 位透传：ptr 用 ptrtoint、int 用 sext、float 用 bitcast，
+    // 由被调函数适配器按自身形参类型转回；这样 64 位指针不会被截断。
+    auto as_i64 = [&](const Value& v) -> std::string {
+      if (v.vt == VT::I64)
+        return v.val;
+      std::string t = new_temp();
+      if (v.vt == VT::PTR) {
+        line(t + " = ptrtoint ptr " + v.val + " to i64");
+      } else if (v.vt == VT::F64) {
+        line(t + " = bitcast double " + v.val + " to i64");
+      } else {
+        line(t + " = sext i32 " + v.val + " to i64");
+      }
+      return t;
+    };
 
     switch (tc) {
       case TaskCall::Spawn0:
@@ -1976,8 +2007,8 @@ private:
         const std::string t = new_temp();
         std::string callline = t + " = call i32 @vx_thread_spawn_impl(ptr " + fnop;
         for (int i = 0; i < 4; ++i) {
-          const std::string arg = i < n ? as_i32(av[static_cast<std::size_t>(i)]) : std::string("0");
-          callline += ", i32 " + arg;
+          const std::string arg = i < n ? as_i64(av[static_cast<std::size_t>(i)]) : std::string("0");
+          callline += ", i64 " + arg;
         }
         callline += ")";
         line(callline);
@@ -2003,8 +2034,8 @@ private:
         const std::string t = new_temp();
         std::string line_txt = t + " = call i32 @vx_pool_submit_impl(ptr " + fnop;
         for (int i = 0; i < 4; ++i) {
-          const std::string arg = i < n ? as_i32(av[static_cast<std::size_t>(i)]) : std::string("0");
-          line_txt += ", i32 " + arg;
+          const std::string arg = i < n ? as_i64(av[static_cast<std::size_t>(i)]) : std::string("0");
+          line_txt += ", i64 " + arg;
         }
         line_txt += ")";
         line(line_txt);
@@ -2112,6 +2143,84 @@ private:
       return true;
     }
     return fail_inst("未知指针内建: " + std::string(name));
+  }
+
+  // proc 原子操作内建：直接发射 LLVM 原子指令（load/store/atomicrmw/cmpxchg/fence），
+  // 语义为 32 位字、4 字节对齐、seq_cst 顺序。addr 必须是 4 字节对齐的 ptr。
+  bool emit_atomic_call(std::string_view name) {
+    auto pop_ptr = [&](std::string& p) -> bool {
+      Value v;
+      if (!pop(v))
+        return false;
+      if (v.vt == VT::PTR) {
+        p = v.val;
+        return true;
+      }
+      p = new_temp();
+      line(p + " = inttoptr i32 " + v.val + " to ptr");
+      return true;
+    };
+    auto pop_i32 = [&](std::string& x) -> bool {
+      Value v;
+      if (!pop(v))
+        return false;
+      if (v.vt != VT::PTR) {
+        x = v.val;
+        return true;
+      }
+      x = new_temp();
+      line(x + " = ptrtoint ptr " + v.val + " to i32");
+      return true;
+    };
+
+    if (name == "_vx_proc_atomic_load") {
+      std::string p;
+      if (!pop_ptr(p))
+        return false;
+      std::string t = new_temp();
+      line(t + " = load atomic i32, ptr " + p + " seq_cst, align 4");
+      push({t, VT::I32});
+      return true;
+    }
+    if (name == "_vx_proc_atomic_store") {
+      std::string v;
+      std::string p;
+      if (!pop_i32(v) || !pop_ptr(p))
+        return false;
+      line("store atomic i32 " + v + ", ptr " + p + " seq_cst, align 4");
+      push({"0", VT::I32}); // void 调用占位，供随后的 POP 消费
+      return true;
+    }
+    if (name == "_vx_proc_atomic_fetch_add" || name == "_vx_proc_atomic_fetch_sub") {
+      std::string d;
+      std::string p;
+      if (!pop_i32(d) || !pop_ptr(p))
+        return false;
+      std::string t = new_temp();
+      const std::string op = name == "_vx_proc_atomic_fetch_add" ? "add" : "sub";
+      line(t + " = atomicrmw " + op + " ptr " + p + ", i32 " + d + " seq_cst");
+      push({t, VT::I32});
+      return true;
+    }
+    if (name == "_vx_proc_atomic_cas") {
+      std::string des;
+      std::string exp;
+      std::string p;
+      if (!pop_i32(des) || !pop_i32(exp) || !pop_ptr(p))
+        return false;
+      const std::string pair = new_temp();
+      line(pair + " = cmpxchg ptr " + p + ", i32 " + exp + ", i32 " + des + " seq_cst seq_cst");
+      std::string t = new_temp();
+      line(t + " = extractvalue { i32, i1 } " + pair + ", 0");
+      push({t, VT::I32});
+      return true;
+    }
+    if (name == "_vx_proc_atomic_fence") {
+      line("fence seq_cst");
+      push({"0", VT::I32});
+      return true;
+    }
+    return fail_inst("未知原子操作内建: " + std::string(name));
   }
 
   bool emit_function(const ir::FuncIR& f) {

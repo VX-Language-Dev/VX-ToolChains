@@ -419,6 +419,34 @@ void test_func_value_and_deref() {
   CHECK(has_code(codes, diag_code::sem_type_mismatch));
 }
 
+// ptr 类型标注：形参 / 返回 / 类字段均为一等类型（std/sys/sync.vx 依赖）
+void test_ptr_type_annotation() {
+  bool ok = true;
+  // 形参与返回标注 ptr 不再报 E0003；*p 读写合法
+  auto codes = check_src("func f(p: ptr) -> ptr:\n"
+                         "    *p = 1\n"
+                         "    return p\n",
+                         &ok);
+  CHECK(ok);
+  CHECK(codes.empty());
+
+  // 类字段标注 ptr 通过字段校验（validate_fields 不再报 E0003）
+  codes = check_src("class Box:\n"
+                    "    handle: ptr\n"
+                    "    func init():\n"
+                    "        self.handle = malloc(64)\n"
+                    "    func peek() -> int:\n"
+                    "        return *self.handle\n",
+                    &ok);
+  CHECK(ok);
+  CHECK(codes.empty());
+
+  // ptr 与 int 不混用：比较两侧类型不一致仍报错
+  codes = check_src("func f(p: ptr, n: int) -> bool:\n"
+                    "    return p == n\n");
+  CHECK(has_code(codes, diag_code::sem_type_mismatch));
+}
+
 } // namespace
 
 // 诊断 note/help：E0010 help 建议、E0011 指向首次定义、E0012 作用域泄漏
@@ -466,6 +494,7 @@ int main() {
   test_method_overloads();
   test_call_arg_types();
   test_func_value_and_deref();
+  test_ptr_type_annotation();
   test_diag_notes();
 
   if (g_failures == 0) {
