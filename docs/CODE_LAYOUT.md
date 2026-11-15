@@ -30,12 +30,10 @@
 | `link_driver.cpp` | 874 | — | `llc` + `cc/c++` + `lld`（缺失时回退 clang） |
 | `vxobj_reader.cpp` | 318 | — | VXOBJ → `ModuleIR` |
 
-### 1.3 LSP（`tools/vxls/`，独立子项目）
+### 1.3 LSP / 静态分析（已拆分为独立仓库）
 
-| 入口文件 | 行数（约） | 内部实现头 |
-|----------|-----------|------------|
-| `analysis.cpp` | 702 | `analysis_text.hpp` / `analysis_completion.hpp` / `analysis_hover.hpp` / `analysis_inlay.hpp` / `analysis_tidy.hpp` |
-| `main.cpp` | 827 | —（LSP 协议分发与生命周期） |
+`tools/vxls/`（LSP 服务器）与 `tools/vx-tidy/`（静态分析引擎）已拆分为
+独立仓库 `dry` 与 `drut`，不再包含在本仓库；其内部拆分记录见各自仓库。
 
 ---
 
@@ -69,7 +67,6 @@
 | `src/compiler/parser_stmt.hpp` | 657 | 语句族解析；接近观察阈值 |
 | `src/compiler/importer.cpp` | 621 | 模块解析 + 头文件探测 + 系统 include 三段 |
 | `src/compiler/lexer.cpp` | 702 | `class Lexer` 职责单一，暂不动 |
-| `tools/vxls/src/main.cpp` | 827 | LSP 协议分发，随功能增长再评估 |
 
 ---
 

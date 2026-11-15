@@ -55,7 +55,7 @@ bash ci/check.sh             # 本地 CI 全套检查
 | `tests/`      | 测试代码（CTest 20 组）      |
 | `std/`        | VX 标准库（设计参考/前瞻规范，见 std/README.md） |
 | `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |
-| `tools/`      | 独立工具子项目（json、vmake、vmake-lsp、vxls、vx-tidy、vfmt） |
+| `tools/`      | 独立工具子项目（json、vmake、vmake-lsp、vfmt）；LSP/静态分析见独立仓库 `dry` / `drut` |
 | `tree-sitter-vx/` | Tree-sitter 语法（独立仓库，VX 编辑器高亮） |
 | `tree-sitter-vmake/` | Tree-sitter 语法（独立仓库，VMakeSet.vmake 高亮） |
 | `scripts/`    | CMake 交叉编译工具链预设（toolchain-*.cmake） |
