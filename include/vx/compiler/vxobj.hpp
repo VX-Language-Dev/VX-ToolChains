@@ -1,6 +1,5 @@
 // vxobj.hpp — VXOBJ v4 二进制序列化器（vxc003）。
 // 将 ModuleIR 序列化为磁盘上的 .vxobj 文件，供下游 vlnk 链接器消费。
-// 线格式对齐 compiler/vxobj.vx 的自举序列化器，保证与既有 .vxobj 可互操作。
 #pragma once
 
 #include "vx/compiler/typeir.hpp"
@@ -19,6 +18,8 @@ inline constexpr std::string_view SECTION_TYPEIR = "TypeIR";
 // 导入库依赖段（@imp / @cppimp）：链接期需并入的实现文件与 C++ 头文件。
 // 仅在存在导入库时写出；无导入时 section_count 仍为 1。
 inline constexpr std::string_view SECTION_DEPS = "Deps";
+// 源码行号段：源文件名 + 每个函数的指令行号表（可选；旧 reader 忽略）。
+inline constexpr std::string_view SECTION_LINES = "Lines";
 
 // 将 ModuleIR 序列化为 VXOBJ v4 字节流。
 // target 为平台三元组字符串（如 "x86_64-apple-darwin"），写入文件头供链接器校验。

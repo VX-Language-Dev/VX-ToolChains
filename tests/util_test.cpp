@@ -126,19 +126,16 @@ void test_vx_sources() {
   using vx::util::trim;
   using vx::util::write_file;
 
-  // 从当前目录向上定位仓库根（以 compiler/lexer.vx 为标志）
-  fs::path root = fs::current_path();
-  while (!root.empty() && !fs::exists(root / "compiler" / "lexer.vx")) {
-    root = root.parent_path();
-  }
+  // 仓库根由 CMake 注入（VX_SOURCE_DIR），无需运行时向上查找
+  fs::path root = VX_SOURCE_DIR;
   CHECK(!root.empty());
   if (root.empty()) {
     return;
   }
 
-  // 收集 compiler/、std/、tests/ 下全部 .vx 源码
+  // 收集 std/、tests/ 下全部 .vx 源码
   std::vector<fs::path> sources;
-  for (const char* dir : {"compiler", "std", "tests"}) {
+  for (const char* dir : {"std", "tests"}) {
     std::error_code ec;
     for (fs::recursive_directory_iterator it(root / dir, ec), end; it != end; it.increment(ec)) {
       if (ec) {
@@ -188,10 +185,10 @@ void test_vx_sources() {
   CHECK(total_lexemes > 0);
 
   // 已知源码内容抽查
-  auto lexer_src = read_file(root / "compiler" / "lexer.vx");
+  auto lexer_src = read_file(root / "std" / "prelude.vx");
   CHECK(lexer_src.has_value());
   if (lexer_src) {
-    CHECK(std::string::npos != lexer_src->find("func tokenize"));
+    CHECK(std::string::npos != lexer_src->find("import std.error"));
   }
 
   // 最大源码文件回环：write_file → read_file 内容一致
@@ -216,7 +213,7 @@ void test_vx_sources() {
   }
 
   // 读目录应返回错误
-  CHECK(!read_file(root / "compiler").has_value());
+  CHECK(!read_file(root / "std").has_value());
 }
 
 void test_platform() {

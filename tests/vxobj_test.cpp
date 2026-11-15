@@ -53,6 +53,25 @@ std::uint32_t read_u32_be(const std::string& s, std::size_t pos) {
          (static_cast<unsigned char>(s[pos + 2]) << 8) | static_cast<unsigned char>(s[pos + 3]);
 }
 
+// 从 section 表定位 TypeIR 数据段偏移（段顺序可能随可选段变化）
+std::size_t typeir_offset(const std::string& data) {
+  std::size_t pos = 5 + 4 + 4;
+  pos += 4 + read_u32_be(data, pos); // target
+  const std::uint32_t count = read_u32_be(data, pos);
+  pos += 4;
+  for (std::uint32_t i = 0; i < count; ++i) {
+    const std::uint32_t name_len = read_u32_be(data, pos);
+    pos += 4;
+    const std::string name = data.substr(pos, name_len);
+    pos += name_len;
+    const std::uint32_t off = read_u32_be(data, pos);
+    pos += 8; // offset + size
+    if (name == "TypeIR")
+      return off;
+  }
+  return 0;
+}
+
 // ---- 用例 ----
 
 void test_magic_header() {
@@ -68,9 +87,9 @@ void test_magic_header() {
   // Target string: length prefix + chars
   CHECK(read_u32_be(data, 13) == 11); // "test-target" length
   CHECK(data.substr(17, 11) == "test-target");
-  // Section count
+  // Section count（TypeIR 必有；Lines 可选）
   std::size_t pos = 17 + 11;
-  CHECK(read_u32_be(data, pos) == 1);
+  CHECK(read_u32_be(data, pos) >= 1);
   pos += 4;
   // Section name
   CHECK(read_u32_be(data, pos) == 6); // "TypeIR" length
@@ -84,10 +103,8 @@ void test_func_count() {
   CHECK(m);
   CHECK(m->funcs.size() == 2);
   const std::string data = obj::serialize(*m, "t");
-  // Header: magic(5)+ver(4)+flags(4)+target(4+len)+sections(4)
-  std::size_t pos = 5 + 4 + 4 + (4 + 1) + 4;
-  // Section info: name(4+7)+offset(4)+size(4)
-  pos += (4 + 6) + 4 + 4;
+  // TypeIR 数据段起点（section 表可能含可选 Lines 段）
+  std::size_t pos = typeir_offset(data);
   // TypeIR data: func_count u32
   CHECK(read_u32_be(data, pos) == 2);
   pos += 4;
@@ -99,8 +116,8 @@ void test_func_name_and_id() {
   auto m = gen_src("func hello() -> int:\n    return 42\n");
   CHECK(m);
   const std::string data = obj::serialize(*m, "t");
-  // Skip to typeir data
-  std::size_t pos = 5 + 4 + 4 + (4 + 1) + 4 + (4 + 6) + 4 + 4;
+  // Skip to TypeIR data
+  std::size_t pos = typeir_offset(data);
   pos += 4 + 4; // func_count + struct_count
   // Function: name string
   std::uint32_t name_len = read_u32_be(data, pos);
@@ -128,7 +145,7 @@ void test_instruction_encoding() {
   CHECK(hdr.magic_ok);
   CHECK(hdr.version == 4);
   CHECK(hdr.target == "t");
-  CHECK(hdr.section_count == 1);
+  CHECK(hdr.section_count >= 1);
 }
 
 void test_extern_linkage() {

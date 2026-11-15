@@ -15,6 +15,13 @@
 // 头文件命中系统目录而伴生文件缺失时，回退到 include_dirs / headers_root
 // 中查找同主名 .vxh（为系统头提供 VX 签名）。链接期由后端生成 extern "C"
 // shim 把 C++ ABI 转换为 VX ABI。
+//
+// import 模块查找规则（import a.b.c）：
+//   - 点分路径转目录：a.b.c → a/b/c.vx（也接受 a/b/c/mod.vx）；
+//   - 搜索根按序：-I 目录 → 源文件所在目录 → 其上级目录（最多 4 级）；
+//   - 只读取声明（类/结构、枚举、函数签名），不生成代码；运行期符号由
+//     vlnk 合并各编译单元的 .vxobj 解析（等价「模块即头文件」）；
+//   - 未找到的模块静默跳过；文件存在但解析失败记警告并跳过。
 #pragma once
 
 #include "vx/compiler/ast.hpp"
@@ -22,6 +29,7 @@
 #include "vx/compiler/parser.hpp"
 #include "vx/compiler/typeir.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -51,17 +59,66 @@ struct ImportedLib {
   std::vector<ImportedSymbol> symbols;
 };
 
-// 导入表：源码内所有 @imp / @cppimp 解析结果的汇总。
+// 被 import 的 VX 模块声明摘要（不含函数体）。
+// 模块只参与编译期类型/符号解析；运行期符号由 vlnk 合并各编译单元的 .vxobj。
+struct ModuleParam {
+  std::string name;
+  std::string type;
+};
+struct ModuleField {
+  std::string name;
+  std::string type; // 类常量为空（模块常量不参与跨单元解析）
+};
+struct ModuleMethod {
+  std::string name;
+  std::vector<ModuleParam> params;
+  std::string ret_type;
+};
+struct ModuleClass {
+  std::string name;
+  std::vector<ModuleField> fields; // 仅实例字段（类常量跳过）
+  std::vector<ModuleMethod> methods;
+  bool has_ctor = false;      // 是否声明了 new 方法
+  std::size_t ctor_arity = 0; // new 的形参数（不含 self）
+  int line = 0;
+};
+struct ModuleEnum {
+  std::string name;
+  std::vector<std::pair<std::string, std::int64_t>> members;
+  int line = 0;
+};
+struct ModuleFunc {
+  std::string name;
+  std::vector<ModuleParam> params;
+  std::string ret_type;
+  bool is_extern = false;
+  int line = 0;
+};
+struct ImportedModule {
+  std::string path;   // 原始点分路径（"std.error"）
+  std::string prefix; // 访问前缀（alias 或路径末段）
+  std::string file;   // 解析到的 .vx 绝对路径
+  std::vector<ModuleClass> classes;
+  std::vector<ModuleEnum> enums;
+  std::vector<ModuleFunc> funcs;
+};
+
+// 导入表：源码内所有 @imp / @cppimp / import 解析结果的汇总。
 struct ImportTable {
   std::vector<ImportedLib> libs;
   // 同一库被再次引用（如 @imp(math) 与 @imp(math) as m）时，
   // 额外别名记录为 (别名, 原始引用)，指向 libs 中的同一库。
   std::vector<std::pair<std::string, std::string>> aliases;
+  // import 语句解析出的模块声明（未找到/解析失败的模块被跳过）。
+  std::vector<ImportedModule> modules;
 
   // 按访问前缀（alias / name / 额外别名）查找库；未命中返回 nullptr。
   const ImportedLib* lib_by_prefix(std::string_view prefix) const;
 
-  // 在某库内按库内名查找符号；未命中返回 nullptr。
+  // 模块访问前缀（alias 或路径末段）是否命中。
+  const ImportedModule* module_by_prefix(std::string_view prefix) const;
+
+  // 在某库内按库名查找符号；未命中返回 nullptr。
   static const ImportedSymbol* find_symbol(const ImportedLib& lib, std::string_view name);
 };
 

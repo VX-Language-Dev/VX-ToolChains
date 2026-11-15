@@ -1,7 +1,7 @@
 // typeir.hpp — TypeIR 虚拟指令中间表示。
 // 纯虚拟栈机指令：不含任何可在物理 CPU 上直接执行的指令；
 // 下游由 vlk 模块按目标平台 ABI 翻译为 LLVM IR 并经 LLD 链接。
-// 操作码数值对齐自举 compiler/typeir.vx，保证与既有 .vxobj 线格式可互操作。
+// 操作码数值固定，保证与既有 .vxobj 线格式可互操作。
 #pragma once
 
 #include "vx/compiler/ast.hpp"
@@ -108,10 +108,15 @@ enum Op : std::uint8_t {
   // 函数值 / 指针解引用（v1.16.8 起）
   OP_DEREF_STORE = 95, // 弹出 [ptr, value] 并写回 32 位字
   OP_CONST_FUNC = 96,  // args = "f;<函数名>"：取函数值（后端生成适配器）
+  // 显式类型转换（int(x) / float(x) / bool(x) / str(x)）
+  OP_CAST_INT = 97,   // 任意标量 → i32
+  OP_CAST_FLOAT = 98, // 整数/var → double
+  OP_CAST_BOOL = 99,  // 任意标量 → i32 0/1
+  OP_CAST_STR = 100,  // 整数/浮点/字符串 → 字符串指针
 };
 
 // 单条指令：op + 文本形式 args。
-// args 编码约定（对齐自举 codegen.vx 发射格式）：
+// args 编码约定：
 //   CONST_INT   "i<digits>"        CONST_FLOAT "f<text>"
 //   CONST_STRING "s<bytes>"        CONST_BOOL  "btrue"/"bfalse"
 //   LOAD/STORE_VAR  "<slot>"（十进制）
@@ -132,6 +137,11 @@ struct FuncIR {
   std::vector<Param> params;
   std::vector<Inst> instructions;
   std::uint32_t local_count = 0;
+  // 与槽位一一对应的静态类型标签（TypeTag；0xFF = 未标注，由后端按首次写入推断）。
+  // 由 Codegen 按声明/初始化表达式推断并写入 VXOBJ 的 local_types 表。
+  std::vector<std::uint8_t> local_types;
+  // 与 instructions 平行的源码行号（0 = 未知）；用于 Lines 段与调试信息。
+  std::vector<int> lines;
 };
 
 // extern 声明 → 链接表条目（跨模块符号，由链接器解析）。
@@ -175,13 +185,19 @@ struct StructLayout {
 struct ModuleIR {
   std::vector<FuncIR> funcs;
   std::vector<LinkEntry> linkage;
-  // 顶层 var 声明暂不生成代码（对齐自举 codegen.vx：top_vars 不进指令流），
+  // 顶层 var 声明暂不生成代码（top_vars 不进指令流），
   // 名字记录在此，待引入全局槽位寻址后再落地。
   std::vector<std::string> global_vars;
   // 导入的库依赖（@imp / @cppimp），供后端链接期并入实现文件并生成 shim。
   std::vector<LibDep> libs;
   // 类/结构布局表（P4：后端按字段索引访问）。
   std::vector<StructLayout> structs;
+  // 编译选项（写入 VXOBJ 头 flags，供链接器选择 llc/clang 优化与调试信息）：
+  // opt_level = -1 表示未指定；0..3 对应 -O0..-O3。
+  int opt_level = -1;
+  bool debug = false;
+  // 源文件名（写入 Lines 段，供 DWARF DIFile 使用）。
+  std::string source_file;
 };
 
 } // namespace vx::compiler::ir

@@ -23,6 +23,7 @@
 #include "vx/compiler/parser.hpp"
 #include "vx/compiler/typeir.hpp"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -108,21 +109,31 @@ struct ClassInfo {
   int decl_line = 0; // 声明行（E0011 note 指向首次定义用）
 };
 
-// 模块级符号表：函数表 + 类/结构布局表。
+// 枚举布局：成员名 → 整数值（枚举底层类型为 int）。
+struct EnumInfo {
+  std::string name;
+  std::unordered_map<std::string, std::int64_t> members;
+  int decl_line = 0; // 声明行（E0011 note 指向首次定义用）
+};
+
+// 模块级符号表：函数表 + 类/结构布局表 + 枚举表。
 class SymbolTable {
 public:
   // 注册；同名冲突（函数/extern/类互相之间，或同类方法）返回 false。
   bool add_func(FuncSig sig);
   bool add_class(ClassInfo info);
+  bool add_enum(EnumInfo info);
 
   const FuncSig* find_func(std::string_view name) const;
   const ClassInfo* find_class(std::string_view name) const;
-  // 类型名是否已知（内置标量由 type_name_tag 处理，这里查类/结构）。
+  const EnumInfo* find_enum(std::string_view name) const;
+  // 类型名是否已知（内置标量由 type_name_tag 处理，这里查类/结构/枚举）。
   bool is_type(std::string_view name) const;
 
 private:
   std::unordered_map<std::string, FuncSig> funcs_;
   std::unordered_map<std::string, ClassInfo> classes_;
+  std::unordered_map<std::string, EnumInfo> enums_;
 };
 
 // 语义分析产物：供 codegen 消费的解析结果，避免下游重复推断。

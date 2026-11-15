@@ -447,6 +447,69 @@ void test_ptr_type_annotation() {
   CHECK(has_code(codes, diag_code::sem_type_mismatch));
 }
 
+void test_str_type_alias() {
+  bool ok = true;
+  // str 为 string 的类型别名：形参 / 返回 / 变量标注均合法
+  auto codes = check_src("func greet(name: str) -> str:\n"
+                         "    return \"hi \" + name\n"
+                         "func main():\n"
+                         "    var s: str = greet(\"vx\")\n"
+                         "    out(s)\n",
+                         &ok);
+  CHECK(ok);
+  CHECK(codes.empty());
+
+  // str 与 string 同型：混用不报类型不匹配
+  codes = check_src("func f(a: str, b: string) -> bool:\n"
+                    "    return a == b\n",
+                    &ok);
+  CHECK(ok);
+  CHECK(codes.empty());
+
+  // str 与 int 仍不混用
+  codes = check_src("func f(s: str, n: int) -> bool:\n"
+                    "    return s == n\n");
+  CHECK(has_code(codes, diag_code::sem_type_mismatch));
+}
+
+void test_enum_decl() {
+  bool ok = true;
+  // 枚举名可作类型标注；成员访问为 int，可与 int 互操作
+  auto codes = check_src("enum Color:\n"
+                         "    Red\n"
+                         "    Blue = 10\n"
+                         "func pick(c: Color) -> int:\n"
+                         "    if c == Color.Blue:\n"
+                         "        return Color.Red\n"
+                         "    return 1\n"
+                         "func main():\n"
+                         "    var c: Color = Color.Blue\n"
+                         "    var n: int = pick(c)\n",
+                         &ok);
+  CHECK(ok);
+  CHECK(codes.empty());
+
+  // 访问不存在的成员 → E0010
+  codes = check_src("enum E:\n"
+                    "    A\n"
+                    "func main():\n"
+                    "    out_int(E.B)\n");
+  CHECK(has_code(codes, diag_code::sem_undefined));
+
+  // 成员重复定义 → E0011
+  codes = check_src("enum E:\n"
+                    "    A\n"
+                    "    A\n");
+  CHECK(has_code(codes, diag_code::sem_redefined));
+
+  // 枚举名与函数/类共用命名空间：重名 → E0011
+  codes = check_src("enum E:\n"
+                    "    A\n"
+                    "func E():\n"
+                    "    return\n");
+  CHECK(has_code(codes, diag_code::sem_redefined));
+}
+
 } // namespace
 
 // 诊断 note/help：E0010 help 建议、E0011 指向首次定义、E0012 作用域泄漏
@@ -478,6 +541,40 @@ void test_diag_notes() {
   CHECK(has_note(diags, diag_code::sem_redefined, "第 1 行"));
 }
 
+void test_ctor_arity() {
+  // 未声明构造器却传参 → E0010
+  auto codes = check_src("class C:\n"
+                         "    x: int\n"
+                         "func main():\n"
+                         "    var c = new C(1)\n");
+  CHECK(has_code(codes, diag_code::sem_undefined));
+
+  // 构造器实参个数不匹配 → E0006
+  codes = check_src("class C:\n"
+                    "    x: int\n"
+                    "    func new(a: int, b: int):\n"
+                    "        var t = self\n"
+                    "func main():\n"
+                    "    var c = new C(1)\n");
+  CHECK(has_code(codes, diag_code::sem_arity));
+
+  // 无实参 new C() 是裸分配，即使构造器有参数也不报错
+  codes = check_src("class C:\n"
+                    "    x: int\n"
+                    "    func new(a: int):\n"
+                    "        var t = self\n"
+                    "func main():\n"
+                    "    var c = new C()\n");
+  CHECK(!has_code(codes, diag_code::sem_arity));
+  CHECK(!has_code(codes, diag_code::sem_undefined));
+
+  // '_' 丢弃标识符允许重复声明
+  codes = check_src("func main():\n"
+                    "    var _ = 1\n"
+                    "    var _ = 2\n");
+  CHECK(!has_code(codes, diag_code::sem_redefined));
+}
+
 int main() {
   test_ok_program();
   test_undefined_var();
@@ -495,6 +592,9 @@ int main() {
   test_call_arg_types();
   test_func_value_and_deref();
   test_ptr_type_annotation();
+  test_str_type_alias();
+  test_enum_decl();
+  test_ctor_arity();
   test_diag_notes();
 
   if (g_failures == 0) {

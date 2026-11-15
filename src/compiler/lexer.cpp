@@ -1,8 +1,9 @@
-// lexer.cpp — VX 源码词法分析器实现（规格对齐自举编译器 compiler/lexer.vx）
+// lexer.cpp — VX 源码词法分析器实现
 #include "vx/compiler/lexer.hpp"
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -45,9 +46,10 @@ constexpr std::string_view kKeywords[] = {
     "union",
     "macro",
     "move",
-    // 真实源码（mod.vx / lexer.vx）使用而自举关键字表缺失的声明关键字
+    // 真实源码使用而早期关键字表缺失的声明关键字
     "const",
     "export",
+    "pass",
 };
 
 // 字母类：ASCII 字母、下划线，以及 >= 0x80 的字节（兼容 UTF-8 标识符）
@@ -58,6 +60,16 @@ bool is_letter(char c) {
 
 bool is_digit(char c) {
   return c >= '0' && c <= '9';
+}
+
+bool is_hex(char c) {
+  return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+int hex_value(char c) {
+  if (is_digit(c))
+    return c - '0';
+  return (c >= 'a' ? c - 'a' : c - 'A') + 10;
 }
 
 class Lexer {
@@ -276,13 +288,41 @@ private:
           case '\'':
             decoded_ += '\'';
             break;
-          default: // 未知转义：保留原字符（与自举实现一致）
+          case 'u': {
+            // \uXXXX → UTF-8（仅 BMP；代理项按普通码点编码）
+            std::uint32_t cp = 0;
+            bool ok = true;
+            for (int i = 0; i < 4; ++i) {
+              if (!is_hex(ch())) {
+                ok = false;
+                break;
+              }
+              cp = (cp << 4U) | static_cast<std::uint32_t>(hex_value(ch()));
+              advance();
+            }
+            if (!ok) {
+              decoded_ += 'u';
+              break;
+            }
+            if (cp < 0x80) {
+              decoded_ += static_cast<char>(cp);
+            } else if (cp < 0x800) {
+              decoded_ += static_cast<char>(0xC0U | (cp >> 6));
+              decoded_ += static_cast<char>(0x80U | (cp & 0x3FU));
+            } else {
+              decoded_ += static_cast<char>(0xE0U | (cp >> 12));
+              decoded_ += static_cast<char>(0x80U | ((cp >> 6) & 0x3FU));
+              decoded_ += static_cast<char>(0x80U | (cp & 0x3FU));
+            }
+            break;
+          }
+          default: // 未知转义：保留原字符
             decoded_ += e;
             break;
         }
         continue;
       }
-      // 字符串允许跨行（与自举实现一致）；换行由 advance() 统一维护行/列
+      // 字符串允许跨行；换行由 advance() 统一维护行/列
       decoded_ += ch();
       advance();
     }
@@ -293,6 +333,29 @@ private:
 
   void read_number() {
     const std::size_t start = pos_;
+    // 0x/0X、0b/0B 前缀：归一化为十进制文本，后续 AST/IR 只处理十进制
+    if (ch() == '0' && (peek() == 'x' || peek() == 'X' || peek() == 'b' || peek() == 'B')) {
+      const bool hex = peek() == 'x' || peek() == 'X';
+      advance(); // '0'
+      advance(); // 'x' / 'b'
+      const std::size_t digits_start = pos_;
+      while (hex ? is_hex(ch()) : (ch() == '0' || ch() == '1')) {
+        advance();
+      }
+      if (pos_ == digits_start) {
+        emit(Tok::Int, "0");
+        return;
+      }
+      const std::string_view digits = src_.substr(digits_start, pos_ - digits_start);
+      std::uint64_t value = 0;
+      for (const char c : digits) {
+        value = (value * static_cast<std::uint64_t>(hex ? 16 : 2)) +
+                static_cast<std::uint64_t>(hex ? hex_value(c) : (c - '0'));
+      }
+      const auto* stored = arena_.create<std::string>(std::to_string(value));
+      emit(Tok::Int, *stored);
+      return;
+    }
     while (is_digit(ch())) {
       advance();
     }

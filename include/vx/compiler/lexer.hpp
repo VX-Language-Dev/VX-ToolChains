@@ -1,5 +1,5 @@
 // lexer.hpp — VX 源码词法分析器：.vx 源码 → Token 流。
-// 词法规格与自举编译器 compiler/lexer.vx 保持一致：
+// 词法规格：
 //   - 缩进敏感（Python 风格 INDENT/DEDENT），空格计 1、制表符计 4
 //   - 括号/花括号/方括号内换行不产生 NL，也不触发缩进处理
 //   - 注释以 # 起始至行尾；字符串支持 "..." 与 '...' 及转义序列
@@ -15,7 +15,7 @@
 
 namespace vx::compiler {
 
-// Token 种类（语义对齐自举编译器 T_* 常量）
+// Token 种类
 enum class Tok : std::uint8_t {
   Eof,      // 流结束（始终存在）
   Nl,       // 逻辑换行

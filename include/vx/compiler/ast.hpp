@@ -43,6 +43,7 @@ enum class NodeKind : std::uint8_t {
   For,
   ClassDecl,
   StructDecl,
+  EnumDecl,
   ImpDecl,
   CppImpDecl, // @imp / @cppimp 导入注解
 };
@@ -178,7 +179,8 @@ struct ExternDecl : Stmt { // extern [func] name(params) [-> type]
 };
 struct Import : Stmt { // import a.b.c [as alias]
   std::string_view path;
-  Import(std::string_view p, int l) : Stmt{NodeKind::Import, l}, path(p) {}
+  std::string_view alias; // 空表示无别名（模块访问前缀取路径末段）
+  Import(std::string_view p, std::string_view a, int l) : Stmt{NodeKind::Import, l}, path(p), alias(a) {}
 };
 struct Export : Stmt { // export name
   std::string_view name;
@@ -246,6 +248,18 @@ struct StructDecl : Stmt { // struct Name: 字段
   std::span<const ClassField> fields;
   StructDecl(std::string_view n, std::span<const ClassField> f, int l)
       : Stmt{NodeKind::StructDecl, l}, name(n), fields(f) {}
+};
+// 枚举成员：隐式取值 = 上一成员 + 1（首个为 0），显式 `= <整数>` 覆盖。
+struct EnumMember {
+  std::string_view name;
+  std::int64_t value;
+  int line;
+};
+struct EnumDecl : Stmt { // enum Name: 成员，每行 MEMBER 或 MEMBER = <整数>
+  std::string_view name;
+  std::span<const EnumMember> members;
+  EnumDecl(std::string_view n, std::span<const EnumMember> m, int l)
+      : Stmt{NodeKind::EnumDecl, l}, name(n), members(m) {}
 };
 
 // 节点种类名（诊断/调试用）

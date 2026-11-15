@@ -1,6 +1,5 @@
 // parser.hpp — VX 语法分析器：Token 流 → AST。
-// 递归下降 + 运算符优先级爬升，语法覆盖对齐自举 compiler/parser.vx，
-// 并补齐真实源码需要而自举缺失的结构：列表/字典字面量、下标、
+// 递归下降 + 运算符优先级爬升。支持的结构：列表/字典字面量、下标、
 // 属性/下标赋值目标、复合赋值、class/struct/extern/export、单行多语句。
 #pragma once
 

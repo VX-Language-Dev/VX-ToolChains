@@ -192,6 +192,23 @@ void test_decls() {
   CHECK(st && st->name == "Pair" && st->fields.size() == 2);
 }
 
+// 枚举：显式取值 / 隐式自增 / 负值 / 成员落槽
+void test_enum() {
+  auto stmts = parse_src("enum Color:\n    Red\n    Green = 10\n    Blue\n    Neg = -2\n");
+  CHECK(stmts.size() == 1);
+  if (stmts.size() != 1) {
+    return;
+  }
+  const auto* en = cast<EnumDecl>(NodeKind::EnumDecl, stmts[0]);
+  CHECK(en && en->name == "Color" && en->members.size() == 4);
+  if (en && en->members.size() == 4) {
+    CHECK(en->members[0].name == "Red" && en->members[0].value == 0);
+    CHECK(en->members[1].name == "Green" && en->members[1].value == 10);
+    CHECK(en->members[2].name == "Blue" && en->members[2].value == 11);
+    CHECK(en->members[3].name == "Neg" && en->members[3].value == -2);
+  }
+}
+
 // @imp / @cppimp 导入注解：库引用（含子目录路径）与可选 as 别名
 void test_import_directives() {
   auto stmts = parse_src("@imp(math)\n"
@@ -261,10 +278,8 @@ void test_errors() {
 void test_pipeline_vx_sources() {
   namespace fs = std::filesystem;
 
-  fs::path root = fs::current_path();
-  while (!root.empty() && !fs::exists(root / "compiler" / "lexer.vx")) {
-    root = root.parent_path();
-  }
+  // 仓库根由 CMake 注入（VX_SOURCE_DIR），无需运行时向上查找
+  fs::path root = VX_SOURCE_DIR;
   CHECK(!root.empty());
   if (root.empty()) {
     return;
@@ -272,7 +287,7 @@ void test_pipeline_vx_sources() {
 
   std::size_t files = 0;
   std::size_t stmts_total = 0;
-  for (const char* dir : {"compiler", "tests"}) {
+  for (const char* dir : {"tests"}) {
     std::error_code ec;
     for (fs::recursive_directory_iterator it(root / dir, ec), end; it != end; it.increment(ec)) {
       if (ec) {
@@ -305,33 +320,31 @@ void test_pipeline_vx_sources() {
       ++files;
     }
   }
-  CHECK(files >= 10);
-  CHECK(stmts_total > 100);
+  CHECK(files >= 5);
+  CHECK(stmts_total > 5);
 
-  // 抽查 compiler/lexer.vx 的结构
-  auto src = vx::util::read_file(root / "compiler" / "lexer.vx");
+  // 抽查 tests/test_simple.vx 的结构：extern 声明 + main 函数
+  auto src = vx::util::read_file(root / "tests" / "test_simple.vx");
   CHECK(src.has_value());
   if (src) {
     Arena arena;
     DiagBag bag;
-    auto toks = tokenize(*src, "<lexer.vx>", arena, bag);
-    auto prog = parse(toks, "<lexer.vx>", arena, bag);
+    auto toks = tokenize(*src, "<test_simple.vx>", arena, bag);
+    auto prog = parse(toks, "<test_simple.vx>", arena, bag);
     CHECK(!bag.has_error());
     if (prog) {
-      const auto* imp = cast<Import>(NodeKind::Import, prog->stmts[0]);
-      CHECK(imp && imp->path == "std.error");
-      bool has_class = false;
-      bool has_tokenize = false;
+      bool has_extern = false;
+      bool has_main = false;
       for (const Stmt* s : prog->stmts) {
-        if (const auto* c = cast<ClassDecl>(NodeKind::ClassDecl, s)) {
-          has_class = c->name == "Lexer" && !c->methods.empty();
+        if (const auto* e = cast<ExternDecl>(NodeKind::ExternDecl, s)) {
+          has_extern = e->name == "out";
         }
         if (const auto* f = cast<FuncDecl>(NodeKind::FuncDecl, s)) {
-          has_tokenize = f->name == "tokenize";
+          has_main = f->name == "main";
         }
       }
-      CHECK(has_class);
-      CHECK(has_tokenize);
+      CHECK(has_extern);
+      CHECK(has_main);
     }
   }
 }
@@ -347,6 +360,7 @@ int main() {
   test_control_flow();
   test_inline_body_with_semi();
   test_decls();
+  test_enum();
   test_import_directives();
   test_errors();
   test_pipeline_vx_sources();

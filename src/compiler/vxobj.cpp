@@ -19,10 +19,10 @@ void append_u8(std::string& buf, std::uint8_t v) {
 }
 
 void append_u32_be(std::string& buf, std::uint32_t v) {
-  buf.push_back(static_cast<char>((v >> 24u) & 0xFFu));
-  buf.push_back(static_cast<char>((v >> 16u) & 0xFFu));
-  buf.push_back(static_cast<char>((v >> 8u) & 0xFFu));
-  buf.push_back(static_cast<char>(v & 0xFFu));
+  buf.push_back(static_cast<char>((v >> 24U) & 0xFFU));
+  buf.push_back(static_cast<char>((v >> 16U) & 0xFFU));
+  buf.push_back(static_cast<char>((v >> 8U) & 0xFFU));
+  buf.push_back(static_cast<char>(v & 0xFFU));
 }
 
 void append_write_string(std::string& buf, std::string_view s) {
@@ -38,7 +38,7 @@ std::uint8_t type_tag_for(std::string_view name) {
     return ir::TYPE_FLOAT;
   if (name == "bool")
     return ir::TYPE_BOOL;
-  if (name == "string")
+  if (name == "string" || name == "str")
     return ir::TYPE_STRING;
   if (name == "void")
     return ir::TYPE_VOID;
@@ -76,8 +76,20 @@ void serialize_func(std::string& buf, const ir::FuncIR& f) {
   // var_count (local_count)
   append_u32_be(buf, f.local_count);
 
-  // local_types: 简化，写 count=0
-  append_u32_be(buf, 0);
+  // local_types: 条目 {slot u32, tag u8}；仅写静态可确定的槽位
+  std::uint32_t local_type_count = 0;
+  for (const std::uint8_t tag : f.local_types) {
+    if (tag != 0xFF && tag != ir::TYPE_UNKNOWN && tag != ir::TYPE_VOID)
+      ++local_type_count;
+  }
+  append_u32_be(buf, local_type_count);
+  for (std::size_t i = 0; i < f.local_types.size(); ++i) {
+    const std::uint8_t tag = f.local_types[i];
+    if (tag == 0xFF || tag == ir::TYPE_UNKNOWN || tag == ir::TYPE_VOID)
+      continue;
+    append_u32_be(buf, static_cast<std::uint32_t>(i));
+    append_u8(buf, tag);
+  }
 
   // 指令数量 + 指令序列
   append_u32_be(buf, static_cast<std::uint32_t>(f.instructions.size()));
@@ -157,9 +169,32 @@ std::string serialize(const ir::ModuleIR& mod, std::string_view target) {
     serialize_deps(deps_data, mod.libs);
     sections.push_back({SECTION_DEPS, std::move(deps_data)});
   }
+  // 行号段：源文件名 + 每个函数的指令行号（调试信息 / 诊断定位）。
+  bool has_lines = false;
+  for (const ir::FuncIR& f : mod.funcs) {
+    if (!f.lines.empty()) {
+      has_lines = true;
+      break;
+    }
+  }
+  if (has_lines || !mod.source_file.empty()) {
+    std::string lines_data;
+    append_write_string(lines_data, mod.source_file);
+    append_u32_be(lines_data, static_cast<std::uint32_t>(mod.funcs.size()));
+    for (const ir::FuncIR& f : mod.funcs) {
+      append_write_string(lines_data, f.name);
+      append_u32_be(lines_data, static_cast<std::uint32_t>(f.lines.size()));
+      for (const int ln : f.lines) {
+        append_u32_be(lines_data, static_cast<std::uint32_t>(ln));
+      }
+    }
+    sections.push_back({SECTION_LINES, std::move(lines_data)});
+  }
 
   // VXOBJ v4 头部
-  const std::uint32_t flags = 0;
+  // flags 低 3 位：优化级别编码（0=未指定，1..4 = -O0..-O3）；bit3：调试信息。
+  const std::uint32_t opt_code = mod.opt_level >= 0 ? static_cast<std::uint32_t>(mod.opt_level + 1) : 0;
+  const std::uint32_t flags = (opt_code & 0x7U) | (mod.debug ? 8U : 0U);
 
   // header_size = Magic(5) + Version(4) + Flags(4) + Target(string) + SectionCount(4)
   const std::uint32_t header_size = 5 + 4 + 4 + 4 + static_cast<std::uint32_t>(target.size()) + 4;
@@ -208,9 +243,9 @@ Header parse_header(std::string_view data) {
     return h;
   std::size_t pos = 5;
   auto read_u32 = [&](std::size_t& p) -> std::uint32_t {
-    std::uint32_t v = (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p])) << 24u) |
-                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p + 1])) << 16u) |
-                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p + 2])) << 8u) |
+    std::uint32_t v = (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p])) << 24U) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p + 1])) << 16U) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[p + 2])) << 8U) |
                       static_cast<std::uint32_t>(static_cast<unsigned char>(data[p + 3]));
     p += 4;
     return v;

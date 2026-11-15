@@ -343,10 +343,8 @@ void test_at_directive() {
 void test_vx_sources() {
   namespace fs = std::filesystem;
 
-  fs::path root = fs::current_path();
-  while (!root.empty() && !fs::exists(root / "compiler" / "lexer.vx")) {
-    root = root.parent_path();
-  }
+  // 仓库根由 CMake 注入（VX_SOURCE_DIR），无需运行时向上查找
+  fs::path root = VX_SOURCE_DIR;
   CHECK(!root.empty());
   if (root.empty()) {
     return;
@@ -354,7 +352,7 @@ void test_vx_sources() {
 
   std::size_t total_files = 0;
   std::size_t total_tokens = 0;
-  for (const char* dir : {"compiler", "std", "tests"}) {
+  for (const char* dir : {"std", "tests"}) {
     std::error_code ec;
     for (fs::recursive_directory_iterator it(root / dir, ec), end; it != end; it.increment(ec)) {
       if (ec) {
@@ -401,8 +399,8 @@ void test_vx_sources() {
   CHECK(total_files >= 10);
   CHECK(total_tokens > 1000);
 
-  // 抽查 compiler/lexer.vx 首个 token：行首注释应被跳过，import 为关键字
-  auto src = vx::util::read_file(root / "compiler" / "lexer.vx");
+  // 抽查 std/prelude.vx 首个 token：行首注释应被跳过，import 为关键字
+  auto src = vx::util::read_file(root / "std" / "prelude.vx");
   CHECK(src.has_value());
   if (src) {
     auto toks = lex(*src);

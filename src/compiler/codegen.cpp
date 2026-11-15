@@ -1,6 +1,5 @@
 // codegen.cpp — 类型化 AST → TypeIR 虚拟指令序列。
-// 发射语义逐条对齐自举 compiler/codegen.vx；自举缺失的结构
-// （方法调用、列表/字典、下标/属性赋值、复合赋值）按 codegen.hpp 注释的约定补齐。
+// 指令发射覆盖方法调用、列表/字典、下标/属性赋值、复合赋值（见 codegen.hpp）。
 #include "vx/compiler/codegen.hpp"
 
 #include "vx/compiler/parser.hpp"
@@ -12,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -23,7 +23,7 @@ namespace {
 using ir::Inst;
 using ir::ModuleIR;
 
-// for-in 降级循环的迭代上界（对齐自举 codegen.vx）：防失控保护。
+// for-in 降级循环的迭代上界：防失控保护。
 // 注意：被迭代集合超过该上限时会静默截断，超大集合请用显式索引循环。
 constexpr std::int64_t kMaxForIterations = 100000;
 
@@ -40,18 +40,40 @@ public:
 
   std::optional<ModuleIR> run(const Program& prog) {
     ModuleIR mod;
+    mod.source_file = std::string(filename_);
+
+    // 预扫描：先收集全部类/结构名，供字段与函数签名把类类型映射为 ptr。
+    for (const Stmt* s : prog.stmts) {
+      if (s->kind == NodeKind::ClassDecl) {
+        class_types_.insert(std::string(static_cast<const ClassDecl*>(s)->name));
+      } else if (s->kind == NodeKind::StructDecl) {
+        class_types_.insert(std::string(static_cast<const StructDecl*>(s)->name));
+      }
+    }
 
     // 第一遍：注册 class/struct 字段（字段表供后续按索引访问，当前用名字）。
     // 类常量字段（init 非空）不进实例布局，仅登记供「类名.常量」内联访问。
     for (const Stmt* s : prog.stmts) {
       if (s->kind == NodeKind::ClassDecl) {
         register_struct(static_cast<const ClassDecl*>(s));
-        ir::StructLayout sl;
         const auto* c = static_cast<const ClassDecl*>(s);
+        // 记录构造方法：new C(args) 需要调用 C.new(self, args)
+        bool has_ctor = false;
+        int ctor_arity = 0;
+        bool ctor_ret_void = true;
+        for (const FuncDecl* m : c->methods) {
+          if (m->name == "new") {
+            has_ctor = true;
+            ctor_arity = static_cast<int>(m->params.size());
+            ctor_ret_void = m->ret_type.empty() || m->ret_type == "void";
+          }
+        }
+        class_ctors_[std::string(c->name)] = {has_ctor, ctor_arity, ctor_ret_void};
+        ir::StructLayout sl;
         sl.name = std::string(c->name);
         for (const ClassField& f : c->fields)
           if (f.init == nullptr)
-            sl.fields.push_back({std::string(f.name), std::string(f.type)});
+            sl.fields.push_back({std::string(f.name), ir_type(f.type)});
         mod.structs.push_back(std::move(sl));
       } else if (s->kind == NodeKind::StructDecl) {
         register_struct(static_cast<const StructDecl*>(s));
@@ -60,8 +82,44 @@ public:
         sl.name = std::string(st->name);
         for (const ClassField& f : st->fields)
           if (f.init == nullptr)
-            sl.fields.push_back({std::string(f.name), std::string(f.type)});
+            sl.fields.push_back({std::string(f.name), ir_type(f.type)});
         mod.structs.push_back(std::move(sl));
+      } else if (s->kind == NodeKind::EnumDecl) {
+        // 枚举不产生运行时布局：成员取值在「EnumName.MEMBER」处内联为 int 常量
+        const auto* en = static_cast<const EnumDecl*>(s);
+        auto& table = enum_consts_[std::string(en->name)];
+        for (const EnumMember& m : en->members) {
+          table[std::string(m.name)] = m.value;
+        }
+      }
+    }
+
+    // 导入模块的类布局与枚举常量：跨单元访问字段/成员时与本地声明同等对待
+    if (imports_ != nullptr) {
+      for (const ImportedModule& m : imports_->modules) {
+        for (const ModuleClass& mc : m.classes) {
+          if (struct_fields_.contains(mc.name))
+            continue; // 本单元同名声明优先
+          std::vector<ClassField> fields;
+          fields.reserve(mc.fields.size());
+          for (const ModuleField& f : mc.fields)
+            fields.push_back(ClassField{f.name, f.type, nullptr});
+          struct_fields_[mc.name] = std::move(fields);
+          class_types_.insert(mc.name);
+          ir::StructLayout sl;
+          sl.name = mc.name;
+          for (const ClassField& f : struct_fields_[mc.name])
+            sl.fields.push_back({std::string(f.name), ir_type(f.type)});
+          mod.structs.push_back(std::move(sl));
+          module_classes_[mc.name] = &mc;
+        }
+        for (const ModuleEnum& me : m.enums) {
+          if (enum_consts_.contains(me.name))
+            continue;
+          auto& table = enum_consts_[me.name];
+          for (const auto& [name, value] : me.members)
+            table[name] = value;
+        }
       }
     }
 
@@ -99,7 +157,7 @@ public:
           break;
         }
         case NodeKind::VarDecl:
-          // 对齐自举：顶层变量不生成指令，仅记录
+          // 顶层变量不生成指令，仅记录
           mod.global_vars.emplace_back(static_cast<const VarDecl*>(s)->name);
           break;
         default:
@@ -123,21 +181,47 @@ private:
   }
 
   // ---- 局部变量槽位 ----
-  std::uint32_t alloc_local(std::string_view name) {
+  // tag 非 UNKNOWN 时记录静态类型（写入 VXOBJ local_types，后端据此预分配槽位类型）。
+  std::uint32_t alloc_local(std::string_view name, ir::TypeTag tag = ir::TYPE_UNKNOWN) {
     std::string key(name);
     auto it = local_ids_.find(key);
     if (it != local_ids_.end()) {
+      record_local_tag(it->second, tag);
+      if (tag != ir::TYPE_UNKNOWN)
+        local_tags_[key] = tag;
       return it->second;
     }
     const std::uint32_t id = local_counter_++;
+    if (tag != ir::TYPE_UNKNOWN)
+      local_tags_[key] = tag;
     local_ids_.emplace(std::move(key), id);
+    record_local_tag(id, tag);
     return id;
+  }
+
+  // 为匿名槽位（'_'）分配新 id，不进入名字表
+  std::uint32_t new_local_slot(ir::TypeTag tag = ir::TYPE_UNKNOWN) {
+    const std::uint32_t id = local_counter_++;
+    record_local_tag(id, tag);
+    return id;
+  }
+
+  void record_local_tag(std::uint32_t id, ir::TypeTag tag) {
+    if (tag == ir::TYPE_UNKNOWN)
+      return;
+    if (local_types_.size() <= id)
+      local_types_.resize(id + 1, 0xFF);
+    if (local_types_[id] == 0xFF)
+      local_types_[id] = static_cast<std::uint8_t>(tag);
   }
 
   std::string new_label() { return "L" + std::to_string(++label_counter_); }
 
   // ---- 指令发射 ----
-  void emit(std::uint8_t op, std::string args = "") { insts_.push_back(Inst{op, std::move(args)}); }
+  void emit(std::uint8_t op, std::string args = "") {
+    insts_.push_back(Inst{op, std::move(args)});
+    lines_.push_back(cur_line_);
+  }
 
   void emit_label(std::string name) { emit(ir::OP_NOOP, std::move(name)); }
 
@@ -155,7 +239,7 @@ private:
   //   [i0, STORE, JUMP l_end] | l_b: [i1, STORE] → l_end: LOAD tmp
   void gen_short_circuit(const Binary* b) {
     const bool is_and = b->op == "and" || b->op == "&&";
-    const std::string tmp = std::to_string(alloc_local("__sc_" + std::to_string(label_counter_)));
+    const std::string tmp = std::to_string(alloc_local("__sc_" + std::to_string(label_counter_), ir::TYPE_BOOL));
     const std::string l_check = new_label(); // 求值 right 的入口
     const std::string l_set = new_label();   // right 为真/假的直接结果
     const std::string l_end = new_label();
@@ -198,6 +282,7 @@ private:
     if (e == nullptr || failed_) {
       return;
     }
+    cur_line_ = e->line;
     switch (e->kind) {
       case NodeKind::IntLit:
         emit(ir::OP_CONST_INT, "i" + std::string(static_cast<const IntLit*>(e)->text));
@@ -263,9 +348,17 @@ private:
       }
       case NodeKind::Property: {
         const auto* p = static_cast<const Property*>(e);
-        // 类常量访问：TypeNames.NIL → 内联其初始化表达式
+        // 类常量 / 枚举成员访问：TypeNames.NIL → 内联其取值
         if ((p->obj != nullptr) && p->obj->kind == NodeKind::Ident) {
           const auto* id = static_cast<const Ident*>(p->obj);
+          auto e_it = enum_consts_.find(std::string(id->name));
+          if (e_it != enum_consts_.end()) {
+            auto m_it = e_it->second.find(std::string(p->name));
+            if (m_it != e_it->second.end()) {
+              emit(ir::OP_CONST_INT, "i" + std::to_string(m_it->second));
+              break;
+            }
+          }
           auto c_it = class_consts_.find(std::string(id->name));
           if (c_it != class_consts_.end()) {
             auto f_it = c_it->second.find(std::string(p->name));
@@ -280,13 +373,38 @@ private:
         break;
       }
       case NodeKind::New: {
-        const std::string cn = std::string(static_cast<const New*>(e)->class_name);
+        const auto* n = static_cast<const New*>(e);
+        const std::string cn = std::string(n->class_name);
         std::size_t nfields = 0;
         auto it = struct_fields_.find(cn);
         if (it != struct_fields_.end())
           nfields = it->second.size();
         const std::size_t bytes = (nfields == 0 ? 1 : nfields) * 8;
         emit(ir::OP_NEWZ, cn + ";" + std::to_string(bytes));
+        // 构造器语义：new C(args) = NEWZ + C.new(self, args)。
+        // 构造器返回值非 void 时以返回值作为表达式结果（工厂模式返回新实例）；
+        // 返回 void 时保留 NEWZ 分配的实例（构造器就地初始化 self）。
+        // 无实参的 new C() 始终是裸分配：构造函数内部用它分配实例，避免自递归。
+        const auto ctor_it = class_ctors_.find(cn);
+        const bool has_ctor = ctor_it != class_ctors_.end() && ctor_it->second.has;
+        if (has_ctor && !n->args.empty()) {
+          if (!ctor_it->second.ret_void) {
+            for (const Expr* a : n->args) {
+              gen_expr(a);
+            }
+            emit(ir::OP_CALL, "m;" + cn + ".new");
+            break;
+          }
+          emit(ir::OP_DUP);
+          for (const Expr* a : n->args) {
+            gen_expr(a);
+          }
+          emit(ir::OP_CALL, "m;" + cn + ".new");
+          emit(ir::OP_POP);
+        } else if (!n->args.empty()) {
+          fail("类 '" + cn + "' 未声明构造方法 new，不能传参构造", e->line);
+          return;
+        }
         break;
       }
       case NodeKind::Unary: {
@@ -333,6 +451,21 @@ private:
 
   // 操作数类型判断辅助
   static bool is_float_lit(const Expr* e) { return (e != nullptr) && e->kind == NodeKind::FloatLit; }
+  // 静态布尔性推断：布尔字面量、逻辑非、比较/逻辑运算。
+  static bool is_bool_expr(const Expr* e) {
+    if (e == nullptr)
+      return false;
+    if (e->kind == NodeKind::BoolLit)
+      return true;
+    if (e->kind == NodeKind::Unary)
+      return static_cast<const Unary*>(e)->op == "!";
+    if (e->kind == NodeKind::Binary) {
+      const std::string_view op = static_cast<const Binary*>(e)->op;
+      return op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" || op == "and" ||
+             op == "or";
+    }
+    return false;
+  }
   // 语法浮点性推断：FloatLit、浮点算术（+ - * /）、浮点取负、
   // 以及「初始化/赋值为浮点」的变量（var_kind_ 传播）结果为浮点；
   // 比较运算结果为整型布尔，不计入浮点。
@@ -392,6 +525,86 @@ private:
     }
     return false;
   }
+  // 类型标注 → TypeTag（仅记录可静态确定的标量/指针/类类型）
+  ir::TypeTag tag_of_ann(std::string_view ann) const {
+    if (ann == "int")
+      return ir::TYPE_INT;
+    if (ann == "bool")
+      return ir::TYPE_BOOL;
+    if (ann == "float")
+      return ir::TYPE_FLOAT;
+    if (ann == "string" || ann == "str")
+      return ir::TYPE_STRING;
+    if (ann == "ptr")
+      return ir::TYPE_POINTER;
+    if (class_types_.contains(std::string(ann)))
+      return ir::TYPE_STRUCT;
+    return ir::TYPE_UNKNOWN;
+  }
+
+  // 初始化表达式 → TypeTag；无法静态确定时返回 UNKNOWN（后端沿用首次写入推断）
+  ir::TypeTag infer_expr_tag(const Expr* e) {
+    if (e == nullptr)
+      return ir::TYPE_UNKNOWN;
+    switch (e->kind) {
+      case NodeKind::IntLit:
+        return ir::TYPE_INT;
+      case NodeKind::BoolLit:
+        return ir::TYPE_BOOL;
+      case NodeKind::FloatLit:
+        return ir::TYPE_FLOAT;
+      case NodeKind::StrLit:
+        return ir::TYPE_STRING;
+      case NodeKind::New:
+        return ir::TYPE_STRUCT;
+      case NodeKind::ListLit:
+        return ir::TYPE_ARRAY;
+      case NodeKind::DictLit:
+        return ir::TYPE_MAP;
+      case NodeKind::FuncRef:
+        return ir::TYPE_FUNC;
+      case NodeKind::Deref:
+        return ir::TYPE_INT;
+      case NodeKind::Unary: {
+        const auto* u = static_cast<const Unary*>(e);
+        if (u->op == "!")
+          return ir::TYPE_BOOL;
+        if (u->op == "-")
+          return is_float_expr(u->operand) ? ir::TYPE_FLOAT : ir::TYPE_INT;
+        return ir::TYPE_UNKNOWN;
+      }
+      case NodeKind::Binary:
+        if (is_bool_expr(e))
+          return ir::TYPE_BOOL;
+        if (is_float_expr(e))
+          return ir::TYPE_FLOAT;
+        if (is_str_expr(e))
+          return ir::TYPE_STRING;
+        return ir::TYPE_INT;
+      case NodeKind::Ident: {
+        const auto it = local_tags_.find(std::string(static_cast<const Ident*>(e)->name));
+        return it == local_tags_.end() ? ir::TYPE_UNKNOWN : it->second;
+      }
+      case NodeKind::Call: {
+        const auto* c = static_cast<const Call*>(e);
+        if (c->callee == nullptr || c->callee->kind != NodeKind::Ident)
+          return ir::TYPE_UNKNOWN;
+        const std::string name(static_cast<const Ident*>(c->callee)->name);
+        if (name == "int")
+          return ir::TYPE_INT;
+        if (name == "float")
+          return ir::TYPE_FLOAT;
+        if (name == "bool")
+          return ir::TYPE_BOOL;
+        if (name == "str" || builtin_returns_str(name))
+          return ir::TYPE_STRING;
+        return ir::TYPE_UNKNOWN;
+      }
+      default:
+        return ir::TYPE_UNKNOWN;
+    }
+  }
+
   // 记录变量声明/赋值推断出的类型（浮点/字符串），供后续表达式选择运算族
   void note_var_kind(std::string_view name, const Expr* value) {
     if (value == nullptr)
@@ -516,6 +729,23 @@ private:
   //   o.m(args)   → 接收者 o 入栈，args 入栈后 OP_CALL "m;<method>"
   void gen_call(const Call* c) {
     if (c->callee->kind == NodeKind::Ident) {
+      const std::string callee_name(static_cast<const Ident*>(c->callee)->name);
+      // 显式类型转换：int(x) / float(x) / bool(x) / str(x)
+      if (c->args.size() == 1 &&
+          (callee_name == "int" || callee_name == "float" || callee_name == "bool" || callee_name == "str")) {
+        gen_expr(c->args[0]);
+        if (callee_name == "int") {
+          emit(ir::OP_CAST_INT);
+        } else if (callee_name == "float") {
+          emit(ir::OP_CAST_FLOAT);
+        } else if (callee_name == "bool") {
+          emit(ir::OP_CAST_BOOL);
+        } else {
+          // str(x)：布尔值走 true/false 格式化，其余按 int/float/string
+          emit(ir::OP_CAST_STR, is_bool_expr(c->args[0]) ? "b" : "");
+        }
+        return;
+      }
       for (const Expr* a : c->args) {
         gen_expr(a);
       }
@@ -537,6 +767,56 @@ private:
             gen_expr(a);
           }
           emit(ir::OP_CALL, "f;" + sym->abi_symbol);
+          return;
+        }
+      }
+      // 模块命名空间：error.Class(args) 构造 / error.fn(args) 跨单元调用
+      if (imports_ != nullptr && prop->obj->kind == NodeKind::Ident) {
+        const auto* id = static_cast<const Ident*>(prop->obj);
+        if (imports_->module_by_prefix(id->name) != nullptr) {
+          const std::string member(prop->name);
+          auto cls_it = module_classes_.find(member);
+          if (cls_it != module_classes_.end()) {
+            const ModuleClass* mc = cls_it->second;
+            if (!mc->has_ctor && !c->args.empty()) {
+              fail("模块类 '" + member + "' 未声明构造方法 new，不能传参构造", c->line);
+              return;
+            }
+            std::size_t nfields = 0;
+            auto f_it = struct_fields_.find(member);
+            if (f_it != struct_fields_.end())
+              nfields = f_it->second.size();
+            const std::size_t bytes = (nfields == 0 ? 1 : nfields) * 8;
+            emit(ir::OP_NEWZ, member + ";" + std::to_string(bytes));
+            if (mc->has_ctor) {
+              bool ctor_void = true;
+              for (const ModuleMethod& mm : mc->methods) {
+                if (mm.name == "new")
+                  ctor_void = mm.ret_type.empty() || mm.ret_type == "void";
+              }
+              if (!ctor_void) {
+                // 工厂模式：以构造器返回的新实例作为表达式结果
+                for (const Expr* a : c->args) {
+                  gen_expr(a);
+                }
+                emit(ir::OP_CALL, "m;" + member + ".new");
+              } else {
+                // 就地初始化 self：保留 NEWZ 分配的实例，丢弃 void 调用占位值
+                emit(ir::OP_DUP);
+                for (const Expr* a : c->args) {
+                  gen_expr(a);
+                }
+                emit(ir::OP_CALL, "m;" + member + ".new");
+                emit(ir::OP_POP);
+              }
+            }
+            return;
+          }
+          // 模块函数：符号名即函数名，链接期由 vlnk 在其它 .vxobj 中解析
+          for (const Expr* a : c->args) {
+            gen_expr(a);
+          }
+          emit(ir::OP_CALL, "f;" + member);
           return;
         }
       }
@@ -563,6 +843,7 @@ private:
     if (s == nullptr || failed_) {
       return;
     }
+    cur_line_ = s->line;
     switch (s->kind) {
       case NodeKind::VarDecl: {
         const auto* v = static_cast<const VarDecl*>(s);
@@ -573,7 +854,12 @@ private:
         }
         // 记录推断类型（浮点/字符串），后续运算按对应发射族
         note_var_kind(v->name, v->init);
-        emit(ir::OP_STORE_VAR, std::to_string(alloc_local(v->name)));
+        ir::TypeTag decl_tag = tag_of_ann(v->type_ann);
+        if (decl_tag == ir::TYPE_UNKNOWN)
+          decl_tag = infer_expr_tag(v->init);
+        // '_' 是丢弃槽：每次声明分配独立槽位，允许重复出现
+        const std::uint32_t slot = (v->name == "_") ? new_local_slot(decl_tag) : alloc_local(v->name, decl_tag);
+        emit(ir::OP_STORE_VAR, std::to_string(slot));
         break;
       }
       case NodeKind::Assign:
@@ -755,7 +1041,7 @@ private:
     }
   }
 
-  // if/elif/else 控制流（对齐自举 codegen.vx）：
+  // if/elif/else 控制流：
   //   cond, JUMP_IF_FALSE else, then, JUMP end, [elif...], else, end:
   void gen_if(const If* s) {
     gen_expr(s->cond);
@@ -790,14 +1076,16 @@ private:
     loop_stack_.pop_back();
   }
 
-  // for-in 降级（对齐自举 codegen.vx）：
+  // for-in 降级：
   //   隐藏变量 __for_iter_N（可迭代对象）、__for_idx_N（下标），
   //   循环上界 kMaxForIterations 防失控，元素经 INDEX_GET 取出。
   void gen_for(const For* s) {
     gen_expr(s->iterable);
-    const std::string iter_slot = std::to_string(alloc_local("__for_iter_" + std::to_string(label_counter_)));
+    const std::string iter_slot =
+        std::to_string(alloc_local("__for_iter_" + std::to_string(label_counter_), infer_expr_tag(s->iterable)));
     emit(ir::OP_STORE_VAR, iter_slot);
-    const std::string idx_slot = std::to_string(alloc_local("__for_idx_" + std::to_string(label_counter_)));
+    const std::string idx_slot =
+        std::to_string(alloc_local("__for_idx_" + std::to_string(label_counter_), ir::TYPE_INT));
     emit(ir::OP_CONST_INT, "i0");
     emit(ir::OP_STORE_VAR, idx_slot);
 
@@ -834,10 +1122,20 @@ private:
   }
 
   // ---- 函数 ----
+  // 类/结构类型在运行时以实例指针传递；其余类型名原样保留。
+  std::string ir_type(std::string_view t) const {
+    return class_types_.contains(std::string(t)) ? std::string("ptr") : std::string(t);
+  }
+
   void begin_func(const std::string& name, std::vector<Param> params, std::string_view ret_type) {
     cur_.name = name;
     cur_.id = 0;
-    cur_.ret_type = std::string(ret_type);
+    cur_.ret_type = ir_type(ret_type);
+    for (Param& p : params) {
+      if (class_types_.contains(std::string(p.type))) {
+        p.type = "ptr";
+      }
+    }
     cur_.params = std::move(params);
     cur_.instructions.clear();
     cur_.local_count = 0;
@@ -845,15 +1143,19 @@ private:
     local_counter_ = 0;
     var_kind_.clear();
     insts_.clear();
+    lines_.clear();
+    cur_line_ = 0;
+    local_types_.clear();
+    local_tags_.clear();
     label_counter_ = 0;
     loop_stack_.clear();
     for (const Param& p : cur_.params) {
-      alloc_local(p.name);
+      alloc_local(p.name, tag_of_ann(p.type));
       // 参数声明类型参与变量类型传播：
       // float 参数参与算术选 F64 族，string 参数比较走内容相等
       if (p.type == "float") {
         var_kind_[std::string(p.name)] = kVarFloat;
-      } else if (p.type == "string") {
+      } else if (p.type == "string" || p.type == "str") {
         var_kind_[std::string(p.name)] = kVarStr;
       }
     }
@@ -864,8 +1166,10 @@ private:
   void emit_default_return() {
     if (cur_.ret_type == "float") {
       emit(ir::OP_CONST_FLOAT, "f0.0");
-    } else if (cur_.ret_type == "string") {
+    } else if (cur_.ret_type == "string" || cur_.ret_type == "str") {
       emit(ir::OP_CONST_STRING, "s"); // 空串
+    } else if (cur_.ret_type == "ptr") {
+      emit(ir::OP_CONST_NIL); // 空指针
     } else {
       emit(ir::OP_CONST_INT, "i0");
     }
@@ -873,7 +1177,7 @@ private:
   }
 
   void end_func(ModuleIR& mod) {
-    // 无显式 return 的非 void 函数补默认返回（对齐自举；类型须与声明相符）。
+    // 无显式 return 的非 void 函数补默认返回（类型须与声明相符）。
     // 依据末尾指令是否为终止指令判断，避免条件分支中的裸 return
     // 抑制末尾兜底返回（ReturnVoid bug）。
     if (!cur_.ret_type.empty() && cur_.ret_type != "void") {
@@ -891,6 +1195,9 @@ private:
       }
     }
     cur_.instructions = std::move(insts_);
+    cur_.lines = std::move(lines_);
+    cur_.local_types = std::move(local_types_);
+    cur_.local_types.resize(local_counter_, 0xFF);
     cur_.local_count = local_counter_;
     cur_.id = static_cast<std::uint32_t>(mod.funcs.size());
     mod.funcs.push_back(std::move(cur_));
@@ -987,8 +1294,20 @@ private:
   const Analysis* analysis_ = nullptr;   // 语义分析产物（可空）
   bool failed_ = false;
   std::unordered_map<std::string, std::vector<ClassField>> struct_fields_;
+  std::unordered_set<std::string> class_types_; // 类/结构名（运行时按 ptr 传递）
+  // 类构造方法：类名 → 构造信息
+  struct CtorInfo {
+    bool has = false;
+    int arity = 0;
+    bool ret_void = true;
+  };
+  std::unordered_map<std::string, CtorInfo> class_ctors_;
   // 类常量表：类名 → 常量名 → 初始化表达式（「类名.常量」访问时内联展开）
   std::unordered_map<std::string, std::unordered_map<std::string, const Expr*>> class_consts_;
+  // 枚举常量表：枚举名 → 成员名 → 取值（「枚举名.成员」访问时内联为 int 常量）
+  std::unordered_map<std::string, std::unordered_map<std::string, std::int64_t>> enum_consts_;
+  // 导入模块的类摘要：类名 → ModuleClass（判断构造方法与实参数）
+  std::unordered_map<std::string, const ModuleClass*> module_classes_;
 
   ir::FuncIR cur_; // 当前函数
   std::unordered_map<std::string, std::uint32_t> local_ids_;
@@ -1006,6 +1325,10 @@ private:
   };
   std::unordered_map<std::string, int> var_kind_;
   std::vector<Inst> insts_;
+  std::vector<int> lines_;                                  // 与 insts_ 平行的源码行号
+  std::vector<std::uint8_t> local_types_;                   // 槽位 → TypeTag（0xFF 未标注）
+  std::unordered_map<std::string, ir::TypeTag> local_tags_; // 局部变量名 → 静态类型
+  int cur_line_ = 0;                                        // 当前正在生成的 AST 节点行号
   int label_counter_ = 0;
   std::vector<std::pair<std::string, std::string>> loop_stack_; // start, end
 };

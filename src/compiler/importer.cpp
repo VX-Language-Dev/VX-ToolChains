@@ -110,6 +110,171 @@ fs::path ref_base(const ImportContext& ctx, std::string_view ref) {
   return normalize(base / fs::path(r));
 }
 
+// ---- import 模块解析（模块 = 一份 .vx 源文件，仅提取声明摘要）----
+
+// 路径末段（"std.error" → "error"）
+std::string_view last_segment(std::string_view path) {
+  const auto dot = path.find_last_of('.');
+  return dot == std::string_view::npos ? path : path.substr(dot + 1);
+}
+
+// 模块搜索根：-I 目录 → 源文件目录 → 其上级（最多 4 级，覆盖 build/ 布局）
+std::vector<fs::path> module_roots(const ImportContext& ctx) {
+  std::vector<fs::path> roots(ctx.include_dirs.begin(), ctx.include_dirs.end());
+  fs::path dir = normalize(ctx.source_dir);
+  roots.push_back(dir);
+  for (int i = 0; i < 4; ++i) {
+    const fs::path parent = dir.parent_path();
+    if (parent.empty() || parent == dir)
+      break;
+    dir = parent;
+    roots.push_back(dir);
+  }
+  std::vector<fs::path> unique;
+  for (const fs::path& r : roots) {
+    if (std::find(unique.begin(), unique.end(), r) == unique.end())
+      unique.push_back(r);
+  }
+  return unique;
+}
+
+// 点分路径 → 相对文件路径（"std.error" → "std/error"），尝试 .vx 与 <dir>/mod.vx
+fs::path resolve_module_file(const ImportContext& ctx, std::string_view path) {
+  std::string rel;
+  rel.reserve(path.size());
+  for (char c : path)
+    rel += (c == '.' ? '/' : c);
+  for (const fs::path& root : module_roots(ctx)) {
+    for (const char* suffix : {".vx", "/mod.vx"}) {
+      fs::path probe = root / rel;
+      probe += suffix;
+      if (path_exists(probe))
+        return normalize(probe);
+    }
+  }
+  return {};
+}
+
+ModuleParam to_module_param(const Param& p) {
+  return ModuleParam{std::string(p.name), std::string(p.type)};
+}
+
+// 从模块 AST 提取声明摘要（不含函数体）
+void extract_module_decls(const Program& prog, ImportedModule& out) {
+  for (const Stmt* s : prog.stmts) {
+    switch (s->kind) {
+      case NodeKind::FuncDecl: {
+        const auto* f = static_cast<const FuncDecl*>(s);
+        ModuleFunc mf;
+        mf.name = std::string(f->name);
+        mf.ret_type = std::string(f->ret_type);
+        mf.line = f->line;
+        for (const Param& p : f->params)
+          mf.params.push_back(to_module_param(p));
+        out.funcs.push_back(std::move(mf));
+        break;
+      }
+      case NodeKind::ExternDecl: {
+        const auto* e = static_cast<const ExternDecl*>(s);
+        ModuleFunc mf;
+        mf.name = std::string(e->name);
+        mf.ret_type = std::string(e->ret_type);
+        mf.is_extern = true;
+        mf.line = e->line;
+        for (const Param& p : e->params)
+          mf.params.push_back(to_module_param(p));
+        out.funcs.push_back(std::move(mf));
+        break;
+      }
+      case NodeKind::ClassDecl:
+      case NodeKind::StructDecl: {
+        const bool is_class = s->kind == NodeKind::ClassDecl;
+        ModuleClass mc;
+        mc.name = is_class ? std::string(static_cast<const ClassDecl*>(s)->name)
+                           : std::string(static_cast<const StructDecl*>(s)->name);
+        mc.line = s->line;
+        const std::span<const ClassField> fields =
+            is_class ? static_cast<const ClassDecl*>(s)->fields : static_cast<const StructDecl*>(s)->fields;
+        for (const ClassField& f : fields) {
+          if (f.init != nullptr)
+            continue; // 类常量跨单元不解析
+          mc.fields.push_back(ModuleField{std::string(f.name), std::string(f.type)});
+        }
+        if (is_class) {
+          for (const FuncDecl* fn : static_cast<const ClassDecl*>(s)->methods) {
+            ModuleMethod mm;
+            mm.name = std::string(fn->name);
+            mm.ret_type = std::string(fn->ret_type);
+            std::size_t self = (!fn->params.empty() && fn->params[0].name == "self") ? 1 : 0;
+            for (std::size_t i = self; i < fn->params.size(); ++i)
+              mm.params.push_back(to_module_param(fn->params[i]));
+            if (mm.name == "new") {
+              mc.has_ctor = true;
+              mc.ctor_arity = mm.params.size();
+            }
+            mc.methods.push_back(std::move(mm));
+          }
+        }
+        out.classes.push_back(std::move(mc));
+        break;
+      }
+      case NodeKind::EnumDecl: {
+        const auto* e = static_cast<const EnumDecl*>(s);
+        ModuleEnum me;
+        me.name = std::string(e->name);
+        me.line = e->line;
+        for (const EnumMember& m : e->members)
+          me.members.emplace_back(std::string(m.name), m.value);
+        out.enums.push_back(std::move(me));
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
+// 扫描 import 语句并装载模块声明。找不到的模块静默跳过；
+// 文件存在但解析失败时记警告（不中断主文件编译）。
+void load_modules(const Program& prog, const ImportContext& ctx, DiagBag& bag, std::vector<ImportedModule>& out) {
+  std::vector<std::string> visited; // 去重键：文件 + 访问前缀（同一模块可被别名重复导入）
+  for (const Stmt* s : prog.stmts) {
+    if (s->kind != NodeKind::Import)
+      continue;
+    const auto* im = static_cast<const Import*>(s);
+    if (im->path.empty())
+      continue;
+    const fs::path file = resolve_module_file(ctx, im->path);
+    if (file.empty())
+      continue;
+    const std::string prefix = im->alias.empty() ? std::string(last_segment(im->path)) : std::string(im->alias);
+    const std::string key = file.string() + "|" + prefix;
+    if (std::find(visited.begin(), visited.end(), key) != visited.end())
+      continue;
+    visited.push_back(key);
+
+    auto src = vx::util::read_file(file);
+    if (!src)
+      continue;
+    vx::util::Arena arena;
+    DiagBag mod_bag;
+    const std::string name = file.string();
+    auto toks = tokenize(*src, name, arena, mod_bag);
+    auto mod_prog = parse(toks, name, arena, mod_bag);
+    if (!mod_prog) {
+      bag.add(make_diag(diag_code::sem_import, Severity::Warning,
+                        "模块 '" + std::string(im->path) + "' 解析失败，其声明不参与本次编译", name, 1, 0));
+      continue;
+    }
+    ImportedModule mod;
+    mod.path = std::string(im->path);
+    mod.prefix = prefix;
+    mod.file = name;
+    extract_module_decls(*mod_prog, mod);
+    out.push_back(std::move(mod));
+  }
+}
+
 std::string_view alias_of(const std::string_view alias, std::string_view fallback) {
   return alias.empty() ? fallback : alias;
 }
@@ -250,6 +415,14 @@ const ImportedLib* ImportTable::lib_by_prefix(std::string_view prefix) const {
       if (l.ref == ref)
         return &l;
     }
+  }
+  return nullptr;
+}
+
+const ImportedModule* ImportTable::module_by_prefix(std::string_view prefix) const {
+  for (const ImportedModule& m : modules) {
+    if (m.prefix == prefix)
+      return &m;
   }
   return nullptr;
 }
@@ -440,6 +613,8 @@ std::optional<ImportTable> build_import_table(const Program& prog, const ImportC
       table.libs.push_back(std::move(lib));
     }
   }
+  // import 语句：装载被导入 .vx 模块的声明摘要（找不到/解析失败时跳过）
+  load_modules(prog, ctx, bag, table.modules);
   return table;
 }
 
