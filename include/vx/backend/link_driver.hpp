@@ -26,7 +26,12 @@ std::string find_clang();
 
 // 将 LLVM IR 文本编译+链接为可执行文件 exe_path（注入内置 vxrt 运行时）。
 // target 为空（默认）时按 host 平台链接；非空时给 clang 追加 -target（交叉编译）。
-LinkResult link_executable(std::string_view ll_ir, std::string_view exe_path, std::string_view target = {});
+LinkResult link_executable(std::string_view ll_ir, std::string_view exe_path, std::string_view target = {},
+                           int opt_level = -1, bool debug = false);
+
+// 仅编译为原生目标文件（.o），不链接。用于外部构建系统 / 静态库归档。
+LinkResult emit_object(std::string_view ll_ir, std::string_view obj_path, std::string_view target = {},
+                       int opt_level = -1, bool debug = false);
 
 // 模块感知链接：在 link_executable 基础上，依 ModuleIR::libs 并入导入库的
 // 实现文件（@imp 的 .c/.a/.dylib），并为 @cppimp 生成 C++ shim 一并编译。
@@ -38,7 +43,7 @@ LinkResult link_executable(std::string_view ll_ir, std::string_view exe_path, st
 LinkResult link_module(std::string_view ll_ir, const vx::compiler::ir::ModuleIR& mod, std::string_view exe_path,
                        std::string_view target = {}, bool shared = false,
                        const std::vector<std::string>& native_libs = {}, const std::vector<std::string>& cflags = {},
-                       const std::vector<std::string>& ldflags = {});
+                       const std::vector<std::string>& ldflags = {}, int opt_level = -1, bool debug = false);
 
 // 生成 @cppimp 的 C++ shim 源码：为每个 C++ 导入符号生成 extern "C" 包装，
 // 把 C++ ABI 转换为 VX ABI（符号 _vx_<lib>_<name>，类型映射见 vxabi.hpp）。

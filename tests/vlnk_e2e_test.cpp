@@ -278,6 +278,70 @@ int main() {
            "    return 0\n",
            "2|hello-arg|", "argv", false, "hello-arg");
 
+  // 64 位值模型：var 形参承载字符串指针不被截断
+  run_case("extern out(msg: string)\n"
+           "func show(x: var):\n"
+           "    out(x)\n"
+           "func main():\n"
+           "    var s = \"ptr-ok\"\n"
+           "    show(s)\n",
+           "ptr-ok", "varptr", false, {}, true);
+
+  // 64 位值模型：var 返回对象（构造器工厂模式）
+  run_case("extern out_int(v: int)\n"
+           "class Box:\n"
+           "    v: int\n"
+           "    func new(x: int) -> var:\n"
+           "        var b = new Box()\n"
+           "        b.v = x\n"
+           "        return b\n"
+           "func main():\n"
+           "    var b = new Box(42)\n"
+           "    out_int(b.v)\n",
+           "42", "varret", false, {}, true);
+
+  // 64 位值模型：var 字段存对象，属性链访问
+  run_case("extern out_int(v: int)\n"
+           "class Box:\n"
+           "    v: int\n"
+           "class Holder:\n"
+           "    h: var\n"
+           "func main():\n"
+           "    var b = new Box()\n"
+           "    b.v = 7\n"
+           "    var o = new Holder()\n"
+           "    o.h = b\n"
+           "    out_int(o.h.v)\n",
+           "7", "varfield", false, {}, true);
+
+  // 语法补齐：hex/binary 字面量、pass、_ 丢弃标识符、\uXXXX 转义
+  run_case("extern out(msg: string)\n"
+           "extern out_int(v: int)\n"
+           "func f() -> int:\n"
+           "    if 0x10 == 16:\n"
+           "        pass\n"
+           "    else:\n"
+           "        pass\n"
+           "    var _ = 0b1010\n"
+           "    var _ = 0x4E00\n"
+           "    return 0x2A\n"
+           "func main():\n"
+           "    out_int(f())\n"
+           "    out(\"|\")\n"
+           "    out(\"\\u4F60\")\n",
+           "42|你", "syntax", false, {}, true);
+
+  // 显式类型转换：int / float / bool / str
+  run_case("extern out(msg: string)\n"
+           "extern out_int(v: int)\n"
+           "extern out_float(v: float)\n"
+           "func main():\n"
+           "    out_int(int(3.9))\n"
+           "    out_float(float(2))\n"
+           "    out(str(true))\n"
+           "    out(str(42))\n",
+           "32true42", "cast", false, {}, true);
+
   if (g_failures == 0) {
     std::fprintf(stdout, "vlnk e2e: all passed\n");
     return 0;

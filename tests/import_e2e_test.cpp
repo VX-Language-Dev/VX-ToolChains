@@ -17,6 +17,8 @@
 #include <array>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -70,7 +72,7 @@ void run_case(const std::string& src, const std::string& expected, const std::st
     return;
 
   const fs::path headers = fs::path(VX_SOURCE_DIR) / "headers";
-  ImportContext ctx{headers, headers};
+  ImportContext ctx{headers, headers, {}, {}};
   auto imports = build_import_table(*prog, ctx, "<e2e>", bag);
   CHECK(imports.has_value());
   if (!imports) {
@@ -117,8 +119,110 @@ void run_case(const std::string& src, const std::string& expected, const std::st
 
   auto [code, out] = run_capture(exe);
   CHECK(code == 0);
-  CHECK(out == expected);
+  if (out != expected) {
+    std::fprintf(stderr, "FAIL case '%s': output mismatch (len %zu vs %zu)\n--- expected ---\n%s\n--- actual ---\n%s\n",
+                 tag.c_str(), out.size(), expected.size(), expected.c_str(), out.c_str());
+    ++g_failures;
+  }
   ::remove(exe.c_str());
+}
+
+// 多编译单元：模块源写入 <dir>/pkg/mathx.vx，主源写入 <dir>/main.vx；
+// 两单元分别 编译→VXOBJ→读回，再合并为一个模块链接运行（等价 vlnk 多输入）。
+void run_case_module(const std::string& mod_src, const std::string& main_src, const std::string& expected,
+                     const std::string& tag) {
+  const fs::path dir = fs::path("/tmp") / ("vx_mod_e2e_src_" + tag + "_" + std::to_string(::getpid()));
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir / "pkg", ec);
+  {
+    std::ofstream mf(dir / "pkg" / "mathx.vx");
+    mf << mod_src;
+    std::ofstream mn(dir / "main.vx");
+    mn << main_src;
+  }
+
+  const std::string host = backend::host_triple();
+  const std::string sources[2] = {mod_src, main_src};
+  const std::string names[2] = {"pkg/mathx.vx", "main.vx"};
+  const fs::path dirs[2] = {dir / "pkg", dir};
+  const fs::path headers = fs::path(VX_SOURCE_DIR) / "headers";
+  static Arena arena;
+  std::string objs[2];
+  backend::VxobjReadResult rts[2];
+
+  for (int i = 0; i < 2; ++i) {
+    DiagBag bag;
+    auto toks = tokenize(sources[i], names[i], arena, bag);
+    auto prog = parse(toks, names[i], arena, bag);
+    CHECK(prog.has_value());
+    if (!prog)
+      return;
+    ImportContext ctx{headers, dirs[i], {}, {}};
+    auto imports = build_import_table(*prog, ctx, names[i], bag);
+    CHECK(imports.has_value());
+    if (!imports)
+      return;
+    Analysis analysis;
+    if (!check_module(*prog, names[i], bag, &*imports, &analysis)) {
+      std::fprintf(stderr, "semantics error (%s/%d):\n%s", tag.c_str(), i, render_all(bag, sources[i], false).c_str());
+      ++g_failures;
+      return;
+    }
+    auto mod = generate_module(*prog, names[i], bag, &*imports, &analysis);
+    CHECK(mod.has_value());
+    if (!mod)
+      return;
+    objs[i] = obj::serialize(*mod, host);
+    rts[i] = backend::read_vxobj(objs[i]);
+    CHECK(rts[i].ok);
+    if (!rts[i].ok)
+      return;
+  }
+
+  // 合并（与 vlnk 多输入规则一致：函数名/结构名/链接符号去重）
+  ir::ModuleIR merged;
+  std::set<std::string> func_names;
+  std::set<std::string> struct_names;
+  std::set<std::string> link_keys;
+  for (backend::VxobjReadResult& rt : rts) {
+    for (ir::FuncIR& f : rt.module.funcs) {
+      if (func_names.insert(f.name).second)
+        merged.funcs.push_back(f);
+    }
+    for (ir::StructLayout& sl : rt.module.structs) {
+      if (struct_names.insert(sl.name).second)
+        merged.structs.push_back(sl);
+    }
+    for (ir::LinkEntry& e : rt.module.linkage) {
+      const std::string key = e.abi_symbol.empty() ? e.name : e.abi_symbol;
+      if (link_keys.insert(key).second)
+        merged.linkage.push_back(e);
+    }
+  }
+
+  auto em = backend::emit_llvm_ir(merged, host);
+  CHECK(em.ok);
+  if (!em.ok) {
+    std::fprintf(stderr, "emit error (%s): %s\n", tag.c_str(), em.error.c_str());
+    return;
+  }
+  const std::string exe = "/tmp/vx_mod_e2e_" + tag + "_" + std::to_string(::getpid());
+  auto lr = backend::link_module(em.ir, merged, exe);
+  CHECK(lr.ok);
+  if (!lr.ok) {
+    std::fprintf(stderr, "link error (%s): %s\n", tag.c_str(), lr.error.c_str());
+    return;
+  }
+  auto [code, out] = run_capture(exe);
+  CHECK(code == 0);
+  if (out != expected) {
+    std::fprintf(stderr, "FAIL case '%s': output mismatch (len %zu vs %zu)\n--- expected ---\n%s\n--- actual ---\n%s\n",
+                 tag.c_str(), out.size(), expected.size(), expected.c_str(), out.c_str());
+    ++g_failures;
+  }
+  ::remove(exe.c_str());
+  fs::remove_all(dir, ec);
 }
 
 } // namespace
@@ -525,6 +629,118 @@ func main() -> int:
            "    out(\"\\n\")\n"
            "    return 0\n",
            "5\n55\n5\ntrue\n4.5\n2.75\n42\nboom\nHello, VX!\n", "alllibs");
+
+  // text 库扩展：查找 / 前缀后缀 / 截取 / trim / 数值转换 / 行切分
+  run_case("@imp(text)\n"
+           "func main() -> int:\n"
+           "    out_int(text.find(\"hello world\", \"world\"))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(text.find(\"abc\", \"z\"))\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(text.contains(\"abc\", \"bc\"))\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(text.starts_with(\"hello\", \"he\"))\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(text.ends_with(\"hello\", \"lo\"))\n"
+           "    out(\"\\n\")\n"
+           "    out(text.substr(\"abcdef\", 2, 3))\n"
+           "    out(\"\\n\")\n"
+           "    out(text.substr(\"abc\", 5, 9))\n"
+           "    out(\"\\n\")\n"
+           "    out(text.trim(\"  hi \\t\"))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(text.char_at(\"abc\", 1))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(text.char_at(\"abc\", 9))\n"
+           "    out(\"\\n\")\n"
+           "    out(text.from_char(65))\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(text.is_int(\"-42\"))\n"
+           "    out(\"\\n\")\n"
+           "    out_bool(text.is_int(\"12a\"))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(text.parse_int(\" -42\"))\n"
+           "    out(\"\\n\")\n"
+           "    out(text.format_int(123))\n"
+           "    out(\"\\n\")\n"
+           "    out_int(text.line_count(\"a\\nb\\nc\"))\n"
+           "    out(\"\\n\")\n"
+           "    out(text.line_at(\"a\\nb\\n\", 0))\n"
+           "    out(\"|\")\n"
+           "    out(text.line_at(\"a\\nb\\n\", 1))\n"
+           "    out(\"|\")\n"
+           "    return 0\n",
+           "6\n-1\ntrue\ntrue\ntrue\ncde\n\nhi\n98\n-1\nA\ntrue\nfalse\n-42\n123\n3\na|b|", "textapi");
+
+  // fs 库：路径运算 + 目录创建/列举/删除（目录名带 pid，避免并发冲突）
+  {
+    const std::string dir = "/tmp/vx_fs_e2e_" + std::to_string(::getpid());
+    const std::string src = "@imp(fs)\n"
+                            "@imp(text)\n"
+                            "func main() -> int:\n"
+                            "    var p: string = fs.path_join(\"/tmp\", \"vx_fs_e2e_" +
+                            std::to_string(::getpid()) +
+                            "\")\n"
+                            "    out(fs.path_dir(p))\n"
+                            "    out(\"|\")\n"
+                            "    out(fs.path_base(p))\n"
+                            "    out(\"\\n\")\n"
+                            "    out(fs.path_dir(\"a.txt\"))\n"
+                            "    out(\"|\")\n"
+                            "    out(fs.path_base(\"a.txt\"))\n"
+                            "    out(\"\\n\")\n"
+                            "    out_int(fs.mkdir_p(p))\n"
+                            "    out(\"|\")\n"
+                            "    out_bool(fs.dir_exists(p))\n"
+                            "    out(\"\\n\")\n"
+                            "    var f: string = fs.path_join(p, \"a.txt\")\n"
+                            "    file_write(f, \"abc\")\n"
+                            "    out_int(fs.file_size(f))\n"
+                            "    out(\"|\")\n"
+                            "    out_bool(fs.is_file(f))\n"
+                            "    out(\"\\n\")\n"
+                            "    var listed: string = fs.list_dir(p)\n"
+                            "    out(listed)\n"
+                            "    out_int(text.line_count(listed))\n"
+                            "    out(\"\\n\")\n"
+                            "    out_int(fs.remove_file(f))\n"
+                            "    out(\"|\")\n"
+                            "    out_bool(fs.is_file(f))\n"
+                            "    out(\"\\n\")\n"
+                            "    return 0\n";
+    std::string base = "vx_fs_e2e_" + std::to_string(::getpid());
+    run_case(src, "/tmp|" + base + "\n.|a.txt\n0|true\n3|true\na.txt\n1\n0|false\n", "fsapi");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+  }
+
+  // 跨编译单元模块：import pkg.mathx 获取 枚举/类/函数 声明，
+  // 主单元发射调用与构造，模块单元提供实现，合并后链接运行
+  run_case_module("enum Level:\n"
+                  "    Low\n"
+                  "    High = 5\n"
+                  "class Counter:\n"
+                  "    n: int\n"
+                  "    func new(start: int):\n"
+                  "        self.n = start\n"
+                  "    func bump() -> int:\n"
+                  "        self.n = self.n + 1\n"
+                  "        return self.n\n"
+                  "func add(a: int, b: int) -> int:\n"
+                  "    return a + b\n",
+                  "import pkg.mathx\n"
+                  "func main() -> int:\n"
+                  "    out_int(mathx.add(1, 2))\n"
+                  "    out(\"\\n\")\n"
+                  "    var c: Counter = mathx.Counter(10)\n"
+                  "    out_int(c.bump())\n"
+                  "    out(\"\\n\")\n"
+                  "    out_int(c.n)\n"
+                  "    out(\"\\n\")\n"
+                  "    out_int(Level.High)\n"
+                  "    out(\"\\n\")\n"
+                  "    return 0\n",
+                  "3\n11\n11\n5\n", "module");
 
   if (g_failures == 0) {
     std::fprintf(stdout, "import e2e: all passed\n");

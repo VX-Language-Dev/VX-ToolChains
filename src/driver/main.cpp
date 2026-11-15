@@ -1,6 +1,5 @@
 // main.cpp — vxc002：VX 编译器前端（read → lex → parse → codegen）。
 // 002 = TypeIR 代码生成已就绪；VXOBJ writer 待 vxc003。
-// CLI 对齐自举 compiler/vxc.vx 的参数风格。
 #include "vx/compiler/codegen.hpp"
 #include "vx/compiler/diag.hpp"
 #include "vx/compiler/importer.hpp"
@@ -26,7 +25,7 @@ namespace fs = std::filesystem;
 using namespace vx::compiler;
 using vx::util::Arena;
 
-static constexpr std::string_view VERSION = "0.5.0";
+static constexpr std::string_view VERSION = "0.7.1";
 
 struct Options {
   std::string source;
@@ -34,6 +33,8 @@ struct Options {
   std::string target;                // --target <triple>：空则用 host_triple()
   std::string color = "auto";        // auto | always | never
   std::vector<std::string> includes; // -I 头文件搜索目录（按序，可多次）
+  int opt_level = -1;                // -O0..-O3；-1 = 未指定（随 VXOBJ flags 传给链接器）
+  bool debug = false;                // -g：请求后端生成调试信息
   bool verbose = false;
   bool help = false;
   bool version = false;
@@ -65,6 +66,8 @@ static void print_help() {
                "  --target <tpl>  Cross-compile target triple (e.g. x86_64-linux-gnu)\n"
                "                  (default: auto-detect host triple)\n"
                "  --check         Type-check only; do not write output\n"
+               "  -O<n>           Optimization level 0..3 (recorded in VXOBJ, used by vlnk)\n"
+               "  -g, --debug     Record debug-info request in VXOBJ (vlnk passes -g)\n"
                "  --dump          Print module summary to stdout\n"
                "  -v, --verbose   Verbose output\n"
                "  --color <when>  Colorize diagnostics: auto|always|never (default auto;\n"
@@ -99,6 +102,12 @@ static int parse_args(int argc, char** argv, Options& opts) {
       }
     } else if (a == "--check") {
       opts.check = true;
+    } else if (a == "-g" || a == "--debug") {
+      opts.debug = true;
+    } else if (a.size() == 2 && a[0] == '-' && a[1] == 'O') {
+      opts.opt_level = -1; // -O：交给后端默认（llc 默认 O2）
+    } else if (a.size() == 3 && a.starts_with("-O") && a[2] >= '0' && a[2] <= '3') {
+      opts.opt_level = a[2] - '0';
     } else if (a == "--dump") {
       opts.dump = true;
     } else if (a == "-o") {
@@ -316,8 +325,11 @@ int main(int argc, char** argv) {
   }
   // 平台三元组：--target <triple> 优先；空则编译期自动检测宿主
   const std::string target = opts.target.empty() ? vx::util::host_triple() : opts.target;
+  ir_res->opt_level = opts.opt_level;
+  ir_res->debug = opts.debug;
   if (opts.verbose) {
-    std::fprintf(stderr, "  target: %s (%s)\n", target.c_str(), vx::util::host_name().c_str());
+    std::fprintf(stderr, "  target: %s (%s), opt=%d, debug=%d\n", target.c_str(), vx::util::host_name().c_str(),
+                 opts.opt_level, opts.debug ? 1 : 0);
   }
   const std::string vxobj_data = vx::compiler::obj::serialize(*ir_res, target);
 

@@ -16,7 +16,8 @@ namespace vx::backend {
 struct VxobjReadResult {
   bool ok = false;
   std::string error;
-  std::string target; // 文件头中的平台三元组
+  std::string target;      // 文件头中的平台三元组
+  std::uint32_t flags = 0; // 文件头 flags（优化级别 / 调试信息）
   vx::compiler::ir::ModuleIR module;
   std::deque<std::string> pool; // 支撑 Param 的 string_view
 };

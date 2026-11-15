@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -177,11 +178,44 @@ std::string find_linker() {
 #endif
 }
 
+// 原子输出：先写同目录临时文件，成功后再 rename 覆盖目标，避免失败留下半个产物。
+fs::path temp_output_path(std::string_view out) {
+  return fs::path(std::string(out) + ".vxtmp." + std::to_string(static_cast<long>(::getpid())));
+}
+
+bool commit_output(const fs::path& tmp, std::string_view out, std::string& err) {
+  std::error_code ec;
+  fs::rename(tmp, fs::path(std::string(out)), ec);
+  if (ec) {
+    err = "无法写入输出文件 " + std::string(out) + ": " + ec.message();
+    fs::remove(tmp, ec);
+    return false;
+  }
+  return true;
+}
+
+// macOS 链接器不把 DWARF 嵌入最终二进制；-g 时用 dsymutil 生成 .dSYM。
+void make_dsym_if_needed(std::string_view exe_path, bool debug) {
+#if defined(__APPLE__)
+  if (!debug)
+    return;
+  const std::string dsymutil = vx::util::find_in_path({"dsymutil"});
+  if (dsymutil.empty())
+    return;
+  const std::string cmd = "\"" + dsymutil + "\" \"" + std::string(exe_path) + "\" -o \"" + std::string(exe_path) +
+                          ".dSYM\" >/dev/null 2>&1";
+  (void)std::system(cmd.c_str());
+#else
+  (void)exe_path;
+  (void)debug;
+#endif
+}
+
 // ---- 旧版 clang 驱动实现（作为回退） ----
 LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std::string_view target,
                           const std::vector<std::string>& extra_files, const std::vector<MemorySource>& extra_sources,
-                          bool shared, const std::vector<std::string>& cflags,
-                          const std::vector<std::string>& ldflags) {
+                          bool shared, const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags,
+                          int opt_level, bool debug) {
   LinkResult r;
   const std::string clang = find_clang();
   if (clang.empty()) {
@@ -198,6 +232,7 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
   }
   TempDirGuard guard{fs::path(dir)};
   const fs::path& tmp = guard.path;
+  const fs::path tmp_out = temp_output_path(exe_path);
   const fs::path ll_file = tmp / "module.ll";
   const fs::path log_file = tmp / "clang.log";
   const std::string vxrt_lib = find_vxrt_lib();
@@ -233,6 +268,14 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
   for (const std::string& f : cflags) {
     args.push_back(f);
     r.command += " " + f;
+  }
+  if (opt_level >= 0) {
+    args.push_back("-O" + std::to_string(opt_level));
+    r.command += " -O" + std::to_string(opt_level);
+  }
+  if (debug) {
+    args.emplace_back("-g");
+    r.command += " -g";
   }
   args.emplace_back("-Wno-override-module");
   r.command += " -Wno-override-module";
@@ -270,7 +313,7 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
     r.command += " -target " + std::string(target);
   }
   args.emplace_back("-o");
-  args.emplace_back(exe_path);
+  args.emplace_back(tmp_out.string());
   r.command += " -o " + std::string(exe_path);
   for (const std::string& f : ldflags) {
     args.push_back(f);
@@ -280,13 +323,20 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
   std::string err;
   const int code = run_subprocess(clang, args, log_file, &err);
   if (code != 0) {
-    r.error = "clang 链接失败 (exit " + std::to_string(code) + "):\n" + (err.empty() ? "(无输出)" : err);
+    r.error = "clang 链接失败 (exit " + std::to_string(code) + "):\n" + (err.empty() ? "(无输出)" : err) +
+              "\n命令: " + r.command;
     return r;
   }
-  if (!fs::exists(exe_path)) {
+  if (!fs::exists(tmp_out)) {
     r.error = "clang 报告成功但未生成可执行文件";
     return r;
   }
+  std::string rename_err;
+  if (!commit_output(tmp_out, exe_path, rename_err)) {
+    r.error = rename_err;
+    return r;
+  }
+  make_dsym_if_needed(exe_path, debug);
   r.ok = true;
   return r;
 }
@@ -295,7 +345,8 @@ LinkResult link_via_clang(std::string_view ll_ir, std::string_view exe_path, std
 LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, std::string_view target,
                              const std::vector<std::string>& extra_files,
                              const std::vector<MemorySource>& extra_sources, bool shared,
-                             const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags) {
+                             const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags,
+                             int opt_level, bool debug) {
   LinkResult r;
   const std::string llc = find_llc();
   const std::string cc = find_cc();
@@ -316,6 +367,7 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   }
   TempDirGuard guard{fs::path(dir)};
   const fs::path& tmp = guard.path;
+  const fs::path tmp_out = temp_output_path(exe_path);
   const std::string host = vx::backend::host_triple();
   const std::string triple = target.empty() ? host : std::string(target);
 
@@ -332,10 +384,15 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   {
     std::vector<std::string> args = {llc,  "--filetype=obj", "--mtriple=" + triple,
                                      "-o", obj_vx.string(),  ll_file.string()};
+    if (opt_level >= 0) {
+      args.push_back("-O" + std::to_string(opt_level));
+    }
+    // 注意：llc 无 -g 选项；IR 中的 !dbg 元数据默认会生成 DWARF 行表。
     const fs::path log = tmp / "llc.log";
     std::string err;
     if (run_subprocess(llc, args, log, &err) != 0) {
-      r.error = "llc 编译失败:\n" + err;
+      r.error = "llc 编译失败:\n" + err + "\n命令: " + llc + " --filetype=obj --mtriple=" + triple + " -o " +
+                obj_vx.string() + " " + ll_file.string();
       return r;
     }
   }
@@ -347,30 +404,71 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   if (!vxrt_lib.empty()) {
     extra_a_files.push_back(vxrt_lib);
   } else {
-    const fs::path rt_file = tmp / "vxrt.c";
-    const fs::path rt_obj = tmp / "vxrt.o";
-    std::ofstream(rt_file, std::ios::binary) << kVxrtSource;
-    std::vector<std::string> args = {cc, "-c", "-o", rt_obj.string(), rt_file.string()};
+    // 缓存键：运行时代码 + 目标 + 编译选项（避免不同 -O/-g/宏 复用错误对象）
+    std::string cache_key{kVxrtSource};
+    cache_key += "|" + triple + "|O" + std::to_string(opt_level);
+    cache_key += debug ? "|g" : "";
+    cache_key += shared ? "|pic" : "";
     for (const auto& f : cflags) {
-      // 粗粒度 cflag 过滤：-target/-arch/-shared/-fPIC 对单文件编译无意义；-W/-O/-I/-D 等有益
       if (f.starts_with("-W") || f.starts_with("-O") || f.starts_with("-I") || f.starts_with("-D") ||
           f.starts_with("-std"))
-        args.push_back(f);
+        cache_key += "|" + f;
     }
-    if (!target.empty()) {
-      args.emplace_back("-target");
-      args.emplace_back(target);
+    const std::string hash = std::to_string(std::hash<std::string>{}(cache_key));
+    fs::path cache_obj;
+    if (const char* home = std::getenv("HOME"); home != nullptr && home[0] != '\0') {
+      cache_obj = fs::path(home) / ".cache" / "vx" / ("vxrt-" + hash + ".o");
+      std::error_code ec;
+      if (fs::is_regular_file(cache_obj, ec) && !ec) {
+        extra_a_files.push_back(cache_obj.string());
+        r.command += " # vxrt.o cache hit";
+      } else {
+        cache_obj.clear();
+      }
     }
-    if (shared)
-      args.emplace_back("-fPIC");
-    const fs::path log = tmp / "cc_vxrt.log";
-    std::string err;
-    if (run_subprocess(cc, args, log, &err) != 0) {
-      r.error = "cc 编译 vxrt.c 失败:\n" + err;
-      return r;
+    if (cache_obj.empty()) {
+      const fs::path rt_file = tmp / "vxrt.c";
+      const fs::path rt_obj = tmp / "vxrt.o";
+      std::ofstream(rt_file, std::ios::binary) << kVxrtSource;
+      std::vector<std::string> args = {cc, "-c", "-o", rt_obj.string(), rt_file.string()};
+      for (const auto& f : cflags) {
+        // 粗粒度 cflag 过滤：-target/-arch/-shared/-fPIC 对单文件编译无意义；-W/-O/-I/-D 等有益
+        if (f.starts_with("-W") || f.starts_with("-O") || f.starts_with("-I") || f.starts_with("-D") ||
+            f.starts_with("-std"))
+          args.push_back(f);
+      }
+      if (opt_level >= 0)
+        args.push_back("-O" + std::to_string(opt_level));
+      if (debug)
+        args.emplace_back("-g");
+      if (!target.empty()) {
+        args.emplace_back("-target");
+        args.emplace_back(target);
+      }
+      if (shared)
+        args.emplace_back("-fPIC");
+      const fs::path log = tmp / "cc_vxrt.log";
+      std::string err;
+      if (run_subprocess(cc, args, log, &err) != 0) {
+        r.error =
+            "cc 编译 vxrt.c 失败:\n" + err + "\n命令: " + cc + " -c -o " + rt_obj.string() + " " + rt_file.string();
+        return r;
+      }
+      obj_files.push_back(rt_obj);
+      r.command += " && " + cc + " -c -o " + rt_obj.string() + " " + rt_file.string();
+      // 写入缓存（临时文件 + rename，避免并发读到半成品）
+      if (const char* home = std::getenv("HOME"); home != nullptr && home[0] != '\0') {
+        std::error_code ec;
+        const fs::path dir = fs::path(home) / ".cache" / "vx";
+        fs::create_directories(dir, ec);
+        if (!ec) {
+          const fs::path staged = dir / ("vxrt-" + hash + ".o.tmp." + std::to_string(static_cast<long>(::getpid())));
+          fs::copy_file(rt_obj, staged, fs::copy_options::overwrite_existing, ec);
+          if (!ec)
+            fs::rename(staged, dir / ("vxrt-" + hash + ".o"), ec);
+        }
+      }
     }
-    obj_files.push_back(rt_obj);
-    r.command += " && " + cc + " -c -o " + rt_obj.string() + " " + rt_file.string();
   }
 
   // ---- 3. 内存源（@cppimp shim.cpp 等）----
@@ -389,6 +487,10 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
       if (f.starts_with("-W") || f.starts_with("-O") || f.starts_with("-I") || f.starts_with("-D") ||
           f.starts_with("-std"))
         args.push_back(f);
+    if (opt_level >= 0)
+      args.push_back("-O" + std::to_string(opt_level));
+    if (debug)
+      args.emplace_back("-g");
     if (!target.empty()) {
       args.emplace_back("-target");
       args.emplace_back(target);
@@ -398,7 +500,8 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
     const fs::path log = tmp / (std::string(is_cxx ? "cxx_" : "cc_") + p.stem().string() + ".log");
     std::string err;
     if (run_subprocess(compiler, args, log, &err) != 0) {
-      r.error = compiler + " 编译 " + src.name + " 失败:\n" + err;
+      r.error = compiler + " 编译 " + src.name + " 失败:\n" + err + "\n命令: " + compiler + " -c -o " + out.string() +
+                " " + p.string();
       return r;
     }
     obj_files.push_back(out);
@@ -430,6 +533,10 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
       if (cf.starts_with("-W") || cf.starts_with("-O") || cf.starts_with("-I") || cf.starts_with("-D") ||
           cf.starts_with("-std"))
         args.push_back(cf);
+    if (opt_level >= 0)
+      args.push_back("-O" + std::to_string(opt_level));
+    if (debug)
+      args.emplace_back("-g");
     if (!target.empty()) {
       args.emplace_back("-target");
       args.emplace_back(target);
@@ -439,7 +546,7 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
     const fs::path log = tmp / (std::string(is_cxx ? "cxx_" : "cc_") + in_path.stem().string() + ".log");
     std::string err;
     if (run_subprocess(compiler, args, log, &err) != 0) {
-      r.error = compiler + " 编译 " + f + " 失败:\n" + err;
+      r.error = compiler + " 编译 " + f + " 失败:\n" + err + "\n命令: " + compiler + " -c -o " + out.string() + " " + f;
       return r;
     }
     obj_files.push_back(out);
@@ -453,12 +560,12 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   std::string arch = triple.substr(0, triple.find('-'));
   if (arch == "aarch64")
     arch = "arm64";
-  link_args.push_back("-arch");
+  link_args.emplace_back("-arch");
   link_args.push_back(arch);
-  link_args.push_back("-platform_version");
-  link_args.push_back("macos");
-  link_args.push_back("11.0");
-  link_args.push_back("0.0.0");
+  link_args.emplace_back("-platform_version");
+  link_args.emplace_back("macos");
+  link_args.emplace_back("11.0");
+  link_args.emplace_back("0.0.0");
   // syslibroot：xcrun --show-sdk-path 拿 MacOSX.sdk 路径
   std::string sysroot;
   {
@@ -474,17 +581,17 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
     }
   }
   if (!sysroot.empty()) {
-    link_args.push_back("-syslibroot");
+    link_args.emplace_back("-syslibroot");
     link_args.push_back(sysroot);
   }
   if (shared) {
-    link_args.push_back("-dylib");
-    link_args.push_back("-install_name");
-    link_args.push_back("@rpath/" + fs::path(exe_path).filename().string());
+    link_args.emplace_back("-dylib");
+    link_args.emplace_back("-install_name");
+    link_args.emplace_back("@rpath/" + fs::path(exe_path).filename().string());
   } else {
     // 可执行文件默认加 @loader_path，让 @rpath 能找到同目录的 dylib（与 clang 默认行为一致）
-    link_args.push_back("-rpath");
-    link_args.push_back("@loader_path");
+    link_args.emplace_back("-rpath");
+    link_args.emplace_back("@loader_path");
   }
 #else
   // Linux ld.lld：--shared 产生 .so
@@ -500,7 +607,7 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
   // 系统库
 #if defined(__APPLE__)
   // macOS 全部系统库（libc/libm/pthread/...）合并进 libSystem
-  link_args.push_back("-lSystem");
+  link_args.emplace_back("-lSystem");
 #else
   // Linux 显式链接 libc + libm + pthread（旧版 glibc 的 pthread 需单独链接）
   link_args.push_back("-lc");
@@ -516,15 +623,31 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
       any_cxx = true;
   if (any_cxx) {
 #if defined(__APPLE__)
-    link_args.push_back("-lc++");
+    link_args.emplace_back("-lc++");
 #else
     link_args.push_back("-lstdc++");
 #endif
   }
-  link_args.push_back("-o");
-  link_args.push_back(std::string(exe_path));
-  for (const auto& f : ldflags)
-    link_args.push_back(f);
+  link_args.emplace_back("-o");
+  link_args.emplace_back(tmp_out.string());
+  // clang 风格的 -Wl,... / --sysroot 参数转成 lld 直接参数
+  for (const auto& f : ldflags) {
+    if (f.starts_with("-Wl,-rpath,")) {
+      link_args.emplace_back("-rpath");
+      link_args.emplace_back(f.substr(10));
+    } else if (f == "-Wl,-S") {
+      link_args.emplace_back("-S");
+    } else if (f.starts_with("--sysroot=")) {
+#if defined(__APPLE__)
+      link_args.emplace_back("-syslibroot");
+      link_args.emplace_back(f.substr(10));
+#else
+      link_args.push_back(f);
+#endif
+    } else {
+      link_args.push_back(f);
+    }
+  }
 
   const fs::path link_log = tmp / "lld.log";
   std::string link_err;
@@ -538,13 +661,19 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
     r.command += " " + a;
   }
   if (run_subprocess(linker, link_args, link_log, &link_err) != 0) {
-    r.error = "链接失败 (" + linker + "):\n" + link_err;
+    r.error = "链接失败 (" + linker + "):\n" + link_err + "\n命令: " + r.command;
     return r;
   }
-  if (!fs::exists(exe_path)) {
+  if (!fs::exists(tmp_out)) {
     r.error = "链接成功但未生成产物";
     return r;
   }
+  std::string rename_err;
+  if (!commit_output(tmp_out, exe_path, rename_err)) {
+    r.error = rename_err;
+    return r;
+  }
+  make_dsym_if_needed(exe_path, debug);
   r.ok = true;
   return r;
 }
@@ -553,24 +682,27 @@ LinkResult link_via_pipeline(std::string_view ll_ir, std::string_view exe_path, 
 LinkResult link_impl(std::string_view ll_ir, std::string_view exe_path, std::string_view target,
                      const std::vector<std::string>& extra_files, const std::vector<MemorySource>& extra_sources,
                      bool shared = false, const std::vector<std::string>& cflags = {},
-                     const std::vector<std::string>& ldflags = {}) {
+                     const std::vector<std::string>& ldflags = {}, int opt_level = -1, bool debug = false) {
   // 分段链路先决条件：llc + cc + linker 都在；任一缺失则回退 clang 驱动
   if (!find_llc().empty() && !find_cc().empty() && !find_linker().empty()) {
-    auto r = link_via_pipeline(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags);
+    auto r = link_via_pipeline(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags, opt_level,
+                               debug);
     if (r.ok)
       return r;
     // 失败则回退 clang（保留 r.error 便于诊断，clang 回退信息会附在 LinkResult.error）
     if (!find_clang().empty()) {
-      auto fallback = link_via_clang(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags);
+      auto fallback = link_via_clang(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags,
+                                     opt_level, debug);
       if (fallback.ok) {
         fallback.error = "(分段链路失败已自动回退 clang: " + r.error + ")";
         return fallback;
       }
+      r.error += "\nclang 回退也失败:\n" + fallback.error;
     }
     return r;
   }
   // 直接走 clang
-  return link_via_clang(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags);
+  return link_via_clang(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags, opt_level, debug);
 }
 
 } // namespace
@@ -591,8 +723,82 @@ std::string find_lld() {
   return vx::util::find_in_path({"ld.lld"});
 }
 
-LinkResult link_executable(std::string_view ll_ir, std::string_view exe_path, std::string_view target) {
-  return link_impl(ll_ir, exe_path, target, {}, {});
+LinkResult link_executable(std::string_view ll_ir, std::string_view exe_path, std::string_view target, int opt_level,
+                           bool debug) {
+  return link_impl(ll_ir, exe_path, target, {}, {}, false, {}, {}, opt_level, debug);
+}
+
+LinkResult emit_object(std::string_view ll_ir, std::string_view obj_path, std::string_view target, int opt_level,
+                       bool debug) {
+  LinkResult r;
+  const std::string llc = find_llc();
+  const std::string triple = target.empty() ? host_triple() : std::string(target);
+  if (!llc.empty()) {
+    std::string tmpl = (fs::temp_directory_path() / "vxobj_XXXXXX").string();
+    std::vector<char> tmpl_buf(tmpl.begin(), tmpl.end());
+    tmpl_buf.push_back('\0');
+    const char* dir = ::mkdtemp(tmpl_buf.data());
+    if (dir == nullptr) {
+      r.error = "无法创建临时目录";
+      return r;
+    }
+    TempDirGuard guard{fs::path(dir)};
+    const fs::path ll_file = guard.path / "module.ll";
+    std::ofstream(ll_file, std::ios::binary) << std::string(ll_ir);
+    std::vector<std::string> args = {llc,  "--filetype=obj",      "--mtriple=" + triple,
+                                     "-o", std::string(obj_path), ll_file.string()};
+    if (opt_level >= 0)
+      args.push_back("-O" + std::to_string(opt_level));
+    const fs::path log = guard.path / "llc.log";
+    std::string err;
+    r.command = llc + " --filetype=obj --mtriple=" + triple + " -o " + std::string(obj_path) + " " + ll_file.string();
+    if (run_subprocess(llc, args, log, &err) != 0) {
+      r.error = "llc 编译失败:\n" + err + "\n命令: " + r.command;
+      return r;
+    }
+    if (!fs::exists(obj_path)) {
+      r.error = "llc 报告成功但未生成目标文件";
+      return r;
+    }
+    r.ok = true;
+    return r;
+  }
+  // 回退 clang -c
+  const std::string clang = find_clang();
+  if (clang.empty()) {
+    r.error = "未找到 llc / clang，无法生成目标文件";
+    return r;
+  }
+  std::string tmpl = (fs::temp_directory_path() / "vxobj_XXXXXX").string();
+  std::vector<char> tmpl_buf(tmpl.begin(), tmpl.end());
+  tmpl_buf.push_back('\0');
+  const char* dir = ::mkdtemp(tmpl_buf.data());
+  if (dir == nullptr) {
+    r.error = "无法创建临时目录";
+    return r;
+  }
+  TempDirGuard guard{fs::path(dir)};
+  const fs::path ll_file = guard.path / "module.ll";
+  std::ofstream(ll_file, std::ios::binary) << std::string(ll_ir);
+  std::vector<std::string> args = {
+      clang, "-c", ll_file.string(), "-o", std::string(obj_path), "-Wno-override-module", "-target", triple};
+  if (opt_level >= 0)
+    args.push_back("-O" + std::to_string(opt_level));
+  if (debug)
+    args.emplace_back("-g");
+  const fs::path log = guard.path / "clang.log";
+  std::string err;
+  r.command = clang + " -c " + ll_file.string() + " -o " + std::string(obj_path);
+  if (run_subprocess(clang, args, log, &err) != 0) {
+    r.error = "clang 编译失败:\n" + err + "\n命令: " + r.command;
+    return r;
+  }
+  if (!fs::exists(obj_path)) {
+    r.error = "clang 报告成功但未生成目标文件";
+    return r;
+  }
+  r.ok = true;
+  return r;
 }
 
 std::string generate_cpp_shim(const vx::compiler::ir::ModuleIR& mod) {
@@ -642,7 +848,8 @@ std::string generate_cpp_shim(const vx::compiler::ir::ModuleIR& mod) {
 
 LinkResult link_module(std::string_view ll_ir, const vx::compiler::ir::ModuleIR& mod, std::string_view exe_path,
                        std::string_view target, bool shared, const std::vector<std::string>& native_libs,
-                       const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags) {
+                       const std::vector<std::string>& cflags, const std::vector<std::string>& ldflags, int opt_level,
+                       bool debug) {
   std::vector<std::string> extra_files;
   for (const vx::compiler::ir::LibDep& d : mod.libs) {
     if (d.impl_file.empty())
@@ -661,7 +868,7 @@ LinkResult link_module(std::string_view ll_ir, const vx::compiler::ir::ModuleIR&
   }
   if (any_cpp)
     extra_sources.push_back({"vxshim.cpp", generate_cpp_shim(mod)});
-  return link_impl(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags);
+  return link_impl(ll_ir, exe_path, target, extra_files, extra_sources, shared, cflags, ldflags, opt_level, debug);
 }
 
 } // namespace vx::backend

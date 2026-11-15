@@ -17,6 +17,8 @@
 #include <string>
 #include <string_view>
 
+#include <unistd.h>
+
 namespace {
 
 int g_failures = 0;
@@ -175,6 +177,7 @@ void test_full_lib_set() {
   const std::string src = "@imp(math)\n"
                           "@imp(collections/vec)\n"
                           "@imp(text)\n"
+                          "@imp(fs)\n"
                           "@imp(fmath)\n"
                           "@imp(math) as m\n"
                           "@cppimp(cpp/greet.hpp)\n";
@@ -188,8 +191,8 @@ void test_full_lib_set() {
   CHECK(imports.has_value());
   if (!imports)
     return;
-  // 别名引用去重：5 个独立库（math 只装载一次）
-  CHECK(imports->libs.size() == 5);
+  // 别名引用去重：6 个独立库（math 只装载一次）
+  CHECK(imports->libs.size() == 6);
   CHECK(imports->aliases.size() == 1);
   if (imports->aliases.size() == 1) {
     CHECK(imports->aliases[0].first == "m");
@@ -201,10 +204,11 @@ void test_full_lib_set() {
   if (m != nullptr)
     CHECK(m->ref == "math" && m->name == "math");
 
-  // text 库：string/bool/void 三类签名与 ABI 符号
+  // text 库：string/bool/void 三类签名与 ABI 符号（库已扩展，按名称断言首三个）
   const ImportedLib* text = imports->lib_by_prefix("text");
   CHECK(text != nullptr);
-  if ((text != nullptr) && text->symbols.size() == 3) {
+  if (text != nullptr) {
+    CHECK(text->symbols.size() >= 3);
     CHECK(text->symbols[0].vx_name == "length");
     CHECK(text->symbols[0].abi_symbol == "_vx_text_length");
     CHECK(text->symbols[0].ret_type == "int");
@@ -213,8 +217,26 @@ void test_full_lib_set() {
     CHECK(text->symbols[1].ret_type == "bool");
     CHECK(text->symbols[2].vx_name == "shout");
     CHECK(text->symbols[2].ret_type.empty()); // void
-  } else {
-    CHECK(false);
+  }
+
+  // fs 库：目录/路径 API 签名与 ABI 符号
+  const ImportedLib* fs_lib = imports->lib_by_prefix("fs");
+  CHECK(fs_lib != nullptr);
+  if (fs_lib != nullptr) {
+    CHECK(fs_lib->symbols.size() >= 3);
+    CHECK(fs_lib->symbols[0].vx_name == "mkdir");
+    CHECK(fs_lib->symbols[0].abi_symbol == "_vx_fs_mkdir");
+    CHECK(fs_lib->symbols[0].ret_type == "int");
+    bool has_join = false;
+    bool has_list = false;
+    for (const ImportedSymbol& sym : fs_lib->symbols) {
+      if (sym.vx_name == "path_join")
+        has_join = sym.ret_type == "string";
+      if (sym.vx_name == "list_dir")
+        has_list = sym.ret_type == "string";
+    }
+    CHECK(has_join);
+    CHECK(has_list);
   }
 
   // fmath 库：float 签名
@@ -446,6 +468,79 @@ void test_relative_ref_ignores_include_dirs() {
   fs::remove_all(inc, ec);
 }
 
+// import 模块装载：点分路径 → 目录 .vx，提取类/枚举/函数声明摘要
+void test_import_modules() {
+  namespace fsx = std::filesystem;
+  std::error_code ec;
+  const fsx::path dir = fsx::temp_directory_path(ec) / ("vx_mod_test_" + std::to_string(::getpid()));
+  fsx::remove_all(dir, ec);
+  fsx::create_directories(dir / "pkg", ec);
+  const std::string mod_src = "enum Level:\n"
+                              "    Low\n"
+                              "    High = 5\n"
+                              "class Counter:\n"
+                              "    n: int\n"
+                              "    func new(start: int):\n"
+                              "        self.n = start\n"
+                              "    func bump() -> int:\n"
+                              "        return self.n\n"
+                              "func add(a: int, b: int) -> int:\n"
+                              "    return a + b\n";
+  auto w = vx::util::write_file(dir / "pkg" / "mathx.vx", mod_src);
+  CHECK(w.has_value());
+  const std::string src = "import pkg.mathx\n"
+                          "import pkg.mathx as m2\n"
+                          "func main():\n"
+                          "    out_int(mathx.add(1, 2))\n";
+  static Arena arena;
+  DiagBag bag;
+  auto toks = tokenize(src, "<test>", arena, bag);
+  auto prog = parse(toks, "<test>", arena, bag);
+  CHECK(prog.has_value());
+  if (prog) {
+    ImportContext ctx{.headers_root = headers_root(), .source_dir = dir, .include_dirs = {}, .sys_dirs = {}};
+    auto imports = build_import_table(*prog, ctx, "<test>", bag);
+    CHECK(imports.has_value());
+    if (imports) {
+      // 同一文件只装载一次；别名前缀单独登记
+      CHECK(imports->modules.size() == 2);
+      const ImportedModule* a = imports->module_by_prefix("mathx");
+      const ImportedModule* b = imports->module_by_prefix("m2");
+      CHECK(a != nullptr);
+      CHECK(b != nullptr);
+      CHECK(imports->module_by_prefix("nope") == nullptr);
+      if (a != nullptr) {
+        CHECK(a->path == "pkg.mathx");
+        CHECK(a->classes.size() == 1);
+        CHECK(a->enums.size() == 1);
+        CHECK(a->funcs.size() == 1);
+        if (a->classes.size() == 1) {
+          const ModuleClass& c = a->classes[0];
+          CHECK(c.name == "Counter");
+          CHECK(c.fields.size() == 1);
+          CHECK(c.has_ctor);
+          CHECK(c.ctor_arity == 1);
+          CHECK(c.methods.size() == 2);
+        }
+        if (a->enums.size() == 1) {
+          const ModuleEnum& e = a->enums[0];
+          CHECK(e.name == "Level");
+          CHECK(e.members.size() == 2);
+          if (e.members.size() == 2) {
+            CHECK(e.members[1].first == "High" && e.members[1].second == 5);
+          }
+        }
+        if (a->funcs.size() == 1) {
+          CHECK(a->funcs[0].name == "add");
+          CHECK(a->funcs[0].params.size() == 2);
+          CHECK(a->funcs[0].ret_type == "int");
+        }
+      }
+    }
+  }
+  fsx::remove_all(dir, ec);
+}
+
 } // namespace
 
 int main() {
@@ -455,6 +550,7 @@ int main() {
   test_missing_lib_diagnostic();
   test_include_dirs();
   test_relative_ref_ignores_include_dirs();
+  test_import_modules();
   test_codegen_abi_call();
   test_codegen_unknown_symbol();
   test_emitter_declares_import_symbols();

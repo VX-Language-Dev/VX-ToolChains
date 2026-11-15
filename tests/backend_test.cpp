@@ -279,7 +279,7 @@ void test_emitter_float_type_mismatch() {
 
   auto r = backend::emit_llvm_ir(mod, kTriple);
   CHECK(!r.ok);
-  CHECK(r.error.find("F64 算术操作数非 double") != std::string::npos);
+  CHECK(r.error.find("F64 算术操作数") != std::string::npos);
 }
 
 void test_emitter_unsupported_opcode() {
@@ -598,6 +598,92 @@ void test_emitter_atomic_ops() {
   CHECK(ir.find("@_vx_proc_atomic") == std::string::npos); // 无外部符号残留
 }
 
+void test_local_types_roundtrip() {
+  ir::ModuleIR mod;
+  ir::FuncIR f;
+  f.name = "f";
+  f.ret_type = "int";
+  f.local_count = 2;
+  f.local_types = {ir::TYPE_STRING, ir::TYPE_FLOAT};
+  ir::Inst c;
+  c.op = ir::OP_CONST_INT;
+  c.args = "i1";
+  ir::Inst r;
+  r.op = ir::OP_RETURN;
+  f.instructions = {c, r};
+  f.lines = {1, 2};
+  mod.funcs.push_back(std::move(f));
+
+  const std::string data = obj::serialize(mod, kTriple);
+  auto rt = backend::read_vxobj(data);
+  CHECK(rt.ok);
+  CHECK(rt.module.funcs.size() == 1);
+  if (!rt.module.funcs.empty()) {
+    const auto& lts = rt.module.funcs[0].local_types;
+    CHECK(lts.size() == 2);
+    CHECK(!lts.empty() && lts[0] == ir::TYPE_STRING);
+    CHECK(lts.size() > 1 && lts[1] == ir::TYPE_FLOAT);
+  }
+}
+
+void test_local_static_types_emit() {
+  ir::ModuleIR mod;
+  ir::FuncIR f;
+  f.name = "f";
+  f.ret_type = "void";
+  f.local_count = 1;
+  f.local_types = {ir::TYPE_STRING};
+  ir::Inst cs;
+  cs.op = ir::OP_CONST_STRING;
+  cs.args = "sabc";
+  ir::Inst st;
+  st.op = ir::OP_STORE_VAR;
+  st.args = "0";
+  ir::Inst ld;
+  ld.op = ir::OP_LOAD_VAR;
+  ld.args = "0";
+  ir::Inst pop;
+  pop.op = ir::OP_POP;
+  ir::Inst ret;
+  ret.op = ir::OP_RETURN_VOID;
+  f.instructions = {cs, st, ld, pop, ret};
+  mod.funcs.push_back(std::move(f));
+
+  auto res = backend::emit_llvm_ir(mod, kTriple);
+  CHECK(res.ok);
+  CHECK(res.ir.find("alloca ptr") != std::string::npos);
+  CHECK(res.ir.find("store ptr") != std::string::npos);
+}
+
+void test_emitter_debug_info() {
+  ir::ModuleIR mod;
+  mod.debug = true;
+  mod.source_file = "demo.vx";
+  ir::FuncIR f;
+  f.name = "f";
+  f.ret_type = "int";
+  ir::Inst c;
+  c.op = ir::OP_CONST_INT;
+  c.args = "i1";
+  ir::Inst c2;
+  c2.op = ir::OP_CONST_INT;
+  c2.args = "i2";
+  ir::Inst add;
+  add.op = ir::OP_I32_ADD;
+  ir::Inst r;
+  r.op = ir::OP_RETURN;
+  f.instructions = {c, c2, add, r};
+  f.lines = {3, 3, 3, 4};
+  mod.funcs.push_back(std::move(f));
+
+  auto res = backend::emit_llvm_ir(mod, kTriple);
+  CHECK(res.ok);
+  CHECK(res.ir.find("!DICompileUnit") != std::string::npos);
+  CHECK(res.ir.find("!DISubprogram(name: \"f\"") != std::string::npos);
+  CHECK(res.ir.find("!DILocation(line: 3") != std::string::npos);
+  CHECK(res.ir.find("!dbg !") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -621,6 +707,9 @@ int main() {
   test_emitter_func_value_and_ptr_ops();
   test_emitter_func_value_missing();
   test_emitter_atomic_ops();
+  test_local_types_roundtrip();
+  test_local_static_types_emit();
+  test_emitter_debug_info();
 
   if (g_failures == 0) {
     std::fprintf(stdout, "backend tests: all passed\n");

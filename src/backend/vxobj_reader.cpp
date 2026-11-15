@@ -3,6 +3,8 @@
 #include "vx/backend/vxobj_reader.hpp"
 
 #include <cstdint>
+#include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace vx::backend {
@@ -96,7 +98,9 @@ VxobjReadResult read_vxobj(std::string_view data) {
     r.error = "不支持的 VXOBJ 版本: " + std::to_string(version);
     return r;
   }
-  (void)c.u32(); // flags
+  r.flags = c.u32();
+  r.module.opt_level = (r.flags & 0x7U) != 0U ? static_cast<int>((r.flags & 0x7U) - 1U) : -1;
+  r.module.debug = (r.flags & 8U) != 0U;
   r.target = c.str();
   const std::uint32_t section_count = c.u32();
 
@@ -105,8 +109,11 @@ VxobjReadResult read_vxobj(std::string_view data) {
   std::size_t typeir_size = 0;
   std::size_t deps_off = 0;
   std::size_t deps_size = 0;
+  std::size_t lines_off = 0;
+  std::size_t lines_size = 0;
   bool found = false;
   bool found_deps = false;
+  bool found_lines = false;
   for (std::uint32_t i = 0; i < section_count; ++i) {
     const std::string name = c.str();
     const std::uint32_t off = c.u32();
@@ -121,6 +128,10 @@ VxobjReadResult read_vxobj(std::string_view data) {
       deps_off = off;
       deps_size = sz;
       found_deps = true;
+    } else if (name == "Lines") {
+      lines_off = off;
+      lines_size = sz;
+      found_lines = true;
     }
   }
   if (c.bad) {
@@ -182,7 +193,17 @@ VxobjReadResult read_vxobj(std::string_view data) {
     f.local_count = t.u32();
 
     const std::uint32_t local_types_count = t.u32();
-    t.skip(static_cast<std::size_t>(local_types_count) * 5); // {u32 var_id, u8 tag}
+    for (std::uint32_t k = 0; k < local_types_count; ++k) {
+      const std::uint32_t slot = t.u32();
+      const std::uint8_t tag = t.u8();
+      if (slot >= f.local_types.size())
+        f.local_types.resize(slot + 1, 0xFF);
+      f.local_types[slot] = tag;
+      if (t.bad)
+        break;
+    }
+    if (f.local_types.size() < f.local_count)
+      f.local_types.resize(f.local_count, 0xFF);
 
     const std::uint32_t inst_count = t.u32();
     for (std::uint32_t k = 0; k < inst_count; ++k) {
@@ -254,6 +275,38 @@ VxobjReadResult read_vxobj(std::string_view data) {
     }
     if (d.bad) {
       r.error = d.error;
+      return r;
+    }
+  }
+
+  // ---- 源码行号（Lines section，可选）----
+  if (found_lines) {
+    if (lines_off + lines_size > data.size()) {
+      r.error = "Lines section 越界";
+      return r;
+    }
+    Cursor l{data.substr(lines_off, lines_size)};
+    r.module.source_file = l.str();
+    const std::uint32_t line_func_count = l.u32();
+    std::unordered_map<std::string, ir::FuncIR*> by_name;
+    by_name.reserve(r.module.funcs.size() * 2U + 1U);
+    for (ir::FuncIR& f : r.module.funcs)
+      by_name.emplace(f.name, &f);
+    for (std::uint32_t i = 0; i < line_func_count; ++i) {
+      const std::string fname = l.str();
+      const std::uint32_t count = l.u32();
+      std::vector<int> lines;
+      lines.reserve(count);
+      for (std::uint32_t k = 0; k < count; ++k)
+        lines.push_back(static_cast<int>(l.u32()));
+      if (l.bad)
+        break;
+      auto it = by_name.find(fname);
+      if (it != by_name.end())
+        it->second->lines = std::move(lines);
+    }
+    if (l.bad) {
+      r.error = l.error;
       return r;
     }
   }

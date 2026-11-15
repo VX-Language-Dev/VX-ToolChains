@@ -35,6 +35,29 @@ int32_t vx_pow_i32(int32_t base, int32_t exp) {
 /* 浮点幂（VX ^ 运算符）：libc pow，支持负指数与分数指数 */
 double vx_pow_f64(double base, double exp) { return pow(base, exp); }
 
+/* 显式转换 str(x)：返回 malloc 的新串（调用方负责释放） */
+static const char *vx_str_dup(const char *s) {
+  size_t n = strlen(s) + 1;
+  char *r = (char *)malloc(n);
+  if (!r) return s;
+  memcpy(r, s, n);
+  return r;
+}
+
+const char *vx_str_from_int(int32_t v) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%d", v);
+  return vx_str_dup(buf);
+}
+
+const char *vx_str_from_float(double v) {
+  char buf[64];
+  snprintf(buf, sizeof(buf), "%g", v);
+  return vx_str_dup(buf);
+}
+
+const char *vx_str_from_bool(int32_t v) { return v ? "true" : "false"; }
+
 /* P4: 动态数组（元素统一为 8 字节槽） */
 void *vx_array_new(int64_t n) {
   if (n < 0) n = 0;

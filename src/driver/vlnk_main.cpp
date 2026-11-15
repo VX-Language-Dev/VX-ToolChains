@@ -7,6 +7,7 @@
 #include "vx/util/fs.hpp"
 #include "vx/util/platform.hpp"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <set>
@@ -17,7 +18,7 @@
 
 namespace ir = vx::compiler::ir;
 
-static constexpr std::string_view VERSION = "vlnk 0.2.1";
+static constexpr std::string_view VERSION = "vlnk 0.2.3";
 
 struct Options {
   std::vector<std::string> inputs;
@@ -27,7 +28,13 @@ struct Options {
   std::vector<std::string> cflags;
   std::vector<std::string> ldflags;
   std::string output = "a.out";
-  std::string target; // 空 = 自动检测 host；非空 = 显式目标平台（交叉编译）
+  std::string target;              // 空 = 自动检测 host；非空 = 显式目标平台（交叉编译）
+  int opt_level = -1;              // -O0..-O3；-1 = 未指定（用输入 VXOBJ 记录的值）
+  bool debug = false;              // -g
+  bool compile_only = false;       // -c：只生成 .o
+  bool strip = false;              // 链接后剥离符号
+  std::vector<std::string> rpaths; // --rpath
+  std::string sysroot;             // --sysroot
   bool emit_ir = false;
   bool dump = false;
   bool shared = false;
@@ -56,6 +63,13 @@ static void print_help() {
                "                    command (e.g. -rpath,...; repeatable)\n"
                "  --target <triple> Target platform triple (default: auto-detect host;\n"
                "                    passed to llc as --mtriple for cross-compilation)\n"
+               "  -O<n>             Optimization level 0..3 passed to llc/clang/cc\n"
+               "                    (default: VXOBJ flags, else toolchain default)\n"
+               "  -g, --debug       Pass -g to llc/clang/cc (debug info)\n"
+               "  -c                Compile to a native object file only (no link)\n"
+               "  --strip           Strip symbols from the linked output\n"
+               "  --rpath <dir>     Add an rpath entry (repeatable)\n"
+               "  --sysroot <dir>   Use an alternate SDK/sysroot for compile and link\n"
                "  --emit-ir         Emit LLVM IR to stdout and stop (no link)\n"
                "  --dump            Print restored ModuleIR summary\n"
                "  -v, --verbose     Verbose output\n"
@@ -78,6 +92,26 @@ static int parse_args(int argc, char** argv, Options& opts) {
       opts.verbose = true;
     } else if (a == "--emit-ir") {
       opts.emit_ir = true;
+    } else if (a == "-g" || a == "--debug") {
+      opts.debug = true;
+    } else if (a == "-c") {
+      opts.compile_only = true;
+    } else if (a == "--strip") {
+      opts.strip = true;
+    } else if (a == "--rpath") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "error: --rpath requires a directory\n");
+        return 2;
+      }
+      opts.rpaths.emplace_back(argv[++i]);
+    } else if (a == "--sysroot") {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "error: --sysroot requires a directory\n");
+        return 2;
+      }
+      opts.sysroot = argv[++i];
+    } else if (a.size() == 3 && a.starts_with("-O") && a[2] >= '0' && a[2] <= '3') {
+      opts.opt_level = a[2] - '0';
     } else if (a == "--dump") {
       opts.dump = true;
     } else if (a == "--shared" || a == "-shared") {
@@ -151,6 +185,8 @@ static bool merge_inputs(std::vector<vx::backend::VxobjReadResult>& results, ir:
   std::set<std::string> lib_keys;
   std::set<std::string> globals;
   for (vx::backend::VxobjReadResult& rt : results) {
+    if (out.source_file.empty() && !rt.module.source_file.empty())
+      out.source_file = rt.module.source_file;
     for (ir::FuncIR& f : rt.module.funcs) {
       if (!func_names.insert(f.name).second) {
         error = "duplicate function definition '" + f.name + "' (multi-input merge)";
@@ -261,6 +297,35 @@ int main(int argc, char** argv) {
                  host.c_str());
   }
 
+  // 优化/调试选项：命令行优先，否则沿用输入 VXOBJ 的编译选项
+  int opt_level = opts.opt_level;
+  bool debug = opts.debug;
+  if (!results.empty()) {
+    if (opt_level < 0) {
+      const std::uint32_t code = results.front().flags & 0x7U;
+      if (code >= 1U && code <= 4U)
+        opt_level = static_cast<int>(code - 1U);
+    }
+    if (!debug)
+      debug = (results.front().flags & 8U) != 0;
+  }
+  if (opts.verbose) {
+    std::fprintf(stderr, "  opt=%d, debug=%d\n", opt_level, debug ? 1 : 0);
+  }
+  // 把最终选项写回模块，供 emitter 决定是否生成 DWARF 元数据。
+  module.opt_level = opt_level;
+  module.debug = debug;
+
+  // 额外的链接器参数：strip / rpath / sysroot
+  for (const std::string& dir : opts.rpaths)
+    opts.ldflags.push_back("-Wl,-rpath," + dir);
+  if (!opts.sysroot.empty()) {
+    opts.cflags.push_back("--sysroot=" + opts.sysroot);
+    opts.ldflags.push_back("--sysroot=" + opts.sysroot);
+  }
+  if (opts.strip)
+    opts.ldflags.push_back("-s");
+
   // 动态库不生成 @main 入口包装
   auto em = vx::backend::emit_llvm_ir(module, target, !opts.shared);
   if (!em.ok) {
@@ -273,13 +338,30 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // -c：只产出原生目标文件，供外部构建系统 / ar 归档
+  if (opts.compile_only) {
+    const std::string obj = (opts.output == "a.out") ? "a.o" : opts.output;
+    auto orr = vx::backend::emit_object(em.ir, obj, target == host ? std::string_view{} : std::string_view(target),
+                                        opt_level, debug);
+    if (!orr.ok) {
+      std::fprintf(stderr, "error: %s\n", orr.error.c_str());
+      if (!orr.command.empty())
+        std::fprintf(stderr, "编译命令: %s\n", orr.command.c_str());
+      return 1;
+    }
+    std::fprintf(stdout, "wrote %s\n", obj.c_str());
+    return 0;
+  }
+
   // target == host 走本机链接；否则给 clang 追加 -target（交叉编译）
   // 使用 link_module：依 vxobj 中的库依赖并入实现文件并生成 @cppimp shim。
   auto lr = vx::backend::link_module(em.ir, module, opts.output,
                                      target == host ? std::string_view{} : std::string_view(target), opts.shared,
-                                     opts.native_libs, opts.cflags, opts.ldflags);
+                                     opts.native_libs, opts.cflags, opts.ldflags, opt_level, debug);
   if (!lr.ok) {
     std::fprintf(stderr, "error: %s\n", lr.error.c_str());
+    if (!lr.command.empty())
+      std::fprintf(stderr, "链接命令: %s\n", lr.command.c_str());
     return 1;
   }
   if (opts.verbose) {
