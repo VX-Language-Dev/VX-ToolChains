@@ -868,7 +868,7 @@ cmake -G Ninja -B build -S . && ninja -C build vmake-lsp
 - **幂等**：配置块以 `>>> vx write-settings >>>` / `<<< vx write-settings <<<` 标记，
   重复执行就地更新该块，不会重复追加；既有配置内容保持不变，缺失目录自动创建。
 - **退出码**：0 = 成功；1 = 写入失败；2 = 用法错误（未知编辑器 / 多余参数 / 缺少 `HOME`）。
-- 语法高亮需另装 [tree-sitter-vx](tree-sitter-vx/) 语法（Neovim 经 nvim-treesitter、
+- 语法高亮需另装 tree-sitter-vx 语法（独立仓库，Neovim 经 nvim-treesitter、
   Helix 经 `grammars` 段配置）；语义能力（补全/悬停/跳转）由 `vxls --stdio` 提供。
 
 ### 11. 源码格式化（vfmt）
@@ -1061,8 +1061,6 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 │   ├── vxls/                 # VX 语言服务器（LSP over stdio，集成 vx-tidy）
 │   ├── vfmt/                 # VX 源码格式化工具（保留注释，AST 结构自检）
 │   └── vx-tidy/              # 静态分析引擎（纯动态库 libvxtidy，无 CLI）
-├── tree-sitter-vx/           # Tree-sitter 语法（编辑器高亮、语法导航）
-├── tree-sitter-vmake/        # Tree-sitter 语法（VMakeSet.vmake 高亮）
 ├── scripts/toolchains/       # CMake 交叉编译工具链预设（toolchain-*.cmake）
 ├── std/                      # VX 标准库（设计参考/前瞻规范，尚未接入编译器构建；可用能力见 headers/）
 ├── docs/                     # 语言与格式文档（SYNTAX.md / VMAKE_SYNTAX.md / CODE_LAYOUT.md）

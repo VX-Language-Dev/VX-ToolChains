@@ -2,7 +2,7 @@
 
 本文档描述 `VMakeSet.vmake`（VMake 项目构建配置）**实际支持**的语法，
 与 `tools/vmake/src/config.cpp` / `tools/vmake/src/build.cpp` / `tools/vmake/src/main.cpp`
-保持一致。Tree-sitter 高亮定义位于 `tree-sitter-vmake/grammar.js`。
+保持一致。Tree-sitter 高亮定义位于独立仓库 `tree-sitter-vmake` 的 `grammar.js`。
 
 ## 1. 文件与运行方式
 
@@ -516,7 +516,7 @@ vmake clean -B build-out
 
 ### 12.1 高亮（tree-sitter）
 
-`tree-sitter-vmake/grammar.js` 定义了 VMakeSet.vmake 的语法（目标类型关键字
+独立仓库 `tree-sitter-vmake` 的 `grammar.js` 定义了 VMakeSet.vmake 的语法（目标类型关键字
 `exe` / `dylib` / `staticlib`、字段名、字符串与注释），供编辑器高亮与语法导航使用。
 
 ### 12.2 语言服务器（vmake-lsp）
