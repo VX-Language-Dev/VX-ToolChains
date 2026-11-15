@@ -328,6 +328,20 @@ void fp_stmt(std::string& out, const Stmt* s) {
       fp_fields(out, s2->fields);
       break;
     }
+    case NodeKind::EnumDecl: {
+      const auto* en = static_cast<const EnumDecl*>(s);
+      out += "EN";
+      put_str(out, en->name);
+      out += '(';
+      for (const EnumMember& m : en->members) {
+        put_str(out, m.name);
+        out += '=';
+        out += std::to_string(m.value);
+        out += ';';
+      }
+      out += ')';
+      break;
+    }
     default:
       out += "?s;";
       break;

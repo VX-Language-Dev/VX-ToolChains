@@ -5,7 +5,6 @@
 语法规则依据 VX-ToolChains 参考实现制定：
 
 - `src/compiler/parser.cpp` —— C++ 参考解析器
-- `compiler/parser.vx` —— VX 自举解析器
 - `src/compiler/lexer.cpp` —— 缩进规则（INDENT/DEDENT）与词法
 
 ## 语法特性
@@ -60,5 +59,5 @@ tree-sitter-vx/
 ## 状态
 
 - 语料库测试 18/18 通过
-- VX-ToolChains 全部真实源码（`std/` 54 个 + `compiler/` 7 个 `.vx` 文件）100% 无 ERROR 解析
-  （`tests/*.decompiled.vx` 为编译器输出工件，使用 `//` 注释，不属于 VX 源码语法）
+- 语料取自仓库内 `std/` 与 `tests/` 下的 `.vx` 源码
+  （自举编译器 `compiler/*.vx` 已于 v1.21.0 移除，工具链只保留 `src/` 下的 C++ 实现）

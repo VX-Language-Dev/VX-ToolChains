@@ -3,7 +3,7 @@
 > **从零自研的编程语言工具链** — C++23 实现，一条纯自研的编译链路把 `.vx` 源码变成原生机器码
 >
 > ![Language](https://img.shields.io/badge/language-C%2B%2B23-blue)
-> ![Version](https://img.shields.io/badge/version-v1.19.0-blue)
+> ![Version](https://img.shields.io/badge/version-v1.21.1-blue)
 > ![Tests](https://img.shields.io/badge/tests-20%20suites%20100%25%20passing-brightgreen)
 > ![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
 > ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
@@ -55,7 +55,7 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
   ↓ Mach-O / ELF 原生可执行文件
 ```
 
-> 规划中：所有权 / 借用检查、直接机器码发射、宏系统、enum / 泛型。见 [CHANGELOG](CHANGELOG.md)。
+> 规划中：所有权 / 借用检查、直接机器码发射、宏系统、泛型。`enum` 已支持（整数枚举）。见 [CHANGELOG](CHANGELOG.md)。
 
 ---
 
@@ -63,14 +63,14 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 
 | 模块 | 职责 | 状态 | 版本 |
 |------|------|------|------|
-| `vxc` | 编译器前端：lex → parse → semantics → codegen → .vxobj | ✅ 可用 | 0.5.0 |
-| `vlnk` | 原生链接器：.vxobj → llc 生成 .o → lld 链接（自动探测系统 C/C++ 编译器，无 llc/lld 时回退 clang 驱动） | ✅ 可用 | 0.2.1 |
+| `vxc` | 编译器前端：lex → parse → semantics → codegen → .vxobj | ✅ 可用 | 0.7.1 |
+| `vlnk` | 原生链接器：.vxobj → llc 生成 .o → lld 链接（自动探测系统 C/C++ 编译器，无 llc/lld 时回退 clang 驱动） | ✅ 可用 | 0.2.3 |
 | `vmake` | 项目构建编排：VMakeSet.vmake 驱动 vxc/vlnk/ar | ✅ 可用 | 0.4.0 |
-| `vxls` | LSP 语言服务器：补全/悬停/跳转/重命名/内嵌提示（集成 vx-tidy） | ✅ 可用 | 0.5.0 |
+| `vxls` | LSP 语言服务器：补全/悬停/跳转/重命名/内嵌提示（集成 vx-tidy） | ✅ 可用 | 0.7.1 |
 | `vmake-lsp` | VMakeSet.vmake 语言服务器 | ✅ 可用 | 0.3.0 |
 | `vfmt` | 源码格式化（保留注释 + AST 结构自检） | ✅ 可用 | 0.1.0 |
 | `vx-tidy` | 静态分析引擎（纯动态库 libvxtidy） | ✅ 可用 | — |
-| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.19.0 |
+| `vx` | 元命令：`vx compile` / `vx run` / `vx fmt` / `vx write-settings` | ✅ 可用 | 1.21.1 |
 | VPM 包管理器 | 多语言包管理 | 🚧 规划 | — |
 | 反编译器 vxde | VXOBJ → VX 源码还原 | 🚧 规划 | — |
 
@@ -108,13 +108,19 @@ VX 目前适合编写以计算、文件读写为主的程序；**尚不能完整
   VX 语言层已有 **Mutex / Condvar / Semaphore / Barrier / Channel** 封装
   （`std/sys/sync.vx`，基于 proc 原语 + mutex/cond 组合实现，可编译执行、e2e 回归覆盖）；
   但 `std/` 其余模块仍是未接入构建的设计参考。
-- **文件系统**：仅有 `file_read`/`file_write`/`file_exists`，无目录创建/删除/列举/路径规范化，无法管理构建目录与头文件树。
-- **字符串处理**：仅拼接/比较/长度，无子串、查找、分割、trim、字符索引与字符串↔整数解析，难以编写解析器与签名器。
+- **文件系统**：`fs` 库提供 `mkdir` / `mkdir_p` / `dir_exists` / `is_file` / `list_dir` /
+  `remove_file` / `file_size` 与纯字符串路径运算（`path_join` / `path_base` / `path_dir`），
+  配合内置 `file_read` / `file_write` / `file_exists` 可管理构建目录与头文件树；
+  尚无权限/时间戳查询与递归遍历 API。
+- **字符串处理**：`text` 库提供 `find` / `contains` / `starts_with` / `ends_with` /
+  `substr` / `trim` / `char_at` / `from_char` / `is_int` / `parse_int` / `format_int` /
+  `line_count` / `line_at`，可编写解析器与签名器；尚无正则、可变缓冲与 Unicode 码点级操作。
 - **集合与内存**：列表/字典为 P4 MVP（8 字节统一槽），无动态追加/扩容/迭代器；`std/` 标准库未接入编译器构建。
 - **错误处理**：无异常/Result 类型，I/O 仅返回哨兵值，难以聚合结构化诊断。
-- **自举范围**：`compiler/*.vx` 仅覆盖前端语法/代码生成，不包含系统层能力；VMAKE 等工具链编排器仍以 C++ 实现。
+- **模块系统**：`import` 按「模块即头文件」装载声明，函数体仍由各单元自行编译、
+  链接期合并；暂不支持模块级常量、传递导入、可见性控制与循环依赖检测。
 
-> 若要用 VX 编写 VMAKE 等价物，需先补齐系统运行时（进程/目录/并发）、字符串与集合标准库，以及错误模型。
+> 若要用 VX 编写 VMAKE 等价物，仍需补齐集合标准库（动态数组/映射）与错误模型。
 
 ## 路线图（规划中）
 
@@ -122,7 +128,7 @@ VX 目前适合编写以计算、文件读写为主的程序；**尚不能完整
 
 - **所有权 / 借用检查**：Rust 风格 `mut` / `&` / `&mut`，编译期 aliasing XOR mutation 检测
 - **编译时宏系统**：参数化宏，零运行时开销
-- **enum / union / 泛型**：复合类型扩展
+- **union / 泛型**：联合体与类型参数化扩展（`enum` 已支持整数枚举）
 - **std 标准库接入**：`std::String`、`std::Vec<T>` 等下沉到编译器构建
 - **直接机器码发射**：跳过 clang 的原生代码生成
 - **VPM 包管理器**、**反编译器 vxde**
@@ -178,7 +184,7 @@ cmake --build build --config MinSizeRel
 
 | 产物                          | 说明                                    |
 | ----------------------------- | --------------------------------------- |
-| `vxc`                         | 编译器前端 CLI（CMake 目标 `vxc002`；`--version` 显示 0.5.0：lex → parse → imports → semantics → codegen → .vxobj，支持 `--check` / `--dump` / `-I` / `--target`） |
+| `vxc`                         | 编译器前端 CLI（CMake 目标 `vxc002`；`--version` 显示 0.7.1：lex → parse → imports → semantics → codegen → .vxobj，支持 `--check` / `--dump` / `-I` / `--target` / `-O<n>` / `-g`） |
 | `vlnk`                        | 原生链接器 CLI（.vxobj → LLVM IR → clang 链接） |
 | `tools/vxls/vxls`             | LSP 语言服务器（`--only-tidy` 兼作 vx-tidy 命令行入口） |
 | `tools/vmake/vmake`           | 项目构建编排器（VMakeSet.vmake）        |
@@ -282,6 +288,9 @@ Hello, VX!
 # 交叉编译目标三元组（默认自动检测 host triple）
 ./build/vxc hello.vx --target aarch64-unknown-linux-gnu
 
+# 优化级别与调试信息（写入 VXOBJ，vlnk 链接时生效）
+./build/vxc hello.vx -O2 -g
+
 # 打印模块摘要（funcs/insts/externs/globals）
 ./build/vxc hello.vx --dump
 
@@ -319,6 +328,15 @@ Hello, VX!
 
 # 输出动态库（clang -shared -fPIC，不生成 @main 入口包装）
 ./build/vlnk lib.vxobj --shared -o libmylib.dylib
+
+# 只生成原生目标文件（供外部构建系统 / ar 归档）
+./build/vlnk hello.vxobj -c -o hello.o
+
+# 优化 / 调试（-g 在 macOS 上同时生成 .dSYM）
+./build/vlnk hello.vxobj -O2 -g -o hello
+
+# 链接选项：剥离符号 / rpath / 自定义 sysroot
+./build/vlnk hello.vxobj -o hello --strip --rpath /opt/lib --sysroot /path/to/sdk
 
 # 链接原生库（.a / .dylib / .so，可多次）
 ./build/vlnk hello.vxobj -o hello --lib /opt/lib/libssl.a
@@ -392,6 +410,44 @@ func main():
     out_int(vec.sum_to(10))   # vec 库  → 符号 _vx_vec_sum_to
     out(greet.greet("VX"))    # greet 库 → shim 包装 C++ 符号
 ```
+
+**模块导入（`import`，跨编译单元声明解析）**：`import a.b.c` 把 `a/b/c.vx` 的
+**声明**（类/结构、枚举、函数签名）并入当前编译单元，函数体与实例布局代码由该模块
+自己的 `.vxobj` 提供，链接期由 `vlnk` 合并——等价「模块即头文件」，保持既有
+单文件编译 + 多输入链接的架构：
+
+```vx
+# pkg/mathx.vx
+enum Level:
+    Low
+    High = 5
+class Counter:
+    n: int
+    func new(start: int):
+        self.n = start
+    func bump() -> int:
+        return self.n
+func add(a: int, b: int) -> int:
+    return a + b
+
+# main.vx
+import pkg.mathx
+
+func main():
+    out_int(mathx.add(1, 2))          # 模块函数 → 符号 add
+    var c: Counter = mathx.Counter(10) # 构造：NEWZ + 调用 Counter.new
+    out_int(c.n)                       # 导入类的字段布局已知
+    out_int(Level.High)                # 枚举成员编译期内联
+```
+
+```bash
+vxc main.vx -o main.vxobj && vxc pkg/mathx.vx -o mathx.vxobj
+vlnk main.vxobj mathx.vxobj -o app
+```
+
+> 模块搜索根：`-I` 目录 → 源文件目录 → 其上级（最多 4 级）；`import a.b.c` 也接受
+> `a/b/c/mod.vx`。未找到的模块静默跳过，解析失败记警告并跳过其声明。
+> 尚不支持模块级常量、传递导入与可见性控制。
 
 **进程原语库 `proc`（多进程并发）**：`headers/proc.vxh` 只有声明、**无 `.c` 实现文件**——
 链接期 emitter 识别 `_vx_proc_*` 后直接发射对系统 libc 的调用，零 C/C++ 源码：
@@ -601,8 +657,30 @@ VX 签名的 `.vxh` 伴生文件可在 `-I` / 库根中按同主名提供。
 | void    | void      | void              |
 
 **内置示例库**（`headers/`，覆盖全部 5 种 ABI 类型）：`math` / `fmath`（根库 int/float）、
-`text`（string 入参、int/bool/void 返回）、`collections/vec`（子目录库）、`cpp/greet`（@cppimp）、
-`sys`（执行 shell 命令）。
+`text`（字符串查找/截取/trim/数值转换/行切分）、`collections/vec`（子目录库）、
+`cpp/greet`（@cppimp）、`sys`（执行 shell 命令）、`fs`（目录创建/列举、文件信息、路径运算）。
+
+**字符串与文件系统能力**（`text` / `fs`，均为 `.vxh` + `.c` 实现）：
+
+```vx
+@imp(text)
+@imp(fs)
+
+func main():
+    out_int(text.find("hello world", "world"))   # 6（未找到 -1）
+    out(text.substr("abcdef", 2, 3))             # cde
+    out(text.trim("  hi  "))                     # hi
+    out_int(text.parse_int("-42"))               # -42
+    out(text.format_int(123))                    # 123
+    var p: string = fs.path_join("/tmp", "demo")
+    fs.mkdir_p(p)                                # 递归创建目录，成功返回 0
+    file_write(fs.path_join(p, "a.txt"), "abc")
+    out(fs.list_dir(p))                          # a.txt（每行一个条目）
+```
+
+> `text` / `fs` 中返回 `string` 的函数均返回 **malloc 新串**，调用方用 `free` 释放；
+> 入参为 `nil` 时按空串处理。
+
 
 ### 4. 项目构建（VMake，VMakeSet.vmake）
 
@@ -856,9 +934,33 @@ func main():
     out(y)
 ```
 
-**内建类型**: `int`（i32）、`float`（IEEE double）、`bool`、`string`、`void`、`var`（推断槽位）
-**复合类型**: `struct`、`class`（`enum` / `union` 为软关键字，规划中）
+**内建类型**: `int`（i32）、`float`（IEEE double）、`bool`、`string`、`void`、`var`（64 位推断槽位，可承载 int/float/string/对象指针）
+**复合类型**: `struct`、`class`、`enum`（成员底层为 `int`；`union` 规划中）
 **标准库类型**: `std::String`、`std::Vec<T>`（`std/` 源码中，随编译器进度接入）
+
+### 对象与构造器
+
+- 类/结构在运行时以实例指针传递；类型标注写类名即可（`-> Box`、`p: Box`），IR 中规范化为 `ptr`。
+- `new C(args)` = 分配实例 + 调用 `C.new(self, args)`：
+  - 构造器返回非 void 时，以返回值作为表达式结果（工厂模式，可返回新实例）；
+  - 构造器返回 void 时，就地初始化并保留 `NEWZ` 分配的实例。
+- 无实参的 `new C()` 始终是裸分配（构造器内部用它分配实例，避免自递归）。
+
+### 显式类型转换
+
+VX 不做隐式数值转换；需要跨类型时使用内建转换函数：
+
+```vx
+int(3.9)       # → 3（浮点截断）
+float(2)       # → 2.0
+bool(0)        # → false
+str(42)        # → "42"
+str(true)      # → "true"
+```
+
+- `int` / `float` / `bool` 支持数值与 `ptr` 之间的按位转换。
+- `str` 对整数/浮点/布尔做格式化，字符串原样返回；返回的新串由运行时分配。
+- `str(var)` 目前按 32 位整数格式化（`var` 无运行时类型标签）。
 
 ### 内存安全模型（规划中）
 
@@ -918,6 +1020,7 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 [Sections]
   TypeIR         — 类型化中间表示 (代码、类型信息、链接表 linkage)
   Deps           — 导入库依赖 (@imp/@cppimp 的实现文件与 C++ 头文件，可选)
+  Lines          — 源文件名 + 每个函数的指令行号表（可选；供 DWARF / 诊断）
 ```
 
 > 链接表条目记录每个跨模块符号：VX 侧名、参数/返回签名，以及 VX ABI 符号名
@@ -932,13 +1035,16 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 ├── src/                      # C++ 源码目录
 │   ├── util/                 # Util 层：arena / str / fs / platform
 │   ├── compiler/             # Compiler 层：diag / vxabi / lexer / parser / importer / semantics / codegen / vxobj
+│   │                         #   parser_*.hpp / semantics_*.hpp 为内部实现头（仅供同名入口 .cpp 包含）
 │   ├── backend/              # Backend 层：vxobj_reader / llvm_emitter / link_driver
+│   │                         #   emitter_*.hpp 为内部实现头（仅供 llvm_emitter.cpp 包含）
 │   ├── runtime/              # vxrt.c：预编译为 libvxrt.a（vlnk 链接期并入）
 │   └── driver/               # vxc（前端 CLI）与 vlnk（后端 CLI）入口
 ├── include/                  # 公开头文件目录（vx/util、vx/compiler、vx/backend）
 ├── headers/                  # 导入库一套（@imp/@cppimp 测试覆盖全类型）
-│   ├── math.* / text.*       # 根目录库：int / string+bool+void
+│   ├── math.* / text.*       # 根目录库：int / 字符串处理（查找/截取/转换）
 │   ├── fmath.*               # 根目录库：float（double ABI）
+│   ├── fs.*                  # 目录/文件与路径运算库
 │   ├── collections/vec.*     # 子目录库（@imp(/collections/vec)）
 │   ├── proc.vxh              # 进程/线程/任务池/管道库（仅 .vxh，直连 libc + 后端 IR，无 .c）
 │   ├── ptr.vxh               # 指针运算库（add / to_int / from_int，仅 .vxh）
@@ -959,8 +1065,7 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 ├── tree-sitter-vmake/        # Tree-sitter 语法（VMakeSet.vmake 高亮）
 ├── scripts/toolchains/       # CMake 交叉编译工具链预设（toolchain-*.cmake）
 ├── std/                      # VX 标准库（设计参考/前瞻规范，尚未接入编译器构建；可用能力见 headers/）
-├── compiler/                 # VX 编译器前端源码（.vx 源文件，自举参考）
-├── docs/                     # 语言与格式文档（SYNTAX.md 等）
+├── docs/                     # 语言与格式文档（SYNTAX.md / VMAKE_SYNTAX.md / CODE_LAYOUT.md）
 ├── ci/                       # CI 配置
 ├── CMakeLists.txt            # CMake 构建配置（CMake + Ninja）
 ├── install.zsh               # 安装脚本（vxc/vlnk/vx/vxls/vmake/vmake-lsp/vfmt + libvxrt.a/libvxtidy + headers → ~/.local）

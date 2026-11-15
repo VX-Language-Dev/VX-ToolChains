@@ -36,6 +36,11 @@ static const std::set<std::string>& builtins() {
       "malloc",
       "free",
       "vx_str_concat",
+      // 显式类型转换
+      "int",
+      "float",
+      "bool",
+      "str",
       // 系统能力：命令行参数 / 文件 I/O
       "sys_argv_count",
       "sys_argv_get",

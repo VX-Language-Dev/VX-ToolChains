@@ -1,5 +1,139 @@
 # CHANGELOG
 
+## v1.21.1 (2026-11-15)
+
+### P0 收尾 + P1 前段：显式转换、调试信息、链接产物形态
+
+- **局部静态类型表（P0 收尾）**：
+  - `FuncIR` 新增 `local_types`（槽位 → TypeTag），Codegen 按声明标注或初始化表达式推断
+    （int/float/bool/string/ptr/类/列表/字典/函数值）；
+  - VXOBJ 已有的 `local_types` 占位段改为真实 {slot, tag} 条目，reader 回填；
+  - Emitter 按静态类型预分配局部槽位（参数槽仍由签名决定），
+    `var` 局部不再依赖「首次写入推断」，避免后续赋值导致槽位类型冲突或指针截断；
+  - 无法静态确定的槽位保留 0xFF，继续沿用首次写入推断。
+- **显式类型转换**：新增 `int(x)` / `float(x)` / `bool(x)` / `str(x)`。
+  - 关键字 `int`/`float`/`bool` 可在表达式位置作为转换调用；
+  - 新增 TypeIR 指令 `OP_CAST_INT/FLOAT/BOOL/STR`（97–100）；
+  - `str` 的整数/浮点格式化由 `vxrt.c` 的 `vx_str_from_*` 提供，布尔输出 `true`/`false`；
+  - `std/conv.vx` 由解析失败转为 `--check` 通过。
+- **行号级调试信息**：
+  - `FuncIR` 新增与指令平行的 `lines` 表；Codegen 在表达式/语句生成时记录源码行；
+  - VXOBJ 新增可选 `Lines` 段（源文件名 + 每函数行号表），旧 reader 忽略未知段；
+  - `vlnk -g` 发射 DWARF LineTablesOnly 元数据（`DICompileUnit` / `DISubprogram` / `DILocation`）；
+  - macOS 链接器不把 DWARF 嵌入产物，`-g` 时自动调用 `dsymutil` 生成 `.dSYM`；
+  - 修正 `llc` 不接受 `-g` 的问题：调试行表由 IR 元数据直接生成。
+- **链接诊断**：llc / cc / c++ / 链接失败时输出阶段名、日志摘要与完整命令；
+  vlnk 失败时额外打印「链接命令」；分段链路与 clang 回退同时失败时合并两份诊断。
+- **链接产物形态（P1）**：
+  - `vlnk -c` 只生成原生 `.o`（llc 优先，clang `-c` 回退），供外部构建系统 / `ar` 归档；
+  - 新增 `--strip`、`--rpath <dir>`、`--sysroot <dir>`；
+  - Pipeline 路径会把 `-Wl,-rpath,...` / `--sysroot=` 转成 lld 直接参数。
+- **稳定性/性能**：
+  - 链接输出改为「同目录临时文件 + rename」原子替换，失败不再留下半个产物；
+  - vxrt 运行时源码编译结果按内容哈希缓存到 `~/.cache/vx/vxrt-<hash>.o`，
+    避免每次链接重复编译。
+- **测试**：VXOBJ 测试适配可选 `Lines` 段（按 section 表定位 TypeIR）；
+  backend 新增调试元数据断言；vlnk e2e 新增 `int/float/str` 转换用例。
+- 版本号：`vxc` 0.7.0 → 0.7.1，`vxls` 0.7.0 → 0.7.1，`vlnk` 0.2.2 → 0.2.3，
+  `vx` 1.21.0 → 1.21.1。CTest **20/20 全绿**。
+
+## v1.21.0 (2026-11-15)
+
+### P0 编译器正确性：64 位值模型 + 构造器语义 + 自举源移除
+
+- **移除自举编译器**：删除 `compiler/*.vx`（lexer / parser / codegen / typeir /
+  vxobj / vxc / mod），工具链只保留 `src/` 下的 C++ 实现；同步清理 README、
+  SYNTAX、CODE_LAYOUT、tree-sitter 文档与源码注释中的自举引用。
+  测试语料改为 `std/` + `tests/`，语义回归改用 `std/prelude.vx` 结构抽查。
+- **`var` 改为 64 位通用槽**：`vt_of("var")` 由 i32 改为 i64，修复三个实际缺陷：
+  - `func f(x: var)` 传入 string/对象指针时被截断为 32 位并运行时段错误；
+  - `-> var` 返回对象指针时后端拒绝（`RETURN 类型与函数返回类型不符`）；
+  - `var` 字段存放对象指针时生成未定义的 SSA 临时值（`use of undefined value`）。
+  - Emitter 新增统一 `coerce()`：i32↔i64、ptr↔i64、f64↔i64（bitcast）、i32↔ptr；
+    STORE_VAR / RETURN / CALL 实参 / 字段读写 / 字符串拼接与比较 / 解引用统一走该转换。
+- **类/结构类型规范化为 `ptr`**：`-> Box`、`p: Box`、类类型字段在 IR/VXOBJ 中写为
+  `ptr`，不再退化为 i32 或跨二进制丢失类型。
+- **构造器语义统一**：`new C(args)` 分配实例并调用 `C.new(self, args)`；
+  - 构造器返回非 void → 以返回值作为表达式结果（工厂模式）；
+  - 构造器返回 void → 就地初始化并保留 `NEWZ` 实例；
+  - 无实参 `new C()` 保持裸分配，避免构造器内部 `new C()` 自递归；
+  - 语义层校验本地类构造器存在性与实参个数，模块类与本地类行为一致。
+- **语法补齐**：
+  - 十六进制 `0x...` / 二进制 `0b...` 整数字面量（词法阶段归一化为十进制）；
+  - `pass` 空语句（解析为 nil 表达式语句，不产生运行时操作）；
+  - `_` 丢弃标识符允许在同一作用域重复声明，codegen 为每次声明分配独立槽位；
+  - 字符串转义支持 `\uXXXX`（4 位 Unicode 码点 → UTF-8）。
+- **编译/链接选项**：`vxc` 新增 `-O<n>`、`-g`，写入 VXOBJ 头 flags；
+  `vlnk` 新增 `-O<n>`、`-g`（命令行优先，否则沿用 VXOBJ flags），
+  并透传给 `llc` / `clang` / `cc`（`-O0..-O3`、`-g`）。
+  行号级 DWARF 元数据尚未发射，`-g` 目前只让后端产出可用的调试符号。
+- **CI**：`ci/check.sh` 补入 `vx_semantics_tests`（此前定义但未构建/运行）；
+  新增 4 组 e2e 回归：var 形参字符串、var 返回对象、var 字段对象属性链、
+  hex/binary/pass/`_`/`\uXXXX`。
+- 版本号：`vxc` 0.6.0 → 0.7.0，`vxls` 0.6.0 → 0.7.0（保持对齐），
+  `vlnk` 0.2.1 → 0.2.2，`vx` 1.20.0 → 1.21.0。CTest **20/20 全绿**。
+
+## v1.20.0 (2026-11-12)
+
+### 整数枚举 + `str` 类型别名 + 模块系统 + text/fs 库扩展 + 测试构建位置无关
+
+- **跨编译单元模块系统（`import`）**：
+  - `import a.b.c` 解析 `a/b/c.vx`（也接受 `a/b/c/mod.vx`），搜索根为
+    `-I` 目录 → 源文件目录 → 其上级（最多 4 级）；
+  - 只装载**声明摘要**（类/结构字段与方法签名、枚举、顶层函数），不生成代码；
+    实现由其自身 `.vxobj` 提供，链接期由 `vlnk` 合并（「模块即头文件」，
+    保持单文件编译 + 多输入链接架构）；
+  - 语义层把模块声明并入符号表（本单元同名声明优先），并登记模块访问前缀
+    （别名，缺省路径末段）：`error.Error(...)`、`mathx.add(1, 2)` 可解析；
+    模块类构造按 `new` 的形参数校验，codegen 发射 `NEWZ` + `Class.new` 调用
+    （保留实例指针、丢弃构造返回值）；
+  - 导入类的字段布局与枚举常量进入 codegen，支持 `c.field` 与 `Level.High`；
+  - 未找到的模块静默跳过；文件存在但解析失败记 E0002 警告并跳过；
+  - `Import` AST 新增 `alias` 字段（此前解析后被丢弃）。
+  - 实测 `std/`：`--check` 通过数 16 → **19**（跨模块 `error`/`StringUtil`/`Result`
+    未定义基本消除）。
+
+- **`enum` 声明（语言 / 语义 / 代码生成全链路）**：
+  - 语法 `enum Name:`，成员每行 `MEMBER` 或 `MEMBER = <十进制整数>`（可带负号）；
+    缺省取值 = 上一成员 + 1，首个成员为 0；
+  - 底层类型为 `int`：枚举名可直接作变量/参数/返回/字段标注，与 `int` 同型；
+    `Enum.MEMBER` 在 codegen 期**内联为 `OP_CONST_INT`**，不产生运行时对象或布局；
+  - 语义层新增 `EnumInfo` 符号表（与函数/类/结构共用顶层命名空间），成员访问、
+    成员重复（E0011）、枚举重名（E0011）、未知成员（E0010）均有诊断；
+  - 解析期拒绝非十进制字面量取值，错误后吃到行尾以避免级联诊断；
+  - `std/error.vx`、`std/sys/coroutine.vx` 的 enum 解析错误消除。
+- **`str` 成为 `string` 的类型别名**：semantics / codegen / emitter / **VXOBJ 序列化**
+  四处同步识别。此前 `type_tag_for` 不认识 `str`，标注会被降级为 `TYPE_UNKNOWN`
+  并在跨二进制后丢失（vlnk 读回为 `var`），本次一并修复。
+- **`text` 库扩展**（`headers/text.{vxh,c}`）：
+  `find` / `contains` / `starts_with` / `ends_with` / `substr` / `trim` / `char_at` /
+  `from_char` / `is_int` / `parse_int` / `format_int` / `line_count` / `line_at`。
+  返回 string 的函数统一 malloc 新串（调用方 `free`）。
+- **新增 `fs` 库**（`headers/fs.{vxh,c}`）：`mkdir` / `mkdir_p` / `dir_exists` /
+  `is_file` / `list_dir`（每行一条目）/ `remove_file` / `file_size`，以及纯字符串
+  路径运算 `path_join` / `path_base` / `path_dir`。配合内置
+  `file_read`/`file_write`/`file_exists` 可管理目录与头文件树。
+- **测试**
+  - 新增 `parser_test` 的 `test_enum`（显式/隐式/负值取值）；
+  - 新增 `semantics_test` 的 `test_str_type_alias`、`test_enum_decl`
+    （标注合法性、成员访问、未知成员、重复成员、与函数重名）；
+  - `import_e2e_test` 新增 `textapi`（文本 API 全量断言）、`fsapi`
+    （路径运算 + 目录创建/列举/删除/文件信息）与 `module`（两编译单元分别
+    编译为 VXOBJ 后合并链接，覆盖模块函数、类构造、字段与枚举成员）；
+    失败时输出 tag 与 expected/actual 差异；
+  - `import_test` 新增 `test_import_modules`（点分路径解析、别名前缀、
+    类/枚举/函数声明提取），并补充 `fs` 库符号断言；
+  - 修复 `import_e2e_test` 的 `ImportContext` 缺字段初始化告警。
+- **测试基础设施（构建位置无关）**：`util_tests` / `lexer_tests` / `parser_tests` /
+  `e2e_tests` 原先从当前目录向上逐级查找仓库根，到 `/` 时 `parent_path()` 返回自身
+  导致死循环（在源码树外构建会 CTest 超时）。现统一由 CMake 注入 `VX_SOURCE_DIR`，
+  树内/树外构建均 20/20 通过。
+- **LSP**：`vxls` 收集枚举与成员符号（补全/悬停/跳转/定义定位）；`vfmt` 的 AST
+  结构自检覆盖枚举声明。
+- 文档：README（语言特性、库清单与示例、当前局限）、docs/SYNTAX.md 新增 §3.5「枚举」
+  并在 §2 补 `str` 别名、std/README 按新实测重排失败原因与统计。
+- 版本号：`vxc` 0.5.0 → 0.6.0，`vxls` 0.5.0 → 0.6.0（保持对齐），`vx` 1.19.0 → 1.20.0。
+
 ## v1.19.0 (2026-11-08)
 
 ### std/sys/sync.vx 原生落地 + `ptr` 成为一等类型标注

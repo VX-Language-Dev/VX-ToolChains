@@ -1,8 +1,8 @@
 # VX 语言语法参考
 
 本文档描述 C++ 重写工具链（`vxc` → `vlnk`）**实际支持**的 VX 语法，
-与 `src/compiler/lexer.cpp` / `src/compiler/parser.cpp` / `src/compiler/codegen.cpp`
-保持一致。自举参考实现位于 `compiler/*.vx`。
+与 `src/compiler/lexer.cpp` / `src/compiler/parser.cpp` / `src/compiler/semantics.cpp` /
+`src/compiler/codegen.cpp` 保持一致。
 
 ## 1. 词法
 
@@ -23,8 +23,8 @@ a(); b()     # ; 分隔单行多语句（括号内忽略）
 
 ### 1.3 字符串
 
-- `"..."` 与 `'...'` 两种引号，支持转义 `\n` `\t` `\\` `\"` `\'`；
-  未知转义保留原字符。
+- `"..."` 与 `'...'` 两种引号，支持转义 `\n` `\t` `\\` `\"` `\'` `\uXXXX`
+  （4 位十六进制 Unicode 码点，编码为 UTF-8）；未知转义保留原字符。
 - 字符串可跨行；未闭合报 `E2002`。
 - 标识符允许 UTF-8 非 ASCII 字节（可直接用中文变量名）。
 
@@ -32,13 +32,14 @@ a(); b()     # ; 分隔单行多语句（括号内忽略）
 
 - 整数 `123`；浮点 `1.5`（`1.` 视为整数 `1` 后跟 `.` 运算符；
   `.5` 不构成浮点）。
+- 十六进制 `0x4E00` / 二进制 `0b1010` 字面量在词法阶段归一化为十进制。
 
 ### 1.5 关键字
 
 ```
 if elif else for while break continue func return true false nil
 var mut import struct class new extern int float bool void
-and or not as in const export
+and or not as in const export pass
 ```
 
 软关键字（保留但在表达式位置可作变量名）：
@@ -55,12 +56,14 @@ and or not as in const export
 
 ## 2. 类型
 
-内建类型：`int`（i32）、`float`（double）、`bool`、`string`、`ptr`（原生指针，
+内建类型：`int`（i32）、`float`（double）、`bool`、`string`（别名 `str`，二者同型可混用）、
+`ptr`（原生指针，
 `malloc` / `&fn` / `ptr.*` 库的结果；支持 `*p` 读写与作为类字段/形参/返回值标注）、
-`void`、`var`（未标注/泛型槽位）。类名/结构名可作类型标注。
+`void`、`var`（64 位通用槽，可承载 int/float/string/对象指针）。类名/结构名可作类型标注，
+运行时按实例指针（IR 中规范化为 `ptr`）传递。
 
-> `var` 槽的 ABI 位宽为 i32：类实例（指针）不能作为 `-> var` 的返回值，
-> 需要返回/传递实例或指针时用 `ptr` 标注。
+> `new C(args)` 会分配实例并调用 `C.new(self, args)`；构造器返回非 void 时以返回值
+> 作为表达式结果，返回 void 时就地初始化实例。无实参 `new C()` 为裸分配。
 
 ## 3. 声明
 
@@ -156,13 +159,41 @@ struct Pair:
 - 属性访问 `p.x` 编译为 FIELD_LOAD；属性赋值 `p.x = v` → FIELD_STORE。
 - `new Point(1, 2)` → NEWZ + 构造调用。
 
-### 3.5 模块与导入
+### 3.5 枚举
 
 ```vx
-import std.error            # 点分路径
-import a.b.c as ab          # 别名（记录，暂未链接）
-export lexer                # 导出声明
+enum Color:
+    Red                # 隐式取值 = 上一成员 + 1（首个为 0）
+    Green = 10         # 显式取值（十进制整数，可带负号）
+    Blue               # 11
 ```
+
+- 枚举底层类型为 `int`：枚举名可直接作变量/参数/返回/字段类型标注，
+  与 `int` 同型（无隐式转换限制不适用于枚举与 int 之间）。
+- 成员访问 `Color.Blue` 在编译期内联为 `int` 常量，不产生运行时对象或布局。
+- 成员名在枚举内唯一；枚举名与函数/类/结构共用顶层命名空间（重名报 E0011）。
+- 显式取值必须为十进制整数字面量（可带 `-`）；非字面量表达式在解析期报错。
+- 不支持带数据载荷的变体、模式匹配与 `union`（规划中）。
+
+### 3.6 模块与导入
+
+```vx
+import std.error            # 点分路径 → std/error.vx（也接受 std/error/mod.vx）
+import pkg.mathx as m       # 别名：以 m.xxx 访问
+export lexer                # 导出标记（记录，暂无可见性语义）
+```
+
+- **搜索根**：`-I` 目录 → 源文件所在目录 → 其上级目录（最多 4 级）。
+- **只读声明**：模块只提供编译期符号（类/结构字段与方法签名、枚举、顶层函数），
+  不生成运行时代码；实现由该模块自己的 `.vxobj` 提供，链接期由 `vlnk`
+  合并多个 `.vxobj` 时解析（等价「模块即头文件」）。
+- **命名空间访问**：模块声明同时并入本单元命名空间，可直接用 `Error` /
+  `Level.High`；需要限定或别名时用 `模块前缀.符号`（前缀 = 别名，缺省为路径末段），
+  例如 `error.Error(...)`、`mathx.add(1, 2)`。
+- **模块类构造**：`模块前缀.类名(args)` 分配实例并调用该类的 `new`（若声明）；
+  构造器返回非 void 时以返回值作为表达式结果（工厂模式），返回 void 时就地初始化实例。
+- **未支持**：模块级常量、递归/传递导入、可见性控制与循环依赖检测；
+  找不到的模块静默跳过，解析失败时记警告并跳过其声明。
 
 ## 4. 库导入注解（@imp / @cppimp）
 
@@ -218,7 +249,48 @@ for x in xs:               # 迭代（降级为 __for_iter/__for_idx 计数器�
 break / continue           # 仅循环内合法
 ```
 
-### 5.3 赋值
+### 5.4 空语句与丢弃标识符
+
+```vx
+if ready:
+    pass                    # 空语句
+var _ = file_write(path, data)   # '_' 丢弃槽，可在同一作用域重复声明
+```
+
+- `pass` 不产生运行时操作。
+- `_` 每次声明分配独立槽位，不参与重复定义检查。
+
+### 5.5 对象构造
+
+```vx
+class Box:
+    v: int
+    func new(x: int) -> var:      # 工厂模式：返回新实例
+        var b = new Box()         # 无实参 new = 裸分配（不递归调用构造器）
+        b.v = x
+        return b
+
+var b = new Box(42)               # 调用 Box.new(self, 42)，以返回值为结果
+```
+
+- 类类型标注（`-> Box`、`p: Box`）在 IR 中规范化为 `ptr`。
+- 构造器返回 void 时，`new C(args)` 保留 `NEWZ` 分配的实例并在其上执行初始化。
+- 无实参 `new C()` 始终是裸分配。
+
+### 5.7 显式类型转换
+
+```vx
+int(3.9)        # 浮点截断 → 3
+float(2)        # 整数 → 2.0
+bool(0)         # → false
+str(42)         # → "42"
+```
+
+- 语法上 `int` / `float` / `bool` 是关键字，唯一合法用法是单实参转换调用。
+- 不做隐式数值转换；`str` 返回运行时分配的字符串。
+- `str(var)` 目前按 32 位整数格式化（`var` 没有运行时类型标签）。
+
+### 5.8 赋值
 
 ```vx
 x = 1                      # 简单赋值
@@ -286,6 +358,7 @@ vec.push(x)         # 导入库调用 → CALL f;_vx_<lib>_<name>
 - `*p` 的地址由任意 `ptr` 表达式给出（`malloc` 返回值、`proc.pipe()` 等）；
   按 32 位字访问，需自行保证 4 字节对齐。
 - `ptr` 库提供 `add(p, offset)`（字节偏移）、`to_int` / `from_int`：
+
   ```vx
   @imp(ptr)
   var fds = proc.pipe()
@@ -298,6 +371,7 @@ vec.push(x)         # 导入库调用 → CALL f;_vx_<lib>_<name>
   64 位透传（`int` → `sext`，`ptr` / `string` → `ptrtoint`，`float` → `bitcast`），
   64 位指针可安全跨线程传递。
 - 函数值当前只支持顶层函数（不支持方法 `&obj.m` 与闭包捕获）。
+- VX 不提供 C 式 `string + int` 指针算术；裸指针偏移统一用 `ptr.add`。
 
 ## 7. 编译流水线与产物
 

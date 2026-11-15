@@ -197,6 +197,8 @@ endif()
 add_executable(vx_util_tests tests/util_test.cpp)
 target_link_libraries(vx_util_tests PRIVATE vx_util)
 target_compile_options(vx_util_tests PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(vx_util_tests PRIVATE
+    VX_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME util_tests COMMAND vx_util_tests)
 
 add_executable(vx_diag_tests tests/diag_test.cpp)
@@ -207,11 +209,15 @@ add_test(NAME diag_tests COMMAND vx_diag_tests)
 add_executable(vx_lexer_tests tests/lexer_test.cpp)
 target_link_libraries(vx_lexer_tests PRIVATE vx_compiler)
 target_compile_options(vx_lexer_tests PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(vx_lexer_tests PRIVATE
+    VX_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME lexer_tests COMMAND vx_lexer_tests)
 
 add_executable(vx_parser_tests tests/parser_test.cpp)
 target_link_libraries(vx_parser_tests PRIVATE vx_compiler)
 target_compile_options(vx_parser_tests PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(vx_parser_tests PRIVATE
+    VX_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME parser_tests COMMAND vx_parser_tests)
 
 add_executable(vx_codegen_tests tests/codegen_test.cpp)
@@ -233,6 +239,8 @@ add_test(NAME vxobj_tests COMMAND vx_vxobj_tests)
 add_executable(vx_e2e_tests tests/vxc_e2e_test.cpp)
 target_link_libraries(vx_e2e_tests PRIVATE vx_compiler vx_util)
 target_compile_options(vx_e2e_tests PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(vx_e2e_tests PRIVATE
+    VX_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME e2e_tests COMMAND vx_e2e_tests)
 
 add_executable(vx_backend_tests tests/backend_test.cpp)

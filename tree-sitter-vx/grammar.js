@@ -1,8 +1,7 @@
 /**
  * tree-sitter-vx —— VX 语言（adVanced eXecutable language）的 Tree-Sitter 语法
  *
- * 语法规则依据 vx-toolkit/src/compiler/parser.cpp（参考实现）与
- * compiler/parser.vx（自举实现）制定：
+ * 语法规则依据 vx-toolkit/src/compiler/parser.cpp（参考实现）制定：
  *
  *  - 缩进块（Python 风格 INDENT/DEDENT，由外部扫描器 src/scanner.c 产出）
  *  - `#` 行注释；块头（func/if/while/...）后必须有 `:`

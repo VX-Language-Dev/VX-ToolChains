@@ -1,6 +1,30 @@
 # text 库 — 字符串/布尔/void 类型的 VX ABI 声明头
 # @imp(text) 后以 text.length / text.is_empty / text.shout 访问。
 # 类型映射：string → const char*，bool → int32_t，无返回 = void。
+#
+# 返回 string 的函数（substr / trim / from_char / format_int / line_at）
+# 均返回新分配的串，调用方负责 free；入参为 nil 时按空串处理。
 extern func length(s: string) -> int
 extern func is_empty(s: string) -> bool
 extern func shout(s: string)
+
+# ---- 查找与匹配 ----
+extern func find(s: string, needle: string) -> int        # 首个匹配的字节偏移，未找到 -1
+extern func contains(s: string, needle: string) -> bool
+extern func starts_with(s: string, prefix: string) -> bool
+extern func ends_with(s: string, suffix: string) -> bool
+
+# ---- 截取与清理 ----
+extern func substr(s: string, start: int, len: int) -> string  # 越界自动裁剪；start<0 视为 0
+extern func trim(s: string) -> string                          # 去首尾空白（空格/制表/换行）
+extern func char_at(s: string, index: int) -> int              # 字节值；越界 -1
+extern func from_char(c: int) -> string                        # 单字节串
+
+# ---- 数值转换 ----
+extern func is_int(s: string) -> bool         # 可选前导空白与正负号，全串均为十进制数字
+extern func parse_int(s: string) -> int       # 非法输入返回 0；先以 is_int 校验
+extern func format_int(n: int) -> string      # 十进制字符串
+
+# ---- 行切分（配合 fs.list_dir 等换行分隔结果）----
+extern func line_count(s: string) -> int
+extern func line_at(s: string, index: int) -> string  # 去掉行尾 \r；越界返回空串

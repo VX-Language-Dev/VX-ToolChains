@@ -67,7 +67,7 @@ while [ "$i" -ge 0 ]; do
   config="${CONFIGS[$i]}"
   if cmake -S . -B build -G "$GENERATOR" -DCMAKE_BUILD_TYPE="$config" >/dev/null 2>&1 &&
     make -C build -j"${NPROC}" vxc002 vlnk vx_util_tests vx_diag_tests vx_lexer_tests \
-      vx_parser_tests vx_codegen_tests vx_vxobj_tests vx_e2e_tests \
+      vx_parser_tests vx_codegen_tests vx_semantics_tests vx_vxobj_tests vx_e2e_tests \
       vx_backend_tests vx_import_tests vx_import_e2e_tests vx_vlnk_e2e_tests \
       vfmt vfmt_tests >/dev/null 2>&1; then
     ok "构建成功 [$config]"
@@ -122,6 +122,7 @@ main_tests=(
   "$config_dir/vx_lexer_tests"
   "$config_dir/vx_parser_tests"
   "$config_dir/vx_codegen_tests"
+  "$config_dir/vx_semantics_tests"
   "$config_dir/vx_vxobj_tests"
   "$config_dir/vx_e2e_tests"
   "$config_dir/vx_backend_tests"

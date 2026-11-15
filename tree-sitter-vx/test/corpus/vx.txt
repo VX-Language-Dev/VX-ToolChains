@@ -576,11 +576,11 @@ Set.union(other)
         (identifier)))))
 
 ==================
-自举编译器片段（真实源码）
+类与模块语法片段（真实源码）
 ==================
 
-# parser.vx - VX 自举编译器语法分析器
-import compiler.lexer
+# 类与模块语法示例
+import std.error
 
 class Parser:
     tokens: var

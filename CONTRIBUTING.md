@@ -54,7 +54,6 @@ bash ci/check.sh             # 本地 CI 全套检查
 | `include/`    | 公开头文件                   |
 | `tests/`      | 测试代码（CTest 20 组）      |
 | `std/`        | VX 标准库（设计参考/前瞻规范，见 std/README.md） |
-| `compiler/`   | VX 编译器前端源码（.vx 源文件） |
 | `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |
 | `tools/`      | 独立工具子项目（json、vmake、vmake-lsp、vxls、vx-tidy、vfmt） |
 | `tree-sitter-vx/` | Tree-sitter 语法（VX 编辑器高亮） |

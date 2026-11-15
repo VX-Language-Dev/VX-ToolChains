@@ -75,6 +75,8 @@ CTestTestfile.cmake
 CPackConfig.cmake
 CPackSourceConfig.cmake
 install_manifest.txt
+# 生成物（vxrt_source.h 由 CMake 写入构建目录，不再跟踪源码根副本）
+/generated/
 # 交叉构建产物
 build-*/
 dist/

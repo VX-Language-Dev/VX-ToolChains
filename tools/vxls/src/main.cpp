@@ -36,7 +36,7 @@ using vxls::LspPosition;
 using vxls::LspRange;
 using vxls::json::Value;
 
-constexpr const char* kVersion = "0.5.0";
+constexpr const char* kVersion = "0.7.1";
 
 // 打开的文档集合（uri → 全文）
 std::map<std::string, std::string> g_docs;

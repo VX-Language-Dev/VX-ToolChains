@@ -1,0 +1,18 @@
+# fs 库 — 文件系统与路径操作的 VX ABI 声明头
+# @imp(fs) 后以 fs.mkdir / fs.list_dir / fs.path_join 等访问。
+# 类型映射：string → const char*，bool → int32_t，错误统一以返回值表达：
+#   - 返回 int 的操作成功为 0，失败为 -1
+#   - 返回 bool 的查询失败即 false
+#   - 返回 string 的函数 malloc 新串（调用方 free），失败返回空串
+extern func mkdir(path: string) -> int            # 创建单级目录（父目录须存在）
+extern func mkdir_p(path: string) -> int          # 递归创建（等价 mkdir -p）
+extern func dir_exists(path: string) -> bool
+extern func is_file(path: string) -> bool
+extern func list_dir(path: string) -> string      # 每行一个条目（跳过 . 与 ..，末尾带 \n）
+extern func remove_file(path: string) -> int      # 删除文件（不处理目录）
+extern func file_size(path: string) -> int        # 字节数；失败 -1
+
+# ---- 路径运算（纯字符串处理，不访问磁盘）----
+extern func path_join(a: string, b: string) -> string  # 自动补 /；b 为绝对路径时直接返回 b
+extern func path_base(path: string) -> string          # 末段文件名
+extern func path_dir(path: string) -> string           # 去掉末段；无分隔符返回 "."
