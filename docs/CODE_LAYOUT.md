@@ -17,7 +17,8 @@
 |----------|-----------|------------|------|
 | `parser.cpp` | 95 | `parser_util.hpp` / `parser_decl.hpp` / `parser_stmt.hpp` / `parser_expr.hpp` | 语法分析：辅助函数、`Parser` 声明、语句解析、表达式解析 |
 | `semantics.cpp` | 132 | `semantics_builtin.hpp` / `semantics_types.hpp` / `semantics_checker.hpp` / `semantics_checker_pass.hpp` / `semantics_checker_stmt.hpp` / `semantics_checker_expr.hpp` | 语义分析：内置表、类型关系、`TypeChecker` 声明、声明收集、语句检查、表达式检查 |
-| `codegen.cpp` | 1343 | —（**未拆分**） | AST → TypeIR |
+| `codegen.cpp` | 24 | `codegen_decl.hpp` | 主入口：包含 `codegen_decl.hpp` + `generate_module` 自由函数 |
+| `codegen_decl.hpp` | 1337 | — | `CodeGen` 类完整声明 + 全部成员函数实现（内部实现头，单 TU） |
 | `lexer.cpp` | 702 | — | 词法（缩进 / INDENT / DEDENT） |
 | `importer.cpp` | 621 | — | `@imp` / `@cppimp` / `import` 解析与头文件探测 |
 | `diag.cpp` / `vxabi.cpp` / `vxobj.cpp` | 260 / 61 / 265 | — | 诊断、ABI 命名、VXOBJ 序列化 |
@@ -61,7 +62,7 @@
 
 | 文件 | 行数（约） | 备注 |
 |------|-----------|------|
-| `src/compiler/codegen.cpp` | 1343 | **超过 1000 行阈值**，下一批优先项：表达式 / 语句 / 函数注册三段 |
+| `src/compiler/codegen_decl.hpp` | 1337 | 已从 `codegen.cpp` 搬出为内部实现头（单 TU）；后续可再按表达式 / 语句 / 函数注册三段拆分子头 |
 | `src/backend/link_driver.cpp` | 874 | 匿名 namespace 与 `vx::backend` 各有一份 `find_lld()`，可先去重 |
 | `src/backend/emitter_inst.hpp` | 813 | 单条 `emit_inst()` 的 opcode switch，超过 800 行目标；如需可再分子方法 |
 | `src/compiler/parser_stmt.hpp` | 657 | 语句族解析；接近观察阈值 |
@@ -72,8 +73,7 @@
 
 ## 4. 剩余工作
 
-1. **拆分 `codegen.cpp`**（唯一超过 1000 行的 `src/` 文件）。建议沿用现有约定：
-   `codegen_decl.hpp`（类声明）/ `codegen_expr.hpp` / `codegen_stmt.hpp` / `codegen_func.hpp`。
+1. **`codegen.cpp` 已搬出为 `codegen_decl.hpp`**（单 TU，move-only，`--emit-ir` 字节一致）。下一步可按表达式 / 语句 / 函数注册三段拆分为 `codegen_expr.hpp` / `codegen_stmt.hpp` / `codegen_func.hpp`（需将成员函数转为 out-of-line `inline` 定义）。
 2. **去重 `link_driver.cpp` 的 `find_lld()`**（两处实现完全相同）。
 3. 视需要把 `emitter_inst.hpp` 的 opcode switch 按族拆成子方法。
 4. 每次拆分后更新本文档的布局表与「快照」日期。
