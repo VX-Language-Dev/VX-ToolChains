@@ -1,0 +1,20 @@
+# 字符串处理：text 返回的 string 由运行时分配，调用方 free。
+
+@imp(text)
+
+func main():
+    out_int(text.find("hello world", "world"))
+    out("\n")
+
+    var sub = text.substr("abcdef", 2, 3)
+    out(sub)
+    out("\n")
+    free(sub)
+
+    var trimmed = text.trim("  hi  ")
+    out(trimmed)
+    out("\n")
+    free(trimmed)
+
+    out_int(text.parse_int("-42"))
+    out("\n")

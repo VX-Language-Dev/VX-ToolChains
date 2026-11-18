@@ -8,15 +8,14 @@
 #   PREFIX=/opt ./install.sh  # 安装到 /opt
 #
 # 安装内容：
-#   $PREFIX/bin/vxc, vlnk, vmake, vmake-lsp, vxls, vfmt, vx
+#   $PREFIX/bin/vxc, vlnk, vmake, vmake-lsp, vfmt, vx
 #   $PREFIX/lib/libvx_*.a
 #   $PREFIX/lib/libvxrt.a        预编译运行时（vlnk 直接链接，缺失时回退内嵌源码现编）
-#   $PREFIX/lib/libvxtidy.dylib  vx-tidy 静态分析引擎（纯动态库、无 CLI；仅 macOS / Linux 动态链接）
-#   $PREFIX/bin/headers/   @imp / @cppimp 导入库（与 vxc/vxls 同目录，默认查找根）
+#   $PREFIX/bin/headers/   @imp / @cppimp 导入库（与 vxc 同目录，默认查找根）
 #   $PREFIX/std/           VX 标准库源码
 #   $PREFIX/share/         shell 补全（bash / zsh）
 #
-# 头文件查找规则：vxc / vxls / vx 默认在各自可执行文件同目录的 headers/ 中查找
+# 头文件查找规则：vxc / vx 默认在各自可执行文件同目录的 headers/ 中查找
 # 导入库（-I 可追加搜索目录，VX_HEADERS_DIR 可覆盖库根，VX_HEADERS 为兼容别名），
 # 因此 headers 必须与二进制装在同一目录（$PREFIX/bin）。
 # ─────────────────────────────────────────────────────────────────────
@@ -46,7 +45,7 @@ fi
 mkdir -p "$BIN_DIR" "$LIB_DIR" "$HEADER_DIR" "$STD_DIR"
 
 # ── 安装可执行文件 ──────────────────────────────────────────────────
-for bin in vxc vlnk vmake vmake-lsp vxls vfmt vx; do
+for bin in vxc vlnk vmake vmake-lsp vfmt vx; do
   if [ -f "$SCRIPT_DIR/$bin" ]; then
     cp "$SCRIPT_DIR/$bin" "$BIN_DIR/"
     chmod +x "$BIN_DIR/$bin"
@@ -62,18 +61,11 @@ for lib in libvx_util.a libvx_compiler.a libvx_backend.a libvxrt.a; do
   fi
 done
 
-# ── 安装动态库（vx-tidy 引擎，纯动态库形态） ────────────────────────
-if [ -f "$SCRIPT_DIR/libvxtidy.dylib" ]; then
-  cp "$SCRIPT_DIR/libvxtidy.dylib" "$LIB_DIR/"
-  chmod +x "$LIB_DIR/libvxtidy.dylib"
-  step "已安装 $LIB_DIR/libvxtidy.dylib"
-fi
-
 # ── 安装资源目录 ────────────────────────────────────────────────────
 if [ -d "$SCRIPT_DIR/headers" ]; then
   rm -rf "$HEADER_DIR"
   cp -r "$SCRIPT_DIR/headers" "$BIN_DIR/"
-  step "已安装 ${HEADER_DIR}（vxc/vxls 默认查找根）"
+  step "已安装 ${HEADER_DIR}（vxc 默认查找根）"
 fi
 if [ -d "$SCRIPT_DIR/std" ]; then
   cp -r "$SCRIPT_DIR/std" "$STD_DIR/"
@@ -107,6 +99,3 @@ echo ""
 echo "  vlnk 需要宿主 clang："
 echo "    macOS:  Xcode CLT (xcode-select --install) 或 brew install llvm"
 echo "    Linux:  apt install clang / dnf install clang"
-echo ""
-echo "  macOS 动态库提示（如使用 vx-tidy / vxls）："
-echo "    export DYLD_LIBRARY_PATH=$LIB_DIR:\$DYLD_LIBRARY_PATH"

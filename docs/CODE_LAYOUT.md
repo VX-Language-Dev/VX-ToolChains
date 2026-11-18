@@ -86,7 +86,7 @@
 # 1) 构建
 cmake --build build
 
-# 2) 单元 / 集成测试（20 组，CTest 统一调度）
+# 2) 单元 / 集成测试（18 组，CTest 统一调度）
 ctest --test-dir build --output-on-failure
 
 # 3) 格式门禁（必须零违规）
@@ -121,7 +121,7 @@ diff /tmp/ir_baseline.ll /tmp/ir_after.ll
 | `src/`、`include/` 下无超过 1000 行的文件 | ❌ `codegen.cpp` 1343 行 |
 | 拆分后的单元不超过 800 行 | ⚠️ `emitter_inst.hpp` 813 行 |
 | 每个新文件职责可用一句话说清 | ✅ |
-| `ctest` 全绿 | ✅ 20/20 |
+| `ctest` 全绿 | ✅ 18/18 |
 | `bash ci/check.sh` 全绿 | 需本地复跑 |
 | 拆分前后 `vlnk --emit-ir` 逐字节一致 | 按阶段验证 |
 | 公开头文件与测试代码零改动 | 拆分阶段遵守 |

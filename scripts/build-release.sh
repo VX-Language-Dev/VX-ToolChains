@@ -14,8 +14,7 @@
 #   ... (macos-x86_64 / macos-aarch64)
 #
 # 每个 Zip 包含：
-#   - vxc, vlnk, vmake, vmake-lsp, vxls, vfmt, vx  （可执行文件）
-#   - libvxtidy.dylib/.so （vx-tidy 静态分析引擎，纯动态库、无 CLI）
+#   - vxc, vlnk, vmake, vmake-lsp, vfmt, vx  （可执行文件）
 #   - libvx_util.a, libvx_compiler.a, libvx_backend.a, libvxrt.a
 #   - headers/     （@imp / @cppimp 导入库；安装后与二进制同目录，默认查找根）
 #   - std/         （VX 标准库源码）
@@ -93,9 +92,8 @@ for target in $TARGETS; do
     step "交叉构建: $target [$config]"
     # Ninja Multi-Config 下，cmake --build --config 需显式指定 --target（否则会误加载不存在的 build-<config>.ninja）。
     # vx_runtime 产出预编译运行时 libvxrt.a（vlnk 链接期使用，非依赖关系，需显式构建）。
-    # vxtidy 引擎动态库随 vxls 依赖自动构建。
     cmake --build "$build_dir" --config "$config" \
-      --target vxc002 vlnk vx_runtime vmake vmake-lsp vxls vfmt vx 2>&1 | tail -5
+      --target vxc002 vlnk vx_runtime vmake vmake-lsp vfmt vx 2>&1 | tail -5
 
     # ── 打包（按配置产出独立 Zip）─────────────────────────────────
     pkg_dir="$build_dir/_pkg-$config"
@@ -112,7 +110,7 @@ for target in $TARGETS; do
     done
     # 工具子项目：Ninja Multi-Config 下可执行文件位于 <build>/tools/<tool>/<config>/
     # （根工程 target 位于 <build>/<config>/，两者布局不同，故两处都探测）
-    for tool in vmake vmake-lsp vxls vfmt vx; do
+    for tool in vmake vmake-lsp vfmt vx; do
       for cand in "$config_dir/tools/$tool/$tool" "$build_dir/tools/$tool/$config/$tool"; do
         if [ -f "$cand" ]; then
           cp "$cand" "$pkg_dir/"
@@ -126,16 +124,6 @@ for target in $TARGETS; do
         cp "$config_dir/$lib" "$pkg_dir/"
       fi
     done
-    # vx-tidy 动态库（.dylib macOS / .so Linux）
-    for ext in dylib so; do
-      for cand in "$config_dir/tools/vx-tidy/libvxtidy.$ext" "$build_dir/tools/vx-tidy/$config/libvxtidy.$ext"; do
-        if [ -f "$cand" ]; then
-          cp "$cand" "$pkg_dir/"
-          break
-        fi
-      done
-    done
-
     # 资源目录
     cp -r "$ROOT_DIR/headers"     "$pkg_dir/"
     cp -r "$ROOT_DIR/std"         "$pkg_dir/"

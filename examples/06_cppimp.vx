@@ -1,0 +1,8 @@
+# 接入 C++ 头文件：@cppimp 在链接期自动生成 ABI shim。
+# headers/cpp/greet.hpp 的实现见 headers/cpp/greet.cpp。
+
+@cppimp(cpp/greet.hpp)
+
+func main():
+    out(greet.greet("VX"))
+    out("\n")

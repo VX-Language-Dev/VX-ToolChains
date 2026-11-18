@@ -1,0 +1,14 @@
+# 函数、递归与 while 循环。
+
+func fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+func main():
+    var i = 0
+    while i < 10:
+        out_int(fib(i))
+        out(" ")
+        i = i + 1
+    out("\n")

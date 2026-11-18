@@ -1,0 +1,14 @@
+# 导入 C 实现的库：@imp(math) 按库名前缀访问，as 起别名。
+# 需在仓库根目录运行，vxc 才能默认找到 headers/。
+
+@imp(math)
+@imp(math) as m
+@imp(/collections/vec)
+
+func main():
+    out_int(math.add(2, 3))
+    out("\n")
+    out_int(m.mul(6, 7))
+    out("\n")
+    out_int(vec.sum_to(10))
+    out("\n")

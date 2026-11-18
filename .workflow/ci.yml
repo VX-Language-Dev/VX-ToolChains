@@ -1,0 +1,77 @@
+# Gitee Go 流水线：构建 + 全量测试
+#
+# 说明：
+# - 复用仓库内的 ci/check.sh，保证 CI 与本地预推送检查完全一致。
+# - ci/check.sh 默认构建 4 种配置；CI 只跑 MinSizeRel 以便在单次流水线内完成。
+# - 云端 GCC 插件的基础镜像版本较旧（Ubuntu 20.04 / GCC 10），无法满足本项目
+#   对 C++23（std::expected）的要求，因此步骤内自行安装 GCC 13 与 Clang 17。
+# - clang-format / clang-tidy 不在 CI 中安装：两者输出随版本变化，未固定版本时
+#   会产生误报。格式与静态检查仍由贡献者在本地按 CONTRIBUTING.md 执行。
+# - Gitee Go 仅提供 Linux 构建机，macOS 构建需维护者本地验证。
+version: '1.0'
+name: vx-toolkit-ci
+displayName: VX-ToolKit CI
+
+triggers:
+  push:
+    branches:
+      precise:
+        - master
+    tags:
+      include:
+        - '^v[0-9]+\.[0-9]+\.[0-9]+'
+  pr:
+    branches:
+      precise:
+        - master
+
+stages:
+  - stage:
+      name: build_test
+      displayName: 构建与测试
+      strategy: naturally
+      trigger: auto
+      steps:
+        - step: build@gcc
+          name: build_and_test
+          displayName: 构建 + 测试（GCC 13 / Clang 17）
+          gccVersion: 10.3
+          commands: |
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            SUDO=""
+            if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+
+            # ── 基础工具 ──────────────────────────────────────────────
+            $SUDO apt-get update
+            $SUDO apt-get install -y --no-install-recommends \
+              software-properties-common wget ca-certificates \
+              python3-pip build-essential make
+
+            # ── GCC 13：编译器本体需要 C++23 ──────────────────────────
+            $SUDO add-apt-repository -y ppa:ubuntu-toolchain-r/test
+            $SUDO apt-get update
+            $SUDO apt-get install -y g++-13 gcc-13
+
+            # ── Clang 17 + llc / lld：vlnk 链接期调用 ──────────────────
+            wget -q -O /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+            chmod +x /tmp/llvm.sh
+            $SUDO /tmp/llvm.sh 17
+            $SUDO apt-get install -y llvm-17 lld-17 clang-17
+            for tool in clang clang++ llc ld.lld lld; do
+              if [ -x "/usr/bin/${tool}-17" ]; then
+                $SUDO ln -sf "/usr/bin/${tool}-17" "/usr/local/bin/${tool}"
+              fi
+            done
+
+            # ── CMake 3.23+ 与 Ninja ─────────────────────────────────
+            python3 -m pip install --upgrade pip
+            python3 -m pip install "cmake>=3.23" ninja
+
+            # ── 构建 + 全量测试 ──────────────────────────────────────
+            export CC=gcc-13 CXX=g++-13
+            export CONFIGS=MinSizeRel
+            bash ci/check.sh
+
+            # ── 示例程序冒烟验证 ────────────────────────────────────
+            bash examples/run.sh

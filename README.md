@@ -4,7 +4,7 @@
 >
 > ![Language](https://img.shields.io/badge/language-C%2B%2B23-blue)
 > ![Version](https://img.shields.io/badge/version-v1.21.1-blue)
-> ![Tests](https://img.shields.io/badge/tests-20%20suites%20100%25%20passing-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-18%20suites%20100%25%20passing-brightgreen)
 > ![Deps](https://img.shields.io/badge/third--party%20deps-zero-orange)
 > ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
 
@@ -38,6 +38,22 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 | **混合语言互操作** | `@imp(lib)` 导入 C 库，`@cppimp(header.hpp)` 一行接入 C++ 头文件——链接期自动生成 ABI shim，不需手写桥接代码 |
 | **开发工具全家桶** | `vxc` 编译器 · `vlnk` 链接器 · `vmake` 增量构建（内容哈希签名 + 并行编译）· `vfmt` 格式化工具（保留注释 + AST 结构自检）（LSP/静态分析见独立仓库 `dry` / `drut`） |
 | **增量构建** | `vmake` 基于内容哈希签名（非 mtime），未变化的目标跳过；修改编译参数仅重链不重编 |
+
+---
+
+### 加入我们
+
+VX-ToolKit 是一个完全自研的开源编译器工具链，我们正在寻找对编译原理、
+语言设计与工具链工程感兴趣的贡献者：
+
+- 🧩 **语言前端**：Lexer / Parser / Semantics / 类型系统
+- ⚙️ **后端与链接**：LLVM IR 发射、链接驱动、调试信息
+- 🛠️ **工具链**：vmake 构建编排、vfmt 格式化、LSP/静态分析
+- 📚 **标准库**：`std/` 与 `headers/` 的原生化与扩展
+
+无论你是想学习编译器实现，还是希望把 VX 推向更完整的工程化工具链，
+都欢迎通过 [Issues](https://gitee.com/vx-language-dev/vx-toolkit/issues) 与 Pull Request 参与。
+详见下方 [贡献指南](#贡献指南)。
 
 ---
 
@@ -80,6 +96,7 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 ## 目录
 
 - [快速开始](#快速开始)
+- [示例程序](#示例程序)
 - [使用指南](#使用指南)
 - [语言特性](#语言特性)
 - [VXOBJ v4 格式](#vxobj-v4-格式)
@@ -93,39 +110,9 @@ cmake -S . -B build -G Ninja && cmake --build build --config MinSizeRel
 
 ---
 
-## 当前局限（VX 能力边界）
+## 路线图（规划中 · 欢迎参与）
 
-VX 目前适合编写以计算、文件读写为主的程序；**尚不能完整实现 VMAKE 这类系统编排工具**。主要限制：
-
-- **进程与并发**：`proc` 库提供进程原语（`fork`/`waitpid`/`kill`/`sleep`/`getpid`）、
-  线程/任务池（`spawnN`/`join_*`/`pool_*`）、同步原语（`mutex_*`/`cond_*`/`usleep`）、
-  原子操作（`atomic_load`/`atomic_store`/`atomic_fetch_add`/`atomic_fetch_sub`/`atomic_cas`/`atomic_fence`）
-  与管道/输出捕获（`pipe`/`read_str`/`capture`），
-  仅 `.vxh` 声明：链接期直连 libc / 由后端生成 pthread、原子指令与函数适配器 IR，零 C/C++ 源码。
-  **函数值 `&fn`** 与 **指针解引用 `*p`** 已进入语言与后端：任务函数可跨文件、可存变量，
-  任务实参按 64 位透传（`int` / `ptr` / `string` 均可安全传递），`*p` 读写 32 位字，
-  配合 `ptr` 库可做原始内存与 fd 访问。
-  尚未支持闭包捕获与 64 位整型值。POSIX 信号量/屏障不提供（macOS 平台限制），
-  VX 语言层已有 **Mutex / Condvar / Semaphore / Barrier / Channel** 封装
-  （`std/sys/sync.vx`，基于 proc 原语 + mutex/cond 组合实现，可编译执行、e2e 回归覆盖）；
-  但 `std/` 其余模块仍是未接入构建的设计参考。
-- **文件系统**：`fs` 库提供 `mkdir` / `mkdir_p` / `dir_exists` / `is_file` / `list_dir` /
-  `remove_file` / `file_size` 与纯字符串路径运算（`path_join` / `path_base` / `path_dir`），
-  配合内置 `file_read` / `file_write` / `file_exists` 可管理构建目录与头文件树；
-  尚无权限/时间戳查询与递归遍历 API。
-- **字符串处理**：`text` 库提供 `find` / `contains` / `starts_with` / `ends_with` /
-  `substr` / `trim` / `char_at` / `from_char` / `is_int` / `parse_int` / `format_int` /
-  `line_count` / `line_at`，可编写解析器与签名器；尚无正则、可变缓冲与 Unicode 码点级操作。
-- **集合与内存**：列表/字典为 P4 MVP（8 字节统一槽），无动态追加/扩容/迭代器；`std/` 标准库未接入编译器构建。
-- **错误处理**：无异常/Result 类型，I/O 仅返回哨兵值，难以聚合结构化诊断。
-- **模块系统**：`import` 按「模块即头文件」装载声明，函数体仍由各单元自行编译、
-  链接期合并；暂不支持模块级常量、传递导入、可见性控制与循环依赖检测。
-
-> 若要用 VX 编写 VMAKE 等价物，仍需补齐集合标准库（动态数组/映射）与错误模型。
-
-## 路线图（规划中）
-
-以下能力尚未实现，详见 [CHANGELOG](CHANGELOG.md)：
+以下能力尚未实现，详见 [CHANGELOG](CHANGELOG.md)。我们欢迎你通过 Issue / PR 参与其中，共同把 VX-ToolKit 打造成更完整的工具链：
 
 - **所有权 / 借用检查**：Rust 风格 `mut` / `&` / `&mut`，编译期 aliasing XOR mutation 检测
 - **编译时宏系统**：参数化宏，零运行时开销
@@ -193,8 +180,8 @@ cmake --build build --config MinSizeRel
 | `libvx_util.a` / `libvx_compiler.a` / `libvx_backend.a` | 静态库 |
 | `libvxrt.a`                   | 预编译 VX 运行时（vlnk 链接期直接并入） |
 
-> 另有 20 组测试可执行文件（`vx_*_tests`、`vmake*`、`vmake-lsp` 与 `vfmt` 相关），
-> 由 CTest 统一调度。
+> 另有 18 组测试可执行文件（`vx_*_tests`、`vmake*`、`vmake-lsp` 与 `vfmt` 相关），
+> 由 CTest 统一调度。`vxls` / `vx-tidy` 拆分为独立仓库后，其测试不再计入本仓库。
 
 ### 安装到系统
 
@@ -230,10 +217,21 @@ chmod +x install.sh && ./install.sh        # 默认安装到 ~/.local；PREFIX=/
 ### 运行测试
 
 ```bash
-# 运行全部 C++ 单元/端到端测试（20 组，CTest 统一调度）
+# 运行全部 C++ 单元/端到端测试（18 组，CTest 统一调度）
 cmake --build build --target test
 # 或等价：ctest --test-dir build --output-on-failure
 ```
+
+### 示例程序
+
+[`examples/`](examples/) 提供 7 个可直接编译运行的示例，覆盖内置运行时、类与构造器、
+`@imp` 导入、`@cppimp` 接入 C++ 头文件以及线程。在仓库根目录执行：
+
+```bash
+bash examples/run.sh    # 编译、链接并运行全部示例
+```
+
+每个示例的说明与预期输出见 [examples/README.md](examples/README.md)。
 
 ### Hello World
 
@@ -1008,6 +1006,7 @@ VXOBJ 是 VX 语言的跨平台中间容器格式，不包含任何平台特定�
 ├── tests/                    # C++ 单元测试 + .vx 端到端样例
 │   ├── *_test.cpp            # util/diag/lexer/parser/codegen/semantics/vxobj/e2e/backend/import 测试
 │   └── test_*.vx             # e2e 样例（simple/void/return/math/prime）
+├── examples/                 # 可直接编译运行的示例（bash examples/run.sh）
 ├── tools/                    # 独立工具子项目（主构建自动检测 tools/*/CMakeLists.txt）
 │   ├── json/                 # 极简 JSON 编解码静态库（vmake-lsp 共享，vx::json）
 │   ├── lsp/                  # LSP 传输层共享静态库（Content-Length 帧协议，vmake-lsp 共用）
@@ -1144,7 +1143,18 @@ func main():
 
 ## 贡献指南
 
-欢迎参与 VX-ToolKit 的开发！请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解贡献流程、代码规范和开发约定。
+欢迎参与 VX-ToolKit 的开发！我们正在积极招募贡献者，无论经验水平如何，
+都可以从 [CONTRIBUTING.md](CONTRIBUTING.md) 了解贡献流程、代码规范和开发约定。
+
+**新手友好入口**：
+- 查看 `good first issue` 标签的任务
+- `std/` 标准库的原生化改造（见 `std/README.md`）
+- 文档、测试用例与示例程序的补充
+
+我们重视每一个 PR，维护者会在 48 小时内响应。
+
+参与前请阅读 [行为准则](CODE_OF_CONDUCT.md)；安全相关问题请按 [安全策略](SECURITY.md) 私下报告，
+不要提交公开 Issue。
 
 ### 快速参与
 
@@ -1157,7 +1167,7 @@ func main():
 ### 开发环境
 
 ```bash
-# 克隆后运行测试确保环境正常（20 组测试）
+# 克隆后运行测试确保环境正常（18 组测试）
 cmake --build build --target test
 
 # 默认构建（MinSizeRel）

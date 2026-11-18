@@ -1,0 +1,18 @@
+# 类、构造器与方法：new C(args) 等价于 C.new(self, args)。
+
+class Counter:
+    n: int
+
+    func new(start: int):
+        self.n = start
+
+    func bump() -> int:
+        self.n = self.n + 1
+        return self.n
+
+func main():
+    var c: Counter = new Counter(10)
+    out_int(c.bump())
+    out("\n")
+    out_int(c.bump())
+    out("\n")

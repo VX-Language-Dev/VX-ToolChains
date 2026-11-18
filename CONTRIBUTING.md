@@ -37,6 +37,9 @@ bash ci/check.sh             # 本地 CI 全套检查
 
 6. **提交 Pull Request** 到 `master` 分支，并关联相关 issue
 
+提交后 Gitee Go 会在 PR 上运行构建与全部测试（配置见 `.workflow/ci.yml`），
+请等待检查通过后再请求评审。CI 仅覆盖 Linux；macOS 相关改动请附上本地验证结果。
+
 ## 代码风格
 
 - 使用 `clang-format` 自动格式化代码（`.clang-format`：基于 LLVM 风格，2 空格缩进，`ColumnLimit` 120）
@@ -52,7 +55,8 @@ bash ci/check.sh             # 本地 CI 全套检查
 | ------------- | ---------------------------- |
 | `src/`        | C++ 源码（util / compiler / backend / driver） |
 | `include/`    | 公开头文件                   |
-| `tests/`      | 测试代码（CTest 20 组）      |
+| `tests/`      | 测试代码（CTest 18 组）      |
+| `examples/`   | 可直接编译运行的示例程序     |
 | `std/`        | VX 标准库（设计参考/前瞻规范，见 std/README.md） |
 | `headers/`    | @imp/@cppimp 导入库（.vxh + .c/.cpp） |
 | `tools/`      | 独立工具子项目（json、vmake、vmake-lsp、vfmt）；LSP/静态分析见独立仓库 `dry` / `drut` |
@@ -80,6 +84,19 @@ bash ci/check.sh             # 本地 CI 全套检查
 - `MAJOR`：不兼容的语言或 ABI 变更
 - `MINOR`：向后兼容的新功能
 - `PATCH`：bug 修复和小幅改进
+
+## 发布流程
+
+由维护者执行：
+
+1. 更新 `CHANGELOG.md`，并把 README 徽章、各工具 `--version` 与帮助文本对齐到新版本
+2. 本地验证：`ctest --test-dir build --output-on-failure` 与 `bash ci/check.sh` 全绿
+3. 创建注解 tag：`git tag -a vX.Y.Z -m "vX.Y.Z"`
+4. 推送 tag：`git push origin vX.Y.Z`（Gitee Go 会对 tag 触发构建）
+5. 构建发布包：`./scripts/build-release.sh`，产物位于 `dist/`
+6. 在 Gitee / AtomGit 创建 Release，上传 `dist/*.zip`，正文链接 CHANGELOG 对应章节
+
+> 发布包必须由打了 tag 的提交构建，避免二进制与源码版本不一致。
 
 ## 许可证
 

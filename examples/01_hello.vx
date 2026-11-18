@@ -1,0 +1,6 @@
+# 最小可运行程序：out / out_int 由内置运行时 vxrt 提供，无需声明。
+
+func main():
+    out("Hello, VX!\n")
+    out_int(1 + 2)
+    out("\n")

@@ -1,0 +1,11 @@
+# 线程：任务函数以 &fn 传入，join_int 按 int 取回结果。
+
+@imp(proc)
+
+func worker(x: int, y: int) -> int:
+    return x * y
+
+func main():
+    var h = proc.spawn2(&worker, 6, 7)
+    out_int(proc.join_int(h))
+    out("\n")
